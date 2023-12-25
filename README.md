@@ -1,6 +1,6 @@
 # Fast distributed cache (CRDT based)
 
-<img align="right" src="chotki.jpg">
+<img align="right" width="30%" src="chotki.jpg">
 The mission of the system is to keep and update real-time statistics, such as
 quotas, counters, billing and suchlike. Update propagation time is expected to
 be close to the theoretic minimum: the one-way delay. We expect to be able to
