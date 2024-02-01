@@ -26,6 +26,7 @@ const FieldNoBits = OffBits - FieldTypeBits
 const FieldTypeMask = (uint16(1) << FieldTypeBits) - 1
 
 const BadId = ID(uint64(0xfff) << SeqOffBits)
+const ZeroId = ID(0)
 
 func MakeID(src uint32, seq uint32, off uint16) ID {
 	ret := uint64(src)
@@ -67,6 +68,11 @@ func FieldNameType(off uint16) (field, rdt byte) {
 func (id ID) Seq() uint32 {
 	i := uint64(id)
 	return uint32((i & SeqOffMask) >> OffBits)
+}
+
+func (id ID) SeqOff() uint32 {
+	i := uint64(id)
+	return uint32(i & SeqOffMask)
 }
 
 func (id ID) Off() uint16 {

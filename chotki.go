@@ -29,23 +29,13 @@ type Chotki struct {
 	log   toylog.ChunkedLog
 	tcp   toytlv.TCPDepot
 	heads VV
-	inq   toyqueue.RecordQueue
-	outq  []toyqueue.DrainerCloser
-	last  ID
-	lock  sync.Mutex
-	opts  ChotkiOptions
-}
-
-// RDT (Replicated Data Type), an object field type in our case
-type RDT interface {
-	Apply(state []byte) error
-	Diff(id ID, state []byte) (changes []byte, err error)
-}
-
-// RDTObject is a replicated object with RDT fields
-type RDTObject interface {
-	Apply(i *pebble.Iterator) error
-	Diff(id ID, base *pebble.Iterator, batch *pebble.Batch) error
+	// inq is the incoming packet queue; bakers dump incoming packets here
+	inq toyqueue.RecordQueue
+	// outq contains outgoing queues; here we broadcast new packets
+	outq []toyqueue.DrainCloser
+	last ID
+	lock sync.Mutex
+	opts ChotkiOptions
 }
 
 var ErrCausalityBroken = errors.New("order fail: refs an unknown op")
@@ -81,18 +71,50 @@ func (ch *Chotki) Open(orig uint32) (err error) {
 		return
 	}
 	ch.heads = make(map[uint32]uint32)
+	ch.log.Header = &VVFeeder{ // todo limits
+		vv:   ch.heads,
+		lock: &ch.lock,
+	}
 	err = ch.log.Open(path)
+	if err == nil {
+		err = ch.RecoverProgress()
+	}
 	if err != nil {
 		_ = ch.db.DB.Close()
 		return err
 	}
-	// TODO fill vv
-	ch.tcp.Open(func(conn net.Conn) toyqueue.FeederDrainerCloser {
+	ch.last = ch.heads.GetID(orig)
+	ch.tcp.Open(func(conn net.Conn) toyqueue.FeedDrainCloser {
 		return &MasterBaker{replica: ch}
 	})
-	// TODO last id
 	ch.RecoverConnects()
 	return
+}
+
+func (re *Chotki) RecoverProgress() error {
+	reader, err := re.log.Reader(0, toylog.ChunkSeekEnd)
+	if err != nil {
+		return err
+	}
+	feeder := toytlv.FeedSeekCloser{Reader: reader}
+	recs, err := feeder.Feed()
+	if err == nil {
+		err = re.heads.LoadBytes(recs[0])
+	}
+	if err != nil {
+		return err
+	}
+	for {
+		recs, err = feeder.Feed()
+		if len(recs) == 0 || err != nil {
+			break
+		}
+		for _, rec := range recs {
+			seq, src := PacketID(rec)
+			re.heads.Put(seq, src)
+		}
+	}
+	return nil
 }
 
 func (re *Chotki) RecoverConnects() {
@@ -327,9 +349,10 @@ func (ch *Chotki) NewID() ID {
 	return ch.last + 1
 }
 
-func (ch *Chotki) CreateObject(initial Differ) (ID, error) {
+func (ch *Chotki) CreateObject(initial RDT) (ID, error) {
 	id := ch.NewID()
-	diff := initial.Diff(id, nil)
+	diff := initial.Diff(nil)
+	// TODO push id
 	key := id.ZipBytes()
 	err := ch.db.Merge('O', string(key), string(diff))
 	// FIXME log
@@ -340,11 +363,11 @@ func (ch *Chotki) CreateObject(initial Differ) (ID, error) {
 
 // FindObject navigates object fields recursively to reach the object
 // at the specified path.
-func (ch *Chotki) FindObject(root ID, path string, empty Differ) error {
+func (ch *Chotki) FindObject(root ID, path string, empty RDT) error {
 	return nil
 }
 
-func (ch *Chotki) GetObject(id ID, empty Differ) error {
+func (ch *Chotki) GetObject(id ID, empty RDT) error {
 	state, err := ch.db.Get('O', string(id.ZipBytes()))
 	if err != nil {
 		return err
@@ -353,13 +376,14 @@ func (ch *Chotki) GetObject(id ID, empty Differ) error {
 	return nil
 }
 
-func (ch *Chotki) MergeObject(id ID, changed Differ) error {
+func (ch *Chotki) MergeObject(id ID, changed RDT) error {
 	key := string(id.ZipBytes())
 	state, err := ch.db.Get('D', key)
 	if err != nil {
 		return err
 	}
-	diff := changed.Diff(ch.NewID(), []byte(state))
+	diff := changed.Diff([]byte(state))
+	// todo ch.NewID()
 	err = ch.db.Merge('D', key, string(diff))
 	return err
 }

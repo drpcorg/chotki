@@ -40,7 +40,7 @@ func TestChotki_AbsorbBatch(t *testing.T) {
 	err = chotki.AbsorbBatch(Batch{packet})
 	assert.Nil(t, err)
 
-	clr, err := chotki.log.Reader(0)
+	clr, err := chotki.log.Reader(5, 0) // 5: V0000
 	assert.Nil(t, err)
 	logbuf := make([]byte, len(packet))
 	n, err := clr.Read(logbuf)

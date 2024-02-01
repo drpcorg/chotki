@@ -13,6 +13,11 @@ type Example struct {
 	Score Counter
 }
 
+// IR  IRV*
+// I RU RS RC
+// R RU RS RC
+// R RIU RIS RIC
+// fixme object state vs field state vs change pck vs state pck
 func (ex *Example) Apply(i *pebble.Iterator) error {
 	if !i.Next() {
 		return nil

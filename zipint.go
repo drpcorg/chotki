@@ -118,6 +118,35 @@ func UnzipUint64Pair(buf []byte) (big, lil uint64) {
 	return
 }
 
+func UnzipUint32Pair(buf []byte) (big, lil uint32) {
+	switch len(buf) {
+	case 0:
+		return 0, 0
+	case 1:
+		return uint32(buf[0]), 0
+	case 2:
+		return uint32(buf[0]), uint32(buf[1])
+	case 3:
+		big = uint32(binary.LittleEndian.Uint16(buf[0:2]))
+		lil = uint32(buf[2])
+	case 4:
+		big = uint32(binary.LittleEndian.Uint16(buf[0:2]))
+		lil = uint32(binary.LittleEndian.Uint16(buf[2:4]))
+	case 5:
+		big = uint32(binary.LittleEndian.Uint32(buf[0:4]))
+		lil = uint32(buf[4])
+	case 6:
+		big = uint32(binary.LittleEndian.Uint32(buf[0:4]))
+		lil = uint32(binary.LittleEndian.Uint16(buf[4:6]))
+	case 8:
+		big = uint32(binary.LittleEndian.Uint32(buf[0:4]))
+		lil = uint32(binary.LittleEndian.Uint32(buf[4:8]))
+	default:
+		// error!
+	}
+	return
+}
+
 func Uint32Pair(a, b uint32) (x uint64) {
 	return uint64(a) | (uint64(b) << 32)
 }

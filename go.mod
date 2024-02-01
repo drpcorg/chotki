@@ -6,9 +6,9 @@ require (
 	github.com/cockroachdb/pebble v1.0.0
 	github.com/ergochat/readline v0.1.0
 	github.com/learn-decentralized-systems/toykv v0.0.0-20231218053616-8d6e32388877
-	github.com/learn-decentralized-systems/toylog v0.0.0-20240122120451-2050f62d0fd2
-	github.com/learn-decentralized-systems/toyqueue v0.0.0-20240122110842-36f1dc8aa982
-	github.com/learn-decentralized-systems/toytlv v0.1.1
+	github.com/learn-decentralized-systems/toylog v0.1.6
+	github.com/learn-decentralized-systems/toyqueue v0.1.1
+	github.com/learn-decentralized-systems/toytlv v0.1.5
 	github.com/stretchr/testify v1.8.4
 )
 
