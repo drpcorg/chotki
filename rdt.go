@@ -22,5 +22,6 @@ func MakeObjectPacket(id, typedecl ID, states ...[]byte) (packet []byte) {
 		packet = toytlv.Append(packet, 'R', ref.ZipBytes())
 		packet = append(packet, state...)
 	}
-	return packet
+	packet = toytlv.Record('O', packet)
+	return
 }

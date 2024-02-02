@@ -6,6 +6,7 @@ import (
 	"github.com/learn-decentralized-systems/toylog"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
+	"io"
 	"sync"
 )
 
@@ -24,7 +25,7 @@ type MasterBaker struct {
 	replica *Chotki
 	peervv  VV
 	ketchup toyqueue.FeedCloser
-	outq    toyqueue.RecordQueue
+	outq    toyqueue.FeedDrainCloser
 	lock    sync.Mutex
 	cond    sync.Cond
 	inq     toyqueue.Drainer
@@ -32,8 +33,10 @@ type MasterBaker struct {
 }
 
 func (ms *MasterBaker) Advance(new_state int) {
+	fmt.Printf("%d state %d->%d\n", ms.replica.src, ms.state, new_state)
 	ms.lock.Lock()
 	ms.state = new_state
+	ms.cond.Broadcast()
 	ms.lock.Unlock()
 }
 
@@ -43,6 +46,7 @@ func (ms *MasterBaker) Forward(new_state int) (recs toyqueue.Records, err error)
 }
 
 func (ms *MasterBaker) Shutdown(reason error) {
+	fmt.Printf("%d closing %d->%d (%s)\n", ms.replica.src, ms.state, ConnClosing, reason.Error())
 	ms.lock.Lock()
 	ms.state = ConnClosing
 	ms.err = reason
@@ -52,6 +56,7 @@ func (ms *MasterBaker) Shutdown(reason error) {
 func (ms *MasterBaker) Feed() (recs toyqueue.Records, err error) {
 	switch ms.state {
 	case ConnFresh:
+		ms.cond.L = &ms.lock
 		ms.replica.lock.Lock()
 		handshake := toytlv.Record('H',
 			toytlv.Record('I', ms.replica.NewID().ZipBytes()),
@@ -63,31 +68,37 @@ func (ms *MasterBaker) Feed() (recs toyqueue.Records, err error) {
 		return
 	case ConnHsSent:
 		ms.lock.Lock()
+		fmt.Printf("%d waits\n", ms.replica.src)
 		ms.cond.Wait() // wait for their handshake
+		fmt.Printf("%d got hs\n", ms.replica.src)
 		ms.lock.Unlock()
 		return ms.Feed()
 	case ConnHsRecvd:
-		ms.err = ms.OpenLogForCatchUp()
-		if ms.err != nil {
-			return ms.Forward(ConnClosing)
+		recs, err = ms.OpenLogForCatchUp()
+		if err != nil {
+			ms.Shutdown(err)
+			return nil, nil
+		} else if len(recs) > 0 {
+			ms.Advance(ConnReSync)
+			return recs, nil
+		} else {
+			ms.Advance(ConnReSync)
+			return ms.Feed()
 		}
-		return ms.Forward(ConnReSync)
 	case ConnReSync:
 		for len(recs) == 0 && err == nil {
 			recs, err = ms.ketchup.Feed()
-			if len(recs) > 0 && err == nil {
-				recs, err = ms.peervv.Filter(recs)
-			}
+			recs, _ = ms.peervv.Filter(recs) // todo gap etc
 		}
-		if err != nil {
-			ms.Shutdown(err)
-			return ms.Feed()
-		}
-		if len(recs) == 0 { // EOF, caught up
+		if err == io.EOF { // caught up
 			ms.Advance(ConnRunning)
 			ms.replica.lock.Lock()
 			// outq fanout happens after fsynced write...
-			ms.replica.outq = append(ms.replica.outq, &ms.outq)
+			outq := toyqueue.RecordQueue{
+				Limit: 1024,
+			}
+			ms.outq = outq.Blocking()
+			ms.replica.outq = append(ms.replica.outq, ms.outq)
 			ms.replica.lock.Unlock()
 			// ...so we check for concurrent writes here
 			recs, _ = ms.ketchup.Feed()
@@ -99,8 +110,12 @@ func (ms *MasterBaker) Feed() (recs toyqueue.Records, err error) {
 			if len(recs) == 0 {
 				return ms.Feed()
 			}
+		} else if err != nil {
+			ms.Shutdown(err)
+			return ms.Feed()
+		} else {
+			return
 		}
-		return
 	case ConnRunning:
 		for len(recs) == 0 && err == nil {
 			recs, err = ms.outq.Feed()
@@ -138,10 +153,13 @@ func (ms *MasterBaker) Drain(recs toyqueue.Records) (err error) {
 		if ibody == nil || len(rest) == 0 {
 			return ErrProtocolViolation
 		}
-		fmt.Printf("connected: %s\n", UnzipID(ibody).String())
-		vbody, rest := toytlv.Take('V', rest)
+		fmt.Printf("%s connected: %s\n", ms.replica.last.String(), UnzipID(ibody).String())
+		vbody, rest := toytlv.TakeRecord('V', rest)
 		ms.peervv = make(VV)
 		err = ms.peervv.LoadBytes(vbody)
+		for k, v := range ms.peervv {
+			fmt.Printf("%s %x: %x\n", ms.replica.last.String(), k, v)
+		}
 		if err != nil { // up to this point: no need to shut down gracefully
 			return ErrProtocolViolation
 		}
@@ -156,7 +174,7 @@ func (ms *MasterBaker) Drain(recs toyqueue.Records) (err error) {
 		ConnReSync,
 		ConnRunning:
 		// todo err state switches
-		for _, packet := range recs {
+		for _, packet := range recs { // FIXME Filter!!!
 			lit, body, _ := toytlv.TakeAny(packet)
 			if lit == 'B' {
 				ms.Shutdown(ErrShutdown)
@@ -164,7 +182,8 @@ func (ms *MasterBaker) Drain(recs toyqueue.Records) (err error) {
 			}
 			idbody, _ := toytlv.Take('I', body)
 			seqoff, src := UnzipUint32Pair(idbody)
-			order := ms.peervv.Next2(seqoff, src)
+			fmt.Printf("%d got %s\n", ms.replica.src, MakeID(src, seqoff>>OffBits, 0).String())
+			order := ms.peervv.Next2(seqoff>>OffBits, src)
 			if order == VvSeen { // happens normally (e.g. recvd after sent)
 				continue
 			}
@@ -187,33 +206,37 @@ func (ms *MasterBaker) Drain(recs toyqueue.Records) (err error) {
 
 var ErrDivergent = errors.New("divergent replicas")
 
-func (ms *MasterBaker) OpenLogForCatchUp() error {
+func (ms *MasterBaker) OpenLogForCatchUp() (recs toyqueue.Records, err error) {
 	c := int64(0)
 	reader, err := ms.replica.log.Reader(c, toylog.ChunkSeekEnd)
+	if err == nil {
+		_, err = reader.Seek(c, toylog.ChunkSeekEnd)
+	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	feeder := toytlv.FeedSeekCloser{Reader: reader}
 	for {
-		recs, err := feeder.Feed()
-		var vv VV
+		recs, err = feeder.Feed()
+		vv := make(VV)
 		err = vv.LoadBytes(recs[0])
+		recs = recs[1:]
 		if err != nil {
-			return ErrBadVRecord
+			return nil, ErrBadVRecord
 		}
-		if !ms.peervv.Covers(vv) {
+		if ms.peervv.Covers(vv) {
 			break
 		}
 		c++
 		_, err = feeder.Seek(c, toylog.ChunkSeekEnd)
 		if err != nil {
-			return ErrDivergent
+			return nil, ErrDivergent
 		}
 	}
 
 	ms.ketchup = &feeder
 
-	return nil
+	return recs, nil
 }
 
 func (mb *MasterBaker) Close() error {

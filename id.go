@@ -25,6 +25,7 @@ const FieldTypeBits = 5
 const FieldNoBits = OffBits - FieldTypeBits
 const FieldTypeMask = (uint16(1) << FieldTypeBits) - 1
 
+const SeqOne = 1 << OffBits
 const BadId = ID(uint64(0xfff) << SeqOffBits)
 const ZeroId = ID(0)
 

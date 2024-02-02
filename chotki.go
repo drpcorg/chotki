@@ -34,6 +34,7 @@ type Chotki struct {
 	// outq contains outgoing queues; here we broadcast new packets
 	outq []toyqueue.DrainCloser
 	last ID
+	src  uint32
 	lock sync.Mutex
 	opts ChotkiOptions
 }
@@ -84,6 +85,8 @@ func (ch *Chotki) Open(orig uint32) (err error) {
 		return err
 	}
 	ch.last = ch.heads.GetID(orig)
+	ch.src = orig
+	ch.inq.Limit = 8192
 	ch.tcp.Open(func(conn net.Conn) toyqueue.FeedDrainCloser {
 		return &MasterBaker{replica: ch}
 	})
@@ -229,6 +232,7 @@ func (ch *Chotki) AbsorbNewObject(pack []byte, batch *pebble.Batch) (err error) 
 			return ErrGap
 		}
 	}
+	ch.heads[id.Src()] = id.Seq() //FIXME all the vv api
 	tmf, rest, err = TakeIDWary('R', rest)
 	if err != nil {
 		return ErrBadRRecord // todo?
@@ -318,7 +322,8 @@ func (ch *Chotki) AbsorbBatch(pack Batch) (err error) {
 			err = ch.AbsorbNewObject(packet, &pb)
 		case 'E':
 			err = ch.AbsorbNewEdits(packet, &pb)
-		default: // skip unsupported packet
+		default:
+			_, _ = fmt.Fprintf(os.Stderr, "unsupported packet %c skipped\n", lit)
 		}
 	}
 	if err == nil {
@@ -346,7 +351,8 @@ func (ch *Chotki) Close() error {
 }
 
 func (ch *Chotki) NewID() ID {
-	return ch.last + 1
+	ch.last += SeqOne
+	return ch.last
 }
 
 func (ch *Chotki) CreateObject(initial RDT) (ID, error) {

@@ -4,6 +4,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestHandshake(t *testing.T) {
@@ -35,7 +36,10 @@ func TestHandshake(t *testing.T) {
 	err = chotki3.tcp.Connect(address)
 	assert.Nil(t, err)
 
+	time.Sleep(time.Minute * 10) // FIXME :)
+
 	it := chotki3.ObjectIterator(objid)
+	assert.NotNil(t, it)
 	assert.True(t, it.Next())
 	replstate := it.Value()
 	assert.Equal(t, state, replstate)
