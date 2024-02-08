@@ -19,7 +19,7 @@ type Packet []byte
 // Batch of packets
 type Batch [][]byte
 
-type ChotkiOptions struct {
+type Options struct {
 	RelaxedOrder bool
 }
 
@@ -32,11 +32,13 @@ type Chotki struct {
 	// inq is the incoming packet queue; bakers dump incoming packets here
 	inq toyqueue.RecordQueue
 	// outq contains outgoing queues; here we broadcast new packets
-	outq []toyqueue.DrainCloser
-	last ID
-	src  uint32
-	lock sync.Mutex
-	opts ChotkiOptions
+	outq   []toyqueue.DrainCloser
+	evoutq toyqueue.RecordQueue
+	evqs   map[ID]toyqueue.DrainCloser
+	last   ID
+	src    uint32
+	lock   sync.Mutex
+	opts   Options
 }
 
 var ErrCausalityBroken = errors.New("order fail: refs an unknown op")
@@ -84,13 +86,14 @@ func (ch *Chotki) Open(orig uint32) (err error) {
 		_ = ch.db.DB.Close()
 		return err
 	}
-	ch.last = ch.heads.GetID(orig)
+	ch.last = ch.heads.GetLastID(orig)
 	ch.src = orig
 	ch.inq.Limit = 8192
 	ch.tcp.Open(func(conn net.Conn) toyqueue.FeedDrainCloser {
 		return &MasterBaker{replica: ch}
 	})
 	ch.RecoverConnects()
+	go ch.DoProcessPacketQueue()
 	return
 }
 
@@ -113,7 +116,7 @@ func (re *Chotki) RecoverProgress() error {
 			break
 		}
 		for _, rec := range recs {
-			seq, src := PacketID(rec)
+			src, seq := PacketSrcSeq(rec)
 			re.heads.Put(seq, src)
 		}
 	}
@@ -141,27 +144,117 @@ func (re *Chotki) RecoverConnects() {
 	_ = i.Close()
 }
 
-func (ch *Chotki) DoLog() {
-	q := ch.inq.Blocking()
-	for {
-		recs, err := q.Feed()
-		if err != nil {
-			break
-		}
-		err = ch.log.Drain(recs)
-		err = ch.AbsorbBatch(Batch(recs))
-		ch.lock.Lock()
-		outqs := ch.outq
-		ch.lock.Unlock()
-		for i := 0; i < len(outqs); i++ { // fixme lock
-			outq := outqs[i]
-			if outq == nil {
-				continue
-			}
-			err = outq.Drain(recs) // nonblock
-			// fixme expel
+func (ch *Chotki) AddPacketHose(hose toyqueue.DrainCloser) {
+	ch.lock.Lock()
+	ch.outq = append(ch.outq, hose)
+	ch.lock.Unlock()
+}
+
+func (ch *Chotki) RemovePacketHose(hose toyqueue.DrainCloser) {
+	ch.lock.Lock()
+	newlist := make([]toyqueue.DrainCloser, 0, len(ch.outq))
+	for _, o := range ch.outq {
+		if o != hose {
+			newlist = append(newlist, o)
 		}
 	}
+	ch.outq = newlist
+	ch.lock.Unlock()
+}
+
+// Ignores already-seen; returns ErrGap on sequence gaps
+func FilterPackets(vv VV, batch toyqueue.Records) (new_batch toyqueue.Records, err error) {
+	var _ignored [32]int
+	ignored := _ignored[0:0:32]
+	for i, packet := range batch {
+		src, seq := PacketSrcSeq(packet)
+		head, _ := vv[src]
+		if head >= seq {
+			ignored = append(ignored, i)
+		} else if head+1 < seq {
+			err = ErrGap // may be unacceptable
+			ignored = append(ignored, i)
+		}
+	}
+	if len(ignored) == 0 {
+		return batch, nil
+	}
+	new_batch = make(toyqueue.Records, 0, len(batch)-len(ignored))
+	for i, packet := range batch {
+		if len(ignored) == 0 || i != ignored[0] {
+			new_batch = append(new_batch, packet)
+		} else {
+			ignored = ignored[1:]
+		}
+	}
+	return new_batch, err
+}
+
+func (ch *Chotki) ProcessPackets(recs toyqueue.Records) (err error) {
+	pb := pebble.Batch{}
+	pack, _ := FilterPackets(ch.heads, recs) // here we ignore gaps :/
+	rest := pack
+	for len(rest) > 0 && err == nil {
+		packet := rest[0]
+		rest = rest[1:]
+		lit := toytlv.Lit(packet)
+		switch lit {
+		case 'O':
+			err = ch.ParseNewObject(packet, &pb)
+		case 'E':
+			err = ch.ParseEdits(packet, &pb)
+		default:
+			_, _ = fmt.Fprintf(os.Stderr, "unsupported packet %c skipped\n", lit)
+		}
+	}
+	if err != nil {
+		return
+	}
+	err = ch.log.Drain(pack)
+	if err != nil {
+		return
+	}
+	err = ch.log.Sync() // todo Commit() ?!!
+	if err != nil {
+		return
+	}
+	total := uint64(ch.log.TotalSize())
+	err = pb.Set(KeyLogSize, ZipUint64(total), &NonSync)
+	if err != nil {
+		return
+	}
+	// todo ch.last
+	err = ch.db.DB.Apply(&pb, &NonSync)
+	if err != nil {
+		return
+	}
+	ch.lock.Lock()
+	tmpout := ch.outq
+	ch.lock.Unlock()
+	for i := 0; i < len(tmpout); i++ { // fanout
+		outq := tmpout[i]
+		if outq == nil {
+			continue
+		}
+		e := outq.Drain(recs) // nonblock
+		if e != nil {
+			ch.RemovePacketHose(outq)
+		}
+	}
+	return
+}
+
+func (ch *Chotki) DoProcessPacketQueue() {
+	q := ch.inq.Blocking()
+	var err error
+	for err == nil {
+		recs, err := q.Feed()
+		if err != nil {
+			break // closed
+		}
+		err = ch.ProcessPackets(recs)
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "packet processing fail %s", err.Error())
 }
 
 // Event:  [C][len][refid][field:][value][eventid]
@@ -213,7 +306,7 @@ var ErrSrcUnknown = errors.New("source unknown")
 var ErrBadRRecord = errors.New("bad ref record")
 
 // I RX RX RX -> R IX IX IX  TODO type letter in the key
-func (ch *Chotki) AbsorbNewObject(pack []byte, batch *pebble.Batch) (err error) {
+func (ch *Chotki) ParseNewObject(pack []byte, batch *pebble.Batch) (err error) {
 	var id, tmf ID
 	lit, rest, _ := toytlv.TakeAny(pack)
 	if lit != 'O' {
@@ -272,7 +365,7 @@ func (ch *Chotki) AbsorbNewObject(pack []byte, batch *pebble.Batch) (err error) 
 
 var ErrOffsetOpId = errors.New("op id is offset")
 
-func (ch *Chotki) AbsorbNewEdits(pack []byte, batch *pebble.Batch) (err error) {
+func (ch *Chotki) ParseEdits(pack []byte, batch *pebble.Batch) (err error) {
 	lit, rest, _ := toytlv.TakeAny(pack)
 	if lit != 'E' {
 		return ErrBadOPacket
@@ -311,41 +404,13 @@ var KeyLogSize = []byte{'L'}
 
 // todo batching batches
 func (ch *Chotki) AbsorbBatch(pack Batch) (err error) {
-	pb := pebble.Batch{}
-	rest := pack
-	for len(rest) > 0 && err == nil {
-		packet := rest[0]
-		rest = rest[1:]
-		lit := toytlv.Lit(packet)
-		switch lit {
-		case 'O':
-			err = ch.AbsorbNewObject(packet, &pb)
-		case 'E':
-			err = ch.AbsorbNewEdits(packet, &pb)
-		default:
-			_, _ = fmt.Fprintf(os.Stderr, "unsupported packet %c skipped\n", lit)
-		}
-	}
-	if err == nil {
-		err = ch.log.Drain(toyqueue.Records(pack))
-	}
-	if err == nil {
-		err = ch.log.Sync() // FIXME Commit?!!
-	}
-	if err == nil {
-		total := uint64(ch.log.TotalSize())
-		err = pb.Set(KeyLogSize, ZipUint64(total), &NonSync)
-	}
-	if err == nil {
-		err = ch.db.DB.Apply(&pb, &NonSync)
-		// fixme ch.last
-	}
 	return err
 }
 
 func (ch *Chotki) Close() error {
 	ch.db.Close()
 	ch.tcp.Close()
+	_ = ch.inq.Close() // stops packet processing
 	_ = ch.log.Close()
 	return nil
 }

@@ -87,6 +87,13 @@ func main() {
 				ex = -1
 			}
 			os.Exit(ex)
+		case "ping":
+			// args[1] is an object/field id (otherwise create)
+			// subscribe to evs
+			// start
+		case "pong":
+			// args[1] is an object/field
+			// subscribe
 		case "show", "list":
 			//err = re.ShowAll()
 		default:

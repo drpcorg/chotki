@@ -49,39 +49,21 @@ const (
 	VvGap  = 1
 )
 
-func (vv VV) Next(id ID) int {
-	return vv.Next2(id.SeqOff(), id.Src())
+func (vv VV) SeeNextID(id ID) int {
+	return vv.SeeNextSrcSeq(id.Src(), id.SeqOff())
 }
 
-// returns -1 for already seen, 1 for causal gaps, 0 for OK
-func (vv VV) Next2(seqoff, src uint32) int {
+// returns VvSeen for already seen, VvGap for causal gaps, VvNext for OK
+func (vv VV) SeeNextSrcSeq(src, seq uint32) int {
 	val, _ := vv[src]
-	if val >= seqoff {
+	if val >= seq {
 		return VvSeen
 	}
-	if val+1 < seqoff { // FIXME :)
+	if val+1 < seq { // FIXME :)
 		return VvGap
 	}
-	vv[src] = seqoff
+	vv[src] = seq
 	return VvNext
-}
-
-// .{I .*}
-// Ignores already-seen; returns ErrGap on sequence gaps
-func (vv VV) Filter(batch toyqueue.Records) (new_batch toyqueue.Records, err error) {
-	new_batch = make(toyqueue.Records, 0, len(batch))
-	for _, pack := range batch {
-		seq, src := PacketID(pack)
-		val, _ := vv[src]
-		if val >= seq {
-			continue // ignore
-		}
-		if val+1 < seq {
-			return nil, ErrGap
-		}
-		new_batch = append(new_batch, pack)
-	}
-	return new_batch, nil
 }
 
 var ErrBadVRecord = errors.New("bad Vv record")
@@ -111,7 +93,7 @@ func (vv VV) LoadBytes(rec []byte) error {
 	return nil
 }
 
-func (vv VV) Covers(bb VV) bool {
+func (vv VV) Seen(bb VV) bool {
 	for src, bseq := range bb {
 		seq := vv[src]
 		if bseq > seq {
@@ -121,7 +103,7 @@ func (vv VV) Covers(bb VV) bool {
 	return true
 }
 
-func (vv VV) GetID(orig uint32) ID {
+func (vv VV) GetLastID(orig uint32) ID {
 	seq := vv.Get(orig)
 	return MakeID(orig, seq, 0)
 }

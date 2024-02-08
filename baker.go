@@ -88,21 +88,20 @@ func (ms *MasterBaker) Feed() (recs toyqueue.Records, err error) {
 	case ConnReSync:
 		for len(recs) == 0 && err == nil {
 			recs, err = ms.ketchup.Feed()
-			recs, _ = ms.peervv.Filter(recs) // todo gap etc
+			recs, err = FilterPackets(ms.peervv, recs)
+			// err here actually means our log is bad
 		}
 		if err == io.EOF { // caught up
 			ms.Advance(ConnRunning)
-			ms.replica.lock.Lock()
 			// outq fanout happens after fsynced write...
 			outq := toyqueue.RecordQueue{
 				Limit: 1024,
 			}
 			ms.outq = outq.Blocking()
-			ms.replica.outq = append(ms.replica.outq, ms.outq)
-			ms.replica.lock.Unlock()
+			ms.replica.AddPacketHose(&outq)
 			// ...so we check for concurrent writes here
 			recs, _ = ms.ketchup.Feed()
-			recs, err = ms.peervv.Filter(recs)
+			recs, err = FilterPackets(ms.peervv, recs)
 			if err != nil {
 				ms.Shutdown(err)
 				recs = nil
@@ -120,7 +119,7 @@ func (ms *MasterBaker) Feed() (recs toyqueue.Records, err error) {
 		for len(recs) == 0 && err == nil {
 			recs, err = ms.outq.Feed()
 			if err == nil {
-				recs, err = ms.peervv.Filter(recs)
+				recs, err = FilterPackets(ms.peervv, recs)
 			}
 		}
 		if err != nil { // e.g. toyqueue.ErrClosed
@@ -173,7 +172,6 @@ func (ms *MasterBaker) Drain(recs toyqueue.Records) (err error) {
 	case ConnHsRecvd,
 		ConnReSync,
 		ConnRunning:
-		// todo err state switches
 		for _, packet := range recs { // FIXME Filter!!!
 			lit, body, _ := toytlv.TakeAny(packet)
 			if lit == 'B' {
@@ -181,10 +179,11 @@ func (ms *MasterBaker) Drain(recs toyqueue.Records) (err error) {
 				return nil
 			}
 			idbody, _ := toytlv.Take('I', body)
-			seqoff, src := UnzipUint32Pair(idbody)
-			fmt.Printf("%d got %s\n", ms.replica.src, MakeID(src, seqoff>>OffBits, 0).String())
-			order := ms.peervv.Next2(seqoff>>OffBits, src)
-			if order == VvSeen { // happens normally (e.g. recvd after sent)
+			seqoff, src := UnzipUint64Pair(idbody)
+			seq := uint32(seqoff >> OffBits)
+			fmt.Printf("%d got %s\n", ms.replica.src, MakeID(uint32(src), seq, 0).String())
+			order := ms.peervv.SeeNextSrcSeq(uint32(src), seq) // FIXME no filtering here, but remember ids
+			if order == VvSeen {                               // happens normally (e.g. recvd after sent)
 				continue
 			}
 			if order == VvGap { // clearly some problem
@@ -224,7 +223,7 @@ func (ms *MasterBaker) OpenLogForCatchUp() (recs toyqueue.Records, err error) {
 		if err != nil {
 			return nil, ErrBadVRecord
 		}
-		if ms.peervv.Covers(vv) {
+		if ms.peervv.Seen(vv) {
 			break
 		}
 		c++
