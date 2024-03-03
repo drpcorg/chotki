@@ -32,13 +32,15 @@ type Chotki struct {
 	// inq is the incoming packet queue; bakers dump incoming packets here
 	inq toyqueue.RecordQueue
 	// outq contains outgoing queues; here we broadcast new packets
-	outq   []toyqueue.DrainCloser
-	evoutq toyqueue.RecordQueue
-	evqs   map[ID]toyqueue.DrainCloser
-	last   ID
-	src    uint32
-	lock   sync.Mutex
-	opts   Options
+	outq     []toyqueue.DrainCloser
+	evoutq   toyqueue.RecordQueue
+	evqs     map[ID]toyqueue.DrainCloser
+	last     ID
+	lastsync ID
+	src      uint32
+	lock     sync.Mutex
+	drum     sync.Cond
+	opts     Options
 }
 
 var ErrCausalityBroken = errors.New("order fail: refs an unknown op")
@@ -87,6 +89,7 @@ func (ch *Chotki) Open(orig uint32) (err error) {
 		return err
 	}
 	ch.last = ch.heads.GetLastID(orig)
+	ch.drum.L = &ch.lock
 	ch.src = orig
 	ch.inq.Limit = 8192
 	ch.tcp.Open(func(conn net.Conn) toyqueue.FeedDrainCloser {
@@ -229,6 +232,8 @@ func (ch *Chotki) ProcessPackets(recs toyqueue.Records) (err error) {
 		return
 	}
 	ch.lock.Lock()
+	ch.lastsync = ch.heads.GetLastID(ch.src)
+	ch.drum.Broadcast()
 	tmpout := ch.outq
 	ch.lock.Unlock()
 	for i := 0; i < len(tmpout); i++ { // fanout
@@ -257,7 +262,7 @@ func (ch *Chotki) DoProcessPacketQueue() {
 	_, _ = fmt.Fprintf(os.Stderr, "packet processing fail %s", err.Error())
 }
 
-// Event:  [C][len][refid][field:][value][eventid]
+// Event:  [C][len][refid][field:][value][eventid] fixme obsolete
 func (ch *Chotki) ParseOp(lit byte, body []byte) error {
 	refbytes := body[:8]
 	ref := ID(binary.BigEndian.Uint64(refbytes))
@@ -415,21 +420,25 @@ func (ch *Chotki) Close() error {
 	return nil
 }
 
-func (ch *Chotki) NewID() ID {
-	ch.last += SeqOne
-	return ch.last
+func Join(records ...[]byte) (ret []byte) {
+	for _, rec := range records {
+		ret = append(ret, rec...)
+	}
+	return
 }
 
-func (ch *Chotki) CreateObject(initial RDT) (ID, error) {
-	id := ch.NewID()
-	diff := initial.Diff(nil)
-	// TODO push id
-	key := id.ZipBytes()
-	err := ch.db.Merge('O', string(key), string(diff))
-	// FIXME log
-	// FIXME commit
-	// FIXME read back
-	return id, err
+func (ch *Chotki) CommitPacket(lit byte, body toyqueue.Records) (id ID, err error) {
+	ch.lock.Lock()
+	ch.last += SeqOne
+	id = ch.last
+	i := toytlv.Record('I', id.ZipBytes())
+	packet := toytlv.Record(lit, i, Join(body...))
+	err = ch.inq.Blocking().Drain(toyqueue.Records{packet})
+	for ch.lastsync < id {
+		ch.drum.Wait()
+	}
+	ch.lock.Unlock()
+	return
 }
 
 // FindObject navigates object fields recursively to reach the object

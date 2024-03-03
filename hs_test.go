@@ -11,6 +11,11 @@ func TestHandshake(t *testing.T) {
 	_ = os.RemoveAll("cho2")
 	_ = os.RemoveAll("cho3")
 
+	example := Example{
+		Name:  "test",
+		Score: 123,
+	}
+
 	var chotki2 Chotki
 	chotki2.opts.RelaxedOrder = true
 	err := chotki2.Open(2)
@@ -21,11 +26,8 @@ func TestHandshake(t *testing.T) {
 	err = chotki3.Open(3)
 	assert.Nil(t, err)
 
-	u := Uint64(123)
-	state := u.Diff(nil)
-	objid := chotki2.NewID()
-	packet := MakeObjectPacket(objid, ZeroId, state)
-	err = chotki2.AbsorbBatch(Batch{packet})
+	state, _ := example.Store(nil)
+	objid, err := chotki2.CommitPacket('O', state)
 	assert.Nil(t, err)
 
 	address := "localhost:1234"
@@ -39,13 +41,10 @@ func TestHandshake(t *testing.T) {
 	time.Sleep(time.Minute * 10) // FIXME :)
 
 	it := chotki3.ObjectIterator(objid)
-	assert.NotNil(t, it)
-	assert.True(t, it.Next())
-	replstate := it.Value()
-	assert.Equal(t, state, replstate)
-	u2 := Uint64(0)
-	u2.Apply(replstate)
-	assert.Equal(t, uint64(u2), uint64(123))
+	var example2 Example
+	err = example2.Load(it)
+	assert.Nil(t, err)
+	assert.Equal(t, example2, example)
 
 	err = chotki2.Close()
 	assert.Nil(t, err)

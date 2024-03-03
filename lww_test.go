@@ -1,77 +1,60 @@
 package main
 
 import (
-	"github.com/learn-decentralized-systems/toytlv"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
-func TestLWWMergeString(t *testing.T) {
-	args := [][]byte{
-		toytlv.Concat(
-			toytlv.Record('I', ParseID("345-b").ZipBytes()),
-			toytlv.Record('S',
-				toytlv.Record('T', ZipUint64(1)),
-				[]byte("hello world 1"),
-			),
-		),
-		toytlv.Concat(
-			toytlv.Record('I', ParseID("45-d").ZipBytes()),
-			toytlv.Record('S',
-				toytlv.Record('T', ZipUint64(3)),
-				[]byte("hello world 3"),
-			),
-		),
-		toytlv.Concat(
-			toytlv.Record('I', ParseID("123-c").ZipBytes()),
-			toytlv.Record('S',
-				toytlv.Record('T', ZipUint64(2)),
-				[]byte("hello world 2"),
-			),
-		),
-	}
-	result := LMerge(args)
-	correct := toytlv.Concat(
-		toytlv.Record('I', ParseID("45-d").ZipBytes()),
-		toytlv.Record('S',
-			toytlv.Record('T', ZipUint64(3)),
-			[]byte("hello world 3"),
-		),
-	)
-	assert.Equal(t, correct, result)
+func TestI(t *testing.T) {
+	str1 := "123"
+	tlv1 := Iparse(str1)
+	int1 := int64(123)
+	assert.Equal(t, tlv1, Itlv(int1))
+	str2 := "345"
+	tlv2 := Iparse(str2)
+	delta12 := Idelta(tlv1, tlv2)
+	merged := Imerge([][]byte{tlv1, delta12})
+	assert.Equal(t, str2, Istring(merged))
 }
 
-func TestLWWMergeInt(t *testing.T) {
-	args := [][]byte{
-		toytlv.Concat(
-			toytlv.Record('I', ParseID("345-b").ZipBytes()),
-			toytlv.Record('U',
-				toytlv.Record('T', ZipUint64(1)),
-				ZipUint64(1),
-			),
-		),
-		toytlv.Concat(
-			toytlv.Record('I', ParseID("45-d").ZipBytes()),
-			toytlv.Record('U',
-				toytlv.Record('T', ZipUint64(3)),
-				ZipUint64(3),
-			),
-		),
-		toytlv.Concat(
-			toytlv.Record('I', ParseID("123-c").ZipBytes()),
-			toytlv.Record('U',
-				toytlv.Record('T', ZipUint64(2)),
-				ZipUint64(2),
-			),
-		),
-	}
-	result := LMerge(args)
-	correct := toytlv.Concat(
-		toytlv.Record('I', ParseID("45-d").ZipBytes()),
-		toytlv.Record('U',
-			toytlv.Record('T', ZipUint64(3)),
-			ZipUint64(3),
-		),
-	)
-	assert.Equal(t, correct, result)
+func TestS(t *testing.T) {
+	str1 := "fcuk\n\"zis\"\n"
+	tlv1 := Stlv(str1)
+	quoted := Sstring(tlv1)
+	unquoted := string(LWWvalue(Sparse(quoted)))
+	assert.Equal(t, str1, unquoted)
+	assert.Equal(t, str1, Splain(tlv1))
+	str2 := "fcuk\n\"zat\"\n"
+	tlv2 := Stlv(str2)
+	delta12 := Sdelta(tlv1, tlv2)
+	merged := Smerge([][]byte{tlv1, delta12})
+	assert.Equal(t, str2, Splain(merged))
+}
+
+func TestR(t *testing.T) {
+	str1 := "ae-32"
+	tlv1 := Rparse(str1)
+	id1 := MakeID(0xae, 0x32, 0)
+	id2 := Rplain(tlv1)
+	assert.Equal(t, id1, id2)
+
+	str2 := "ae-33"
+	tlv2 := Rparse(str2)
+	delta12 := Rdelta(tlv1, tlv2)
+	merged := Rmerge([][]byte{tlv1, delta12})
+	assert.Equal(t, str2, Rstring(merged))
+}
+
+func TestF(t *testing.T) {
+	str1 := "3.1415"
+	tlv1 := Fparse(str1)
+	id1 := 3.1415
+	id2 := Fplain(tlv1)
+	assert.Equal(t, id1, id2)
+
+	str2 := "3.141592"
+	tlv2 := Fparse(str2)
+	delta12 := Fdelta(tlv1, tlv2)
+	merged := Fmerge([][]byte{tlv1, delta12})
+	assert.Equal(t, str2, Fstring(merged))
 }

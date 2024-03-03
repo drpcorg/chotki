@@ -59,7 +59,7 @@ func (ms *MasterBaker) Feed() (recs toyqueue.Records, err error) {
 		ms.cond.L = &ms.lock
 		ms.replica.lock.Lock()
 		handshake := toytlv.Record('H',
-			toytlv.Record('I', ms.replica.NewID().ZipBytes()),
+			toytlv.Record('I', ms.replica.last.ZipBytes()),
 			ms.replica.heads.Bytes(),
 		)
 		recs = append(recs, handshake)

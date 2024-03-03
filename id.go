@@ -58,6 +58,13 @@ func MakeField(rdt byte, field byte) (off uint16) {
 	return
 }
 
+func (id ID) FieldRDT() (field, rdt byte) {
+	const FieldNoMask = (1 << FieldNoBits) - 1
+	rdt = byte(uint16(id)&FieldTypeMask) + 'A'
+	field = uint8(id>>FieldTypeBits) & FieldNoMask
+	return
+}
+
 func FieldNameType(off uint16) (field, rdt byte) {
 	rdt = byte((off & FieldTypeMask) + 'A')
 	field = byte(off >> FieldTypeBits)
@@ -202,7 +209,18 @@ func UnHex(hex []byte) (num uint64) {
 	return
 }
 
-func ParseID(id string) ID {
+func ParseIDString(id string) ID {
+	return ParseID([]byte(id))
+}
+
+func ParseBracketedID(bid []byte) ID {
+	if len(bid) < 7 || bid[0] != '{' || bid[len(bid)-1] != '}' {
+		return BadId
+	}
+	return ParseID(bid[1 : len(bid)-1])
+}
+
+func ParseID(id []byte) ID {
 	if len(id) > 16+2 {
 		return BadId
 	}

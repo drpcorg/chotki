@@ -37,8 +37,14 @@ func (a *PebbleMergeAdaptor) Finish(includesBase bool) (res []byte, cl io.Closer
 	switch rdt {
 	case 'C':
 		res = CMerge(inputs) // TODO error?
-	case 'S', 'U', 'N':
-		res = LMerge(inputs)
+	case 'I':
+		res = Imerge(inputs)
+	case 'S':
+		res = Smerge(inputs)
+	case 'R':
+		res = Rmerge(inputs)
+	case 'F':
+		res = Fmerge(inputs)
 	case 'V':
 		res = VMerge(inputs)
 	default:

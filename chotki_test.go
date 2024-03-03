@@ -15,8 +15,8 @@ func TestChotki_AbsorbBatch(t *testing.T) {
 	err := chotki.Open(14)
 	assert.Nil(t, err)
 
-	typeid := ParseID("8e-5e84")
-	oid := ParseID("8e-82f0")
+	typeid := ParseIDString("8e-5e84")
+	oid := ParseIDString("8e-82f0")
 	name := []byte("John Brown")
 
 	packet := toytlv.Concat(
@@ -75,7 +75,7 @@ func TestChotki_AbsorbBatch(t *testing.T) {
 	iter := chotki.ObjectIterator(oid)
 	assert.NotNil(t, iter)
 	var ex Example
-	err = ex.Apply(iter)
+	err = ex.Load(iter)
 	assert.Nil(t, err)
 	assert.Equal(t, string(name), string(ex.Name))
 	assert.Equal(t, uint64(99), uint64(ex.Score))
@@ -83,13 +83,13 @@ func TestChotki_AbsorbBatch(t *testing.T) {
 
 	edits := Batch{
 		toytlv.Record('E',
-			toytlv.Record('I', ParseID("8f-204").ZipBytes()),
-			toytlv.Record('R', ParseID("8e-82f0-42").ZipBytes()),
+			toytlv.Record('I', ParseIDString("8f-204").ZipBytes()),
+			toytlv.Record('R', ParseIDString("8e-82f0-42").ZipBytes()),
 			toytlv.Record('C', ZipUint64(ZigZagInt64(1))),
 		),
 		toytlv.Record('E',
-			toytlv.Record('I', ParseID("11-7f2").ZipBytes()),
-			toytlv.Record('R', ParseID("8e-82f0-32").ZipBytes()),
+			toytlv.Record('I', ParseIDString("11-7f2").ZipBytes()),
+			toytlv.Record('R', ParseIDString("8e-82f0-32").ZipBytes()),
 			toytlv.Record('S',
 				toytlv.Record('T', ZipUint64(1)),
 				[]byte("John F. Brown"),
@@ -101,7 +101,7 @@ func TestChotki_AbsorbBatch(t *testing.T) {
 	assert.Nil(t, err)
 
 	johnfbrown := toytlv.Concat(
-		toytlv.Record('I', ParseID("11-7f2-1").ZipBytes()),
+		toytlv.Record('I', ParseIDString("11-7f2-1").ZipBytes()),
 		toytlv.Record('S',
 			toytlv.Record('T', ZipUint64(1)),
 			[]byte("John F. Brown"),
@@ -109,7 +109,7 @@ func TestChotki_AbsorbBatch(t *testing.T) {
 	)
 
 	state100 := toytlv.Concat(
-		toytlv.Record('I', ParseID("8f-204-1").ZipBytes()),
+		toytlv.Record('I', ParseIDString("8f-204-1").ZipBytes()),
 		toytlv.Record('C', ZipZagInt64(1)),
 		toytlv.Record('I', oid.ToOff(2).ZipBytes()),
 		toytlv.Record('C', ZipZagInt64(99)),

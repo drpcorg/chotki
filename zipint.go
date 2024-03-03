@@ -190,6 +190,9 @@ func ZipZagInt64(i int64) []byte {
 }
 
 func ZipInt64(v int64) []byte {
-	// TODO zigzag
-	return nil
+	return ZipUint64(ZigZagInt64(v))
+}
+
+func UnzipInt64(zip []byte) int64 {
+	return ZagZigUint64(UnzipUint64(zip))
 }

@@ -1,8 +1,12 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/ergochat/readline"
+	"github.com/learn-decentralized-systems/toyqueue"
+	"github.com/learn-decentralized-systems/toytlv"
 	"io"
 	"os"
 	"strings"
@@ -24,6 +28,69 @@ func filterInput(r rune) (rune, bool) {
 		return r, false
 	}
 	return r, true
+}
+
+func ShowObject(chotki *Chotki, id ID) error {
+	i := chotki.ObjectIterator(id)
+	for i.Valid() {
+		keyid := ParseID(i.Key()[1:])
+		field, rdt := keyid.FieldRDT()
+		_, _ = fmt.Fprintf(os.Stderr, "%c#%d\t\n", rdt, field)
+	}
+	return nil
+}
+
+var ErrBadObjectJson = errors.New("bad JSON object serialization")
+var ErrUnsupportedType = errors.New("unsupported field type")
+
+func CreateObjectFromList(chotki *Chotki, list []interface{}) (id ID, err error) {
+	packet := toyqueue.Records{}
+	// todo ref type json
+	// todo add id, ref
+	for n, f := range list {
+		var rdt byte
+		var body []byte
+		switch f.(type) {
+		case int64:
+			rdt = 'C'
+			body = CState(f.(int64))
+		case float64:
+			rdt = 'N'
+		case string:
+			str := f.(string)
+			id := ParseBracketedID([]byte(str))
+			if id != BadId { // check for id-ness
+				rdt = 'L'
+				body = LState(id, 0)
+			} else {
+				rdt = 'S'
+				body = Stlv(str)
+			}
+		default:
+			err = ErrUnsupportedType
+			return
+		}
+		foff := MakeField(rdt, byte(n))
+		packet = append(packet, toytlv.Record('R', ZipUint64(uint64(foff))))
+		packet = append(packet, toytlv.Record(rdt, body))
+	}
+	return chotki.CommitPacket('O', packet)
+}
+
+// ["{10-4f8-0}", +1, "string", 1.0, ...]
+func CreateObject(chotki *Chotki, jsn []byte) (id ID, err error) {
+	var parsed interface{}
+	err = json.Unmarshal(jsn, &parsed)
+	if err != nil {
+		return
+	}
+	switch parsed.(type) {
+	case []interface{}:
+		id, err = CreateObjectFromList(chotki, parsed.([]interface{}))
+	default:
+		err = ErrBadObjectJson
+	}
+	return
 }
 
 func main() {
@@ -50,12 +117,12 @@ func main() {
 		rno := uint32(1)
 		_, err := fmt.Sscanf(os.Args[1], "%d", &rno)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Usage: Chotki 123")
+			_, _ = fmt.Fprintln(os.Stderr, "Usage: Chotki 123")
 			os.Exit(-2)
 		}
 		err = re.Open(rno)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
+			_, _ = fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(-1)
 		}
 	}
@@ -75,6 +142,7 @@ func main() {
 		line = strings.TrimSpace(line)
 		args := strings.Split(line, " ")
 		cmd := args[0]
+		args = args[1:]
 		err = nil
 		switch cmd {
 		case "listen":
@@ -83,7 +151,7 @@ func main() {
 			ex := 0
 			err = re.Close()
 			if err != nil {
-				fmt.Fprintln(os.Stderr, err.Error())
+				_, _ = fmt.Fprintln(os.Stderr, err.Error())
 				ex = -1
 			}
 			os.Exit(ex)
@@ -95,13 +163,23 @@ func main() {
 			// args[1] is an object/field
 			// subscribe
 		case "show", "list":
-			//err = re.ShowAll()
+			for _, arg := range args {
+				id := ParseIDString(arg)
+				if id == BadId {
+					_, _ = fmt.Fprintf(os.Stderr, "bad id %s\n", arg)
+					break
+				}
+				err = ShowObject(&re, id)
+				if err != nil {
+					_, _ = fmt.Fprintln(os.Stderr, err.Error())
+				}
+			}
 		default:
-			fmt.Fprintf(os.Stderr, "command unknown: %s\n", cmd)
+			_, _ = fmt.Fprintf(os.Stderr, "command unknown: %s\n", cmd)
 		}
 
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error executing %s: %s\n", cmd, err.Error())
+			_, _ = fmt.Fprintf(os.Stderr, "Error executing %s: %s\n", cmd, err.Error())
 		}
 	}
 }

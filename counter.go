@@ -4,7 +4,7 @@ import (
 	"github.com/learn-decentralized-systems/toytlv"
 )
 
-type Counter int64
+type counter64 int64
 
 func ProbeID(lit byte, input []byte) ID {
 	idbody, _ := toytlv.Take(lit, input)
@@ -49,6 +49,10 @@ func CMerge(inputs [][]byte) (merged []byte) {
 	return
 }
 
+func CState(sum int64) []byte {
+	return toytlv.Record('C', ZipZagInt64(sum))
+}
+
 func parseC(state []byte, src uint32) (sum, mine int64) {
 	rest := state
 	var err error
@@ -69,12 +73,12 @@ func parseC(state []byte, src uint32) (sum, mine int64) {
 	return
 }
 
-func (c *Counter) Apply(state []byte) {
+func (c *counter64) Apply(state []byte) {
 	sum, _ := parseC(state, 0)
-	*c = Counter(sum)
+	*c = counter64(sum)
 }
 
-func (c Counter) Diff(id ID, state []byte) (changes []byte) {
+func (c counter64) Diff(id ID, state []byte) (changes []byte) {
 	sum, mine := parseC(state, id.Src())
 	if sum != int64(c) {
 		d := int64(c) - sum
