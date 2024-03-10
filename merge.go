@@ -46,7 +46,7 @@ func (a *PebbleMergeAdaptor) Finish(includesBase bool) (res []byte, cl io.Closer
 	case 'F':
 		res = Fmerge(inputs)
 	case 'V':
-		res = VMerge(inputs)
+		res = Vmerge(inputs)
 	default:
 		res = AMerge(inputs)
 	}
@@ -61,7 +61,7 @@ func AMerge(inputs [][]byte) []byte {
 	return ret
 }
 
-func VMerge(inputs [][]byte) (merged []byte) {
+func Vmerge(inputs [][]byte) (merged []byte) {
 	var _heap [32]uint64
 	heap := Uint64Heap(_heap[0:0])
 	for i, in := range inputs { // fixme 4096

@@ -2,9 +2,7 @@ package main
 
 import (
 	"errors"
-	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
-	"sync"
 )
 
 type VV map[uint32]uint32
@@ -14,8 +12,23 @@ func (vv VV) Get(orig uint32) (val uint32) {
 	return
 }
 
-func (vv VV) Put(orig, val uint32) {
-	vv[orig] = val
+func (vv VV) Set(src, seq uint32) {
+	vv[src] = seq
+}
+
+// Adds the src-seq pair to the VV, returns whether it was unseen
+func (vv VV) Put(src, seq uint32) bool {
+	pre, ok := vv[src]
+	if ok && pre >= seq {
+		return false
+	}
+	vv[src] = seq
+	return true
+}
+
+// Adds the id to the VV, returns whether it was unseen
+func (vv VV) PutID(id ID) bool {
+	return vv.Put(id.Src(), id.Seq())
 }
 
 var ErrSeen = errors.New("previously seen id")
@@ -34,7 +47,7 @@ func (vv VV) PutSeq(orig, val uint32) error {
 }
 
 // TLV Vv record
-func (vv VV) Bytes() (ret []byte) {
+func (vv VV) TLV() (ret []byte) {
 	bm, ret := toytlv.OpenHeader(ret, 'V')
 	for orig, seq := range vv {
 		ret = toytlv.Append(ret, 'V', ZipUint64Pair(uint64(seq), uint64(orig)))
@@ -69,7 +82,7 @@ func (vv VV) SeeNextSrcSeq(src, seq uint32) int {
 var ErrBadVRecord = errors.New("bad Vv record")
 
 // consumes: Vv record
-func (vv VV) LoadBytes(rec []byte) error {
+func (vv VV) AddTLV(rec []byte) error {
 	lit, body, rest, err := toytlv.TakeAnyWary(rec)
 	if err != nil {
 		return err
@@ -103,23 +116,7 @@ func (vv VV) Seen(bb VV) bool {
 	return true
 }
 
-func (vv VV) GetLastID(orig uint32) ID {
+func (vv VV) GetID(orig uint32) ID {
 	seq := vv.Get(orig)
 	return MakeID(orig, seq, 0)
-}
-
-type VVFeeder struct {
-	vv   VV
-	lock sync.Locker
-}
-
-func (vvf VVFeeder) Feed() (recs toyqueue.Records, err error) {
-	if vvf.lock != nil {
-		vvf.lock.Lock()
-	}
-	recs = toyqueue.Records{vvf.vv.Bytes()}
-	if vvf.lock != nil {
-		vvf.lock.Unlock()
-	}
-	return
 }

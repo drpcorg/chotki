@@ -1,11 +1,13 @@
 package main
 
-import "github.com/learn-decentralized-systems/toytlv"
+import (
+	"github.com/learn-decentralized-systems/toyqueue"
+)
 
 type FieldTrigger func(id ID, state []byte)
 
 type ObjectListener struct {
-	inq   toytlv.FeedCloser
+	inq   toyqueue.FeedCloser
 	lstns map[ID][]*FieldTrigger
 }
 

@@ -7,8 +7,8 @@ require (
 	github.com/ergochat/readline v0.1.0
 	github.com/learn-decentralized-systems/toykv v0.0.0-20231218053616-8d6e32388877
 	github.com/learn-decentralized-systems/toylog v0.1.6
-	github.com/learn-decentralized-systems/toyqueue v0.1.1
-	github.com/learn-decentralized-systems/toytlv v0.1.5
+	github.com/learn-decentralized-systems/toyqueue v0.1.2
+	github.com/learn-decentralized-systems/toytlv v0.1.9
 	github.com/stretchr/testify v1.8.4
 )
 
@@ -35,7 +35,7 @@ require (
 	github.com/prometheus/common v0.32.1 // indirect
 	github.com/prometheus/procfs v0.7.3 // indirect
 	golang.org/x/exp v0.0.0-20200513190911-00229845015e // indirect
-	golang.org/x/sys v0.16.0 // indirect
+	golang.org/x/sys v0.18.0 // indirect
 	golang.org/x/text v0.9.0 // indirect
 	google.golang.org/protobuf v1.27.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

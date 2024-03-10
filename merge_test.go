@@ -20,7 +20,7 @@ func TestVMerge(t *testing.T) {
 			toytlv.Record('V', ParseIDString("a-234").ZipBytes()),
 		),
 	}
-	//result := VMerge(args)
+	//result := Vmerge(args)
 	ma := PebbleMergeAdaptor{
 		key: OKey(ID(0).ToOff(VVName)),
 	}

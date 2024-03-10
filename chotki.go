@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"github.com/cockroachdb/pebble"
 	"github.com/learn-decentralized-systems/toykv"
-	"github.com/learn-decentralized-systems/toylog"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
+	"golang.org/x/sys/unix"
+	"io"
+	"io/fs"
 	"net"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -21,26 +25,41 @@ type Batch [][]byte
 
 type Options struct {
 	RelaxedOrder bool
+	MaxLogLen    int64
 }
 
 // TLV all the way down
 type Chotki struct {
-	db    toykv.KeyValueStore
-	log   toylog.ChunkedLog
-	tcp   toytlv.TCPDepot
-	heads VV
+	last     ID // TODO uint32
+	lastsync ID // todo ?
+	src      uint32
+
+	db     toykv.KeyValueStore
+	chunks []toytlv.File
+	offs   []int64
+	loglen int64
+	heads  VV
+	dir    string
+
+	tcp toytlv.TCPDepot
 	// inq is the incoming packet queue; bakers dump incoming packets here
 	inq toyqueue.RecordQueue
-	// outq contains outgoing queues; here we broadcast new packets
-	outq     []toyqueue.DrainCloser
-	evoutq   toyqueue.RecordQueue
-	evqs     map[ID]toyqueue.DrainCloser
-	last     ID
-	lastsync ID
-	src      uint32
-	lock     sync.Mutex
-	drum     sync.Cond
-	opts     Options
+	// queues to broadcast all new packets
+	outq []toyqueue.DrainCloser
+
+	//evoutq   toyqueue.RecordQueue
+	//evqs     map[ID]toyqueue.DrainCloser
+
+	lock sync.Mutex
+	// notifies of new log records
+	drum sync.Cond
+
+	// The total written/synced length of the log. "Total" means
+	// counting all past chunks, including those already dropped.
+	//wrlen, sylen int64
+	//reclen       int
+
+	opts Options
 }
 
 var ErrCausalityBroken = errors.New("order fail: refs an unknown op")
@@ -52,8 +71,126 @@ func OKey(id ID) []byte {
 	return id.Hex583(ret[:1])
 }
 
-func ReplicaFilename(rno uint32) string {
+func (ch *Chotki) Source() uint32 {
+	return ch.src
+}
+
+func ReplicaDirName(rno uint32) string {
 	return fmt.Sprintf("cho%d", rno)
+}
+
+// GetLogChunk returns a n-th log chunk (if negative index: -1 is the last, etc)
+// returns nil if there is no such chunk
+func (ch *Chotki) GetLogChunk(ndx int) (chunk *toytlv.File, pos int64) {
+	if ndx < 0 {
+		ndx = len(ch.chunks) + ndx
+		if ndx < 0 {
+			return nil, -1
+		}
+	} else if ndx >= len(ch.chunks) {
+		return nil, -1
+	}
+	return &ch.chunks[ndx], ch.offs[ndx]
+}
+
+func (ch *Chotki) FindLogChunk(pos int64) (chunk *toytlv.File, offset int64) {
+	for i := len(ch.chunks); i >= 0; i-- {
+		if ch.offs[i] <= pos {
+			return &ch.chunks[i], pos - ch.offs[i]
+			// todo overshoot
+		}
+	}
+	return nil, -1
+}
+
+func (ch *Chotki) fn4pos(pos int64) string {
+	return fmt.Sprintf(ch.dir+string(os.PathSeparator)+"%012d"+Suffix, pos)
+}
+
+var ErrAlreadyOpen = errors.New("the db is already open")
+var ErrOmission = errors.New("the log has missing chunks")
+var ErrOverlap = errors.New("the log has overlapping chunks")
+
+const Suffix = ".log.chunk"
+
+func (ch *Chotki) createNewChunk() (err error) {
+	loglen := ch.loglen
+	path := ch.fn4pos(loglen)
+	var file *toytlv.File
+	file, err = toytlv.CreateFile(path, 0)
+	if err != nil {
+		return
+	}
+	ch.offs = append(ch.offs, loglen)
+	ch.chunks = append(ch.chunks, *file)
+	//drain, _ := file.Drainer()
+	//err = drain.Drain(toyqueue.Records{ch.heads.TLV()})
+	return
+}
+
+func (o *Options) SetDefaults() {
+	if o.MaxLogLen == 0 {
+		o.MaxLogLen = 1 << 23
+	}
+}
+
+func (ch *Chotki) loadLogChunks() (err error) {
+	if len(ch.chunks) > 0 {
+		return ErrAlreadyOpen
+	}
+	var info os.FileInfo
+	info, err = os.Stat(ch.dir)
+	if err != nil {
+		err = os.MkdirAll(ch.dir, os.ModeDir|os.ModePerm)
+		if err != nil {
+			return err
+		}
+	} else if !info.IsDir() {
+		return fs.ErrExist
+	}
+	var entries []os.DirEntry
+	entries, err = os.ReadDir(ch.dir)
+	if err != nil {
+		return
+	}
+	filenames := []string{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), Suffix) || len(e.Name()) != 12+4 {
+			continue
+		}
+		filenames = append(filenames, e.Name())
+	}
+	next := int64(0)
+	sort.Strings(filenames)
+	for _, fn := range filenames {
+		var start int64
+		n, err := fmt.Sscanf(fn, "%d"+Suffix, &start)
+		if err != nil || n != 1 {
+			continue
+		}
+		if next == 0 {
+			next = start
+		} else if next < start {
+			return ErrOmission
+		} else if next > start {
+			return ErrOverlap
+		}
+		path := ch.dir + string(os.PathSeparator) + fn
+		var file *toytlv.File
+		file, err = toytlv.OpenFile(path)
+		if err != nil {
+			return err
+		}
+		stat := unix.Stat_t{}
+		err = unix.Stat(path, &stat)
+		if err != nil {
+			return err
+		}
+		next += stat.Size
+		ch.offs = append(ch.offs, start)
+		ch.chunks = append(ch.chunks, *file)
+	}
+	return nil
 }
 
 func (ch *Chotki) Open(orig uint32) (err error) {
@@ -70,25 +207,26 @@ func (ch *Chotki) Open(orig uint32) (err error) {
 				return &pma, nil
 			},
 		}}
-	path := ReplicaFilename(orig)
+	ch.opts.SetDefaults() // todo param
+	path := ReplicaDirName(orig)
 	ch.db.DB, err = pebble.Open(path, &opts)
 	if err != nil {
 		return
 	}
 	ch.heads = make(map[uint32]uint32)
-	ch.log.Header = &VVFeeder{ // todo limits
-		vv:   ch.heads,
-		lock: &ch.lock,
-	}
-	err = ch.log.Open(path)
+	ch.dir = path
+	err = ch.loadLogChunks()
 	if err == nil {
-		err = ch.RecoverProgress()
+		err = ch.recoverProgress() // loglen catch-up
+	}
+	if err == nil {
+		err = ch.createNewChunk()
 	}
 	if err != nil {
 		_ = ch.db.DB.Close()
 		return err
 	}
-	ch.last = ch.heads.GetLastID(orig)
+	ch.last = ch.heads.GetID(orig)
 	ch.drum.L = &ch.lock
 	ch.src = orig
 	ch.inq.Limit = 8192
@@ -100,46 +238,47 @@ func (ch *Chotki) Open(orig uint32) (err error) {
 	return
 }
 
-func (re *Chotki) RecoverProgress() error {
-	reader, err := re.log.Reader(0, toylog.ChunkSeekEnd)
-	if err != nil {
-		return err
-	}
-	feeder := toytlv.FeedSeekCloser{Reader: reader}
-	recs, err := feeder.Feed()
+func (ch *Chotki) recoverProgress() (err error) {
+	ch.loglen = 0
+	loglenstr, _ := ch.db.Get('M', "loglen")
 	if err == nil {
-		err = re.heads.LoadBytes(recs[0])
+		_, _ = fmt.Sscanf(loglenstr, "%d", &ch.loglen)
 	}
-	if err != nil {
-		return err
-	}
-	for {
-		recs, err = feeder.Feed()
-		if len(recs) == 0 || err != nil {
+	for err == nil {
+		chunk, offset := ch.FindLogChunk(ch.loglen)
+		feeder := chunk.Feeder()
+		_, err = feeder.Seek(offset, io.SeekStart)
+		if err != nil {
 			break
 		}
-		for _, rec := range recs {
-			src, seq := PacketSrcSeq(rec)
-			re.heads.Put(seq, src)
+		for err == nil {
+			var recs toyqueue.Records
+			recs, err = feeder.Feed()
+			if err == nil {
+				err = ch.ProcessPackets(recs)
+			}
+		}
+		if err == io.EOF { // TODO ErrIncomplete
+			err = nil
 		}
 	}
-	return nil
+	return
 }
 
-func (re *Chotki) RecoverConnects() {
+func (ch *Chotki) RecoverConnects() {
 	// ...
 	io := pebble.IterOptions{}
-	i := re.db.DB.NewIter(&io)
+	i := ch.db.DB.NewIter(&io)
 	for i.SeekGE([]byte{'L'}); i.Valid() && i.Key()[0] == 'L'; i.Next() {
 		address := string(i.Key()[1:])
-		err := re.tcp.Listen(address)
+		err := ch.tcp.Listen(address)
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err.Error())
 		}
 	}
 	for i.SeekGE([]byte{'C'}); i.Valid() && i.Key()[0] == 'C'; i.Next() {
 		address := string(i.Key()[1:])
-		err := re.tcp.Connect(address)
+		err := ch.tcp.Connect(address)
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err.Error())
 		}
@@ -197,8 +336,10 @@ func (ch *Chotki) ProcessPackets(recs toyqueue.Records) (err error) {
 	pb := pebble.Batch{}
 	pack, _ := FilterPackets(ch.heads, recs) // here we ignore gaps :/
 	rest := pack
+	addlen := int64(0)
 	for len(rest) > 0 && err == nil {
 		packet := rest[0]
+		addlen += int64(len(packet))
 		rest = rest[1:]
 		lit := toytlv.Lit(packet)
 		switch lit {
@@ -213,16 +354,18 @@ func (ch *Chotki) ProcessPackets(recs toyqueue.Records) (err error) {
 	if err != nil {
 		return
 	}
-	err = ch.log.Drain(pack)
+	tip := ch.chunks[len(ch.chunks)-1]
+	draner := tip.Drainer()
+	err = draner.Drain(pack)
 	if err != nil {
 		return
 	}
-	err = ch.log.Sync() // todo Commit() ?!!
+	err = tip.Sync()
 	if err != nil {
 		return
 	}
-	total := uint64(ch.log.TotalSize())
-	err = pb.Set(KeyLogSize, ZipUint64(total), &NonSync)
+	ch.loglen += addlen
+	err = pb.Set(KeyLogLen, ZipUint64(uint64(ch.loglen)), &NonSync)
 	if err != nil {
 		return
 	}
@@ -232,7 +375,7 @@ func (ch *Chotki) ProcessPackets(recs toyqueue.Records) (err error) {
 		return
 	}
 	ch.lock.Lock()
-	ch.lastsync = ch.heads.GetLastID(ch.src)
+	ch.lastsync = ch.heads.GetID(ch.src)
 	ch.drum.Broadcast()
 	tmpout := ch.outq
 	ch.lock.Unlock()
@@ -405,7 +548,7 @@ func (ch *Chotki) ParseEdits(pack []byte, batch *pebble.Batch) (err error) {
 	return
 }
 
-var KeyLogSize = []byte{'L'}
+var KeyLogLen = []byte("Mloglen")
 
 // todo batching batches
 func (ch *Chotki) AbsorbBatch(pack Batch) (err error) {
@@ -416,7 +559,12 @@ func (ch *Chotki) Close() error {
 	ch.db.Close()
 	ch.tcp.Close()
 	_ = ch.inq.Close() // stops packet processing
-	_ = ch.log.Close()
+	logs := ch.chunks
+	ch.chunks = nil
+	ch.offs = nil
+	for _, log := range logs {
+		_ = log.Close()
+	}
 	return nil
 }
 
