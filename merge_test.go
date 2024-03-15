@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const VVName = (1 << FieldTypeBits) | ('V' - 'A')
+const VVName = (1 << RdtBits) | ('V' - 'A')
 
 func TestVMerge(t *testing.T) {
 	args := [][]byte{
@@ -22,7 +22,7 @@ func TestVMerge(t *testing.T) {
 	}
 	//result := Vmerge(args)
 	ma := PebbleMergeAdaptor{
-		key: OKey(ID(0).ToOff(VVName)),
+		key: FieldKey('O', ID(0).ToOff(VVName)),
 	}
 	_ = ma.MergeOlder(args[0])
 	_ = ma.MergeNewer(args[1])

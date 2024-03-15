@@ -18,7 +18,7 @@ func MakeObjectPacket(id, typedecl ID, states ...[]byte) (packet []byte) {
 	packet = toytlv.Append(packet, 'I', id.ZipBytes())
 	packet = toytlv.Append(packet, 'R', typedecl.ZipBytes())
 	for i, state := range states {
-		ref := MakeID(0, 0, uint16(i+1))
+		ref := IDFromSrcSeqOff(0, 0, uint16(i+1))
 		packet = toytlv.Append(packet, 'R', ref.ZipBytes())
 		packet = append(packet, state...)
 	}

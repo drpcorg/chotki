@@ -35,8 +35,10 @@ func (a *PebbleMergeAdaptor) Finish(includesBase bool) (res []byte, cl io.Closer
 	off := Parse583Off(a.key[1:])
 	_, rdt := FieldNameType(off)
 	switch rdt {
+	case 'A': // object's ref is immutable
+		res = Amerge(inputs)
 	case 'C':
-		res = CMerge(inputs) // TODO error?
+		res = CMerge(inputs)
 	case 'I':
 		res = Imerge(inputs)
 	case 'S':
@@ -48,43 +50,19 @@ func (a *PebbleMergeAdaptor) Finish(includesBase bool) (res []byte, cl io.Closer
 	case 'V':
 		res = Vmerge(inputs)
 	default:
-		res = AMerge(inputs)
+		res = NoMerge(inputs)
 	}
 	return res, nil, nil
 }
 
-func AMerge(inputs [][]byte) []byte {
+func Amerge(inputs [][]byte) []byte {
+	return inputs[0]
+}
+
+func NoMerge(inputs [][]byte) []byte {
 	ret := make([]byte, 0, toytlv.TotalLen(inputs))
 	for _, input := range inputs {
 		ret = append(ret, input...)
 	}
 	return ret
-}
-
-func Vmerge(inputs [][]byte) (merged []byte) {
-	var _heap [32]uint64
-	heap := Uint64Heap(_heap[0:0])
-	for i, in := range inputs { // fixme 4096
-		id := ProbeID('V', in)
-		reid := MakeID(id.Src(), id.Seq(), uint16(i)) // todo i order
-		heap.Push(^uint64(reid))
-	}
-	prev := uint32(0)
-	for len(heap) > 0 {
-		id := ID(^heap.Pop())
-		i := int(id.Off())
-		_, hl, bl := toytlv.ProbeHeader(inputs[i])
-		if id.Src() != prev {
-			merged = append(merged, inputs[i][:hl+bl]...)
-			prev = id.Src()
-		}
-		inputs[i] = inputs[i][hl+bl:]
-		if len(inputs[i]) != 0 {
-			id := ProbeID('V', inputs[i])
-			reid := MakeID(id.Src(), id.Seq(), uint16(i)) // todo i order
-			heap.Push(^uint64(reid))
-		}
-	}
-	return
-
 }

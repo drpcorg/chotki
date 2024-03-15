@@ -33,7 +33,7 @@ func filterInput(r rune) (rune, bool) {
 func ShowObject(chotki *Chotki, id ID) error {
 	i := chotki.ObjectIterator(id)
 	for i.Valid() {
-		keyid := ParseID(i.Key()[1:])
+		keyid := IDFromString(i.Key()[1:])
 		field, rdt := keyid.FieldRDT()
 		_, _ = fmt.Fprintf(os.Stderr, "%c#%d\t\n", rdt, field)
 	}
@@ -74,7 +74,7 @@ func CreateObjectFromList(chotki *Chotki, list []interface{}) (id ID, err error)
 		packet = append(packet, toytlv.Record('R', ZipUint64(uint64(foff))))
 		packet = append(packet, toytlv.Record(rdt, body))
 	}
-	return chotki.CommitPacket('O', packet)
+	return chotki.CommitPacket('O', ID0, packet)
 }
 
 // ["{10-4f8-0}", +1, "string", 1.0, ...]
@@ -114,7 +114,7 @@ func main() {
 	re := Chotki{}
 
 	if len(os.Args) > 1 {
-		rno := uint32(1)
+		rno := uint64(1)
 		_, err := fmt.Sscanf(os.Args[1], "%d", &rno)
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, "Usage: Chotki 123")

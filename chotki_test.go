@@ -1,133 +1,109 @@
 package main
 
 import (
-	"github.com/learn-decentralized-systems/toytlv"
+	"fmt"
+	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
 )
 
+func TestChotki_Debug(t *testing.T) {
+	oid := IDFromSrcSeqOff(0x1e, 0x1ab, 0)
+	key := OKey(FieldID(oid, 1, 'I'))
+	value := Itlv(-13)
+	str := ChotkiKVString(key, value)
+	fmt.Printf("%s\n", str)
+	assert.Equal(t, "O.1e-1ab-1.I:\t-13", string(str))
+
+	skey := OKey(FieldID(oid, 2, 'S'))
+	svalue := Stlv("funny\tstring\n")
+	sstr := ChotkiKVString(skey, svalue)
+	fmt.Printf("%s\n", sstr)
+	assert.Equal(t, "O.1e-1ab-2.S:\t\"funny\\tstring\\n\"", string(sstr))
+}
+
+func TestChotki_Create(t *testing.T) {
+	_ = os.RemoveAll("cho1a")
+	var a Chotki
+	err := a.Create(0x1a, "test replica")
+	assert.Nil(t, err)
+	a.DumpAll()
+	_ = a.Close()
+	_ = os.RemoveAll("cho1a")
+}
+
+type KVMerger interface {
+	Merge(key, value []byte) error
+}
+
+func TestChotki_Sync(t *testing.T) {
+	_ = os.RemoveAll("cho1c")
+	var a Chotki
+	err := a.Create(0x1c, "test replica")
+	assert.Nil(t, err)
+	a.DumpAll()
+
+	queue := toyqueue.RecordQueue{Limit: 1024}
+	snap := a.db.NewSnapshot()
+	vv := make(VV)
+	vv.PutID(IDFromSrcSeqOff(0, 1, 0))
+	err = a.SyncPeer(&queue, snap, vv)
+	assert.Nil(t, err)
+	recs, err := queue.Feed()
+	assert.Nil(t, err)
+	assert.Equal(t, 1, len(recs))
+
+	_ = a.Close()
+	_ = os.RemoveAll("cho1c")
+}
+
 func TestChotki_AbsorbBatch(t *testing.T) {
-	_ = os.RemoveAll("cho14")
-	_ = os.Remove("cho14.log")
-	var chotki Chotki
-	chotki.opts.RelaxedOrder = true
-	err := chotki.Open(14)
+	_ = os.RemoveAll("cho1e")
+	var a, b Chotki
+	err := a.Create(0x1e, "test replica")
+	assert.Nil(t, err)
+	var tid, oid ID
+	tid, err = a.CreateType("Example", "Sname", "Iscore")
+	assert.Equal(t, "1e-1", tid.String())
+	oid, err = a.CreateObject(tid, "Ivan Petrov", "102")
+	assert.Equal(t, "1e-2", oid.String())
+
+	err = a.Close()
+	assert.Nil(t, err)
+	err = a.Open(0x1e)
 	assert.Nil(t, err)
 
-	typeid := ParseIDString("8e-5e84")
-	oid := ParseIDString("8e-82f0")
-	name := []byte("John Brown")
+	var exa Example
+	ita := a.ObjectIterator(ParseIDString("1e-2"))
+	assert.NotNil(t, ita)
+	err = exa.Load(ita)
+	assert.Nil(t, err)
+	assert.Equal(t, "Ivan Petrov", exa.Name)
+	assert.Equal(t, 102, exa.Score)
 
-	packet := toytlv.Concat(
-		toytlv.Record('O',
-			toytlv.Record('I', oid.ZipBytes()),
-			toytlv.Record('R', typeid.ZipBytes()),
-			toytlv.Record('R',
-				ID(ExampleName).ZipBytes()),
-			toytlv.Record('S',
-				toytlv.Record('T', ZipUint64(0)),
-				name,
-			),
-			toytlv.Record('R',
-				ID(ExampleScore).ZipBytes()),
-			toytlv.Record('C',
-				ZipUint64(ZigZagInt64(99)),
-			),
-		),
-	)
+	exa.Score = 103
+	// todo save the object
 
-	err = chotki.AbsorbBatch(Batch{packet})
+	err = b.Create(0x1, "another test replica")
 	assert.Nil(t, err)
 
-	clr, err := chotki.log.Reader(5, 0) // 5: V0000
+	a2b, b2a := toyqueue.BlockingRecordQueuePair(1024)
+	a.AddPeer(a2b)
+	b.AddPeer(b2a)
+
+	// fixme wait something
+	var exb Example
+	itb := b.ObjectIterator(ParseIDString("1e-2"))
+	assert.NotNil(t, itb)
+	err = exb.Load(itb)
 	assert.Nil(t, err)
-	logbuf := make([]byte, len(packet))
-	n, err := clr.Read(logbuf)
+	assert.Equal(t, "Ivan Petrov", exb.Name)
+	assert.Equal(t, 103, exb.Score)
+
+	err = a.Close()
 	assert.Nil(t, err)
-	assert.Equal(t, len(packet), n)
-	assert.Equal(t, packet, logbuf)
-
-	f1id := oid.ToOff(ExampleName)
-	key := OKey(f1id)
-	val1, _, err := chotki.db.DB.Get(key)
-	assert.Nil(t, err)
-	assert.Equal(t,
-		toytlv.Concat(
-			toytlv.Record('I', oid.ToOff(1).ZipBytes()),
-			toytlv.Record('S',
-				toytlv.Record('T', ZipUint64(0)),
-				name,
-			),
-		),
-		val1)
-
-	f2id := oid.ToOff(ExampleScore)
-	val2, _, err := chotki.db.DB.Get(OKey(f2id)) // fixme closer
-	assert.Nil(t, err)
-	assert.Equal(t,
-		toytlv.Concat(
-			toytlv.Record('I', oid.ToOff(2).ZipBytes()),
-			toytlv.Record('C', ZipUint64(ZigZagInt64(99))),
-		),
-		val2)
-
-	iter := chotki.ObjectIterator(oid)
-	assert.NotNil(t, iter)
-	var ex Example
-	err = ex.Load(iter)
-	assert.Nil(t, err)
-	assert.Equal(t, string(name), string(ex.Name))
-	assert.Equal(t, uint64(99), uint64(ex.Score))
-	_ = iter.Close()
-
-	edits := Batch{
-		toytlv.Record('E',
-			toytlv.Record('I', ParseIDString("8f-204").ZipBytes()),
-			toytlv.Record('R', ParseIDString("8e-82f0-42").ZipBytes()),
-			toytlv.Record('C', ZipUint64(ZigZagInt64(1))),
-		),
-		toytlv.Record('E',
-			toytlv.Record('I', ParseIDString("11-7f2").ZipBytes()),
-			toytlv.Record('R', ParseIDString("8e-82f0-32").ZipBytes()),
-			toytlv.Record('S',
-				toytlv.Record('T', ZipUint64(1)),
-				[]byte("John F. Brown"),
-			),
-		),
-	}
-
-	err = chotki.AbsorbBatch(edits)
-	assert.Nil(t, err)
-
-	johnfbrown := toytlv.Concat(
-		toytlv.Record('I', ParseIDString("11-7f2-1").ZipBytes()),
-		toytlv.Record('S',
-			toytlv.Record('T', ZipUint64(1)),
-			[]byte("John F. Brown"),
-		),
-	)
-
-	state100 := toytlv.Concat(
-		toytlv.Record('I', ParseIDString("8f-204-1").ZipBytes()),
-		toytlv.Record('C', ZipZagInt64(1)),
-		toytlv.Record('I', oid.ToOff(2).ZipBytes()),
-		toytlv.Record('C', ZipZagInt64(99)),
-	)
-
-	val1b, err := chotki.db.Get('O', oid.ToOff(ExampleName).String583())
-	assert.Nil(t, err)
-	assert.Equal(t,
-		johnfbrown,
-		[]byte(val1b))
-
-	val2b, err := chotki.db.Get('O', oid.ToOff(ExampleScore).String583())
-	assert.Nil(t, err)
-	assert.Equal(t,
-		state100,
-		[]byte(val2b))
-
-	err = chotki.Close()
+	err = b.Close()
 	assert.Nil(t, err)
 	_ = os.RemoveAll("cho14")
 	_ = os.Remove("cho14.log")

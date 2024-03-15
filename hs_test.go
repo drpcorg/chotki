@@ -26,8 +26,8 @@ func TestHandshake(t *testing.T) {
 	err = chotki3.Open(3)
 	assert.Nil(t, err)
 
-	state, _ := example.Store(nil)
-	objid, err := chotki2.CommitPacket('O', state)
+	state, _ := example.Store(nil, 0) // fixme
+	objid, err := chotki2.CommitPacket('O', ID0, state)
 	assert.Nil(t, err)
 
 	address := "localhost:1234"

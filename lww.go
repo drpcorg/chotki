@@ -1,60 +1,55 @@
 package main
 
 import (
-	"encoding/binary"
+	"bytes"
 	"fmt"
 	"github.com/learn-decentralized-systems/toytlv"
-	"math"
 )
 
 // shared functions
 
-func LWWvalue(tlv []byte) []byte {
-	_, hlen, blen := toytlv.ProbeHeader(tlv)
-	return tlv[hlen+4 : hlen+blen]
-}
-
-func LWWtime(rec []byte) uint32 {
-	if len(rec) < 4 {
-		return 0
-	}
-	return binary.LittleEndian.Uint32(rec[:4])
-}
-
-func LWWparse(bulk []byte) (lit byte, time uint32, rec, rest []byte) {
+// for bad format, value==nil (an empty value is an empty slice)
+func LWWparse(bulk []byte) (time, src uint64, value []byte) {
 	lit, hlen, blen := toytlv.ProbeHeader(bulk)
-	time = binary.LittleEndian.Uint32(bulk[hlen : hlen+4])
-	rec = bulk[:hlen+blen]
-	rest = bulk[hlen+blen:]
+	if lit != 'T' && lit != '0' || hlen+blen > len(bulk) {
+		return
+	}
+	tsb := bulk[hlen : hlen+blen]
+	time, src = UnzipUint64Pair(tsb)
+	value = bulk[hlen+blen:]
 	return
 }
 
-func LWWmerge(lit byte, tlvs [][]byte) (tlv []byte) {
+func LWWtlv(time, src uint64, value []byte) (bulk []byte) {
+	pair := ZipUint64Pair(time, src)
+	bulk = make([]byte, 1, len(pair)+len(value))
+	bulk[0] = '0' + byte(len(pair))
+	return append(append(bulk, pair...), value...)
+}
+
+func LWWmerge(tlvs [][]byte) (tlv []byte) {
 	var win []byte
-	var maxt uint32
+	var maxt uint64
 	for _, rec := range tlvs {
-		for len(rec) > 0 {
-			l, hlen, blen := toytlv.ProbeHeader(rec)
-			time := binary.LittleEndian.Uint32(rec[hlen : hlen+4])
-			_ = l // fixme bad lit
-			if time > maxt {
-				maxt = time
-				win = rec[:hlen+blen]
-			}
-			rec = rec[hlen+blen:]
+		l, hlen, blen := toytlv.ProbeHeader(rec)
+		tsb := rec[hlen : hlen+blen]
+		time, _ := UnzipUint64Pair(tsb)
+		if (l == 'T' || l == '0') && time > maxt {
+			maxt = time
+			win = rec
 		}
 	}
 	return win
 }
 
-func LWWdelta(old_tlv, new_tlv []byte) (tlv_delta []byte) {
-	lit, ohlen, _ := toytlv.ProbeHeader(old_tlv)
-	_, nhlen, _ := toytlv.ProbeHeader(new_tlv)
-	time := binary.LittleEndian.Uint32(old_tlv[ohlen : ohlen+4])
-	new_time := []byte{0, 0, 0, 0}
-	binary.LittleEndian.PutUint32(new_time, time+1)
-	tlv_delta = toytlv.Record(lit, new_time, new_tlv[nhlen+4:])
-	return
+func LWWdiff(tlv []byte, vvdiff VV) []byte {
+	_, src, _ := LWWparse(tlv)
+	_, ok := vvdiff[src]
+	if ok {
+		return tlv
+	} else {
+		return nil
+	}
 }
 
 // I is a last-write-wins int64
@@ -75,31 +70,38 @@ var time0 = []byte{0, 0, 0, 0}
 
 // convert plain golang value into a TLV form
 func Itlv(i int64) (tlv []byte) {
-	return toytlv.Record('I', time0, ZipInt64(i))
+	return LWWtlv(0, 0, ZipInt64(i))
 }
 
 // convert a TLV value to a plain golang value
 func Iplain(tlv []byte) int64 {
-	zipped := LWWvalue(tlv)
-	return UnzipInt64(zipped)
+	_, _, val := LWWparse(tlv)
+	return UnzipInt64(val)
 }
 
 // merge TLV values
 func Imerge(tlvs [][]byte) (tlv []byte) {
-	return LWWmerge('I', tlvs)
+	return LWWmerge(tlvs)
 }
 
 // produce an op that turns the old value into the new one
-func Idelta(old_tlv, new_tlv []byte) (tlv_delta []byte) {
-	return LWWdelta(old_tlv, new_tlv)
+func Idelta(tlv []byte, new_val int64) (tlv_delta []byte) {
+	time, _, val := LWWparse(tlv)
+	nv := ZipInt64(new_val)
+	if bytes.Compare(val, nv) != 0 {
+		tlv_delta = LWWtlv(time+1, 0, nv)
+	}
+	return
 }
 
 // checks a TLV value for validity (format violations)
 func Ivalid(tlv []byte) bool {
-	if len(tlv) < 4 {
-		return false
-	}
-	return true
+	_, src, val := LWWparse(tlv)
+	return val != nil && len(val) <= 8 && src < (1<<SrcBits)
+}
+
+func Idiff(tlv []byte, vvdiff VV) []byte {
+	return LWWdiff(tlv, vvdiff)
 }
 
 // S is a last-write-wins UTF-8 string
@@ -109,7 +111,7 @@ const hex = "0123456789abcdef"
 // produce a text form (for REPL mostly)
 func Sstring(tlv []byte) (txt string) {
 	dst := make([]byte, 0, len(tlv)*2)
-	val := LWWvalue(tlv)
+	_, _, val := LWWparse(tlv)
 	dst = append(dst, '"')
 	for _, b := range val {
 		switch b {
@@ -137,35 +139,43 @@ func Sstring(tlv []byte) (txt string) {
 func Sparse(txt string) (tlv []byte) {
 	unq := txt[1 : len(txt)-1]
 	unesc, _ := Unescape([]byte(unq), nil)
-	return toytlv.Record('S', time0, unesc)
+	return LWWtlv(0, 0, unesc)
 }
 
 // convert plain golang value into a TLV form
 func Stlv(s string) (tlv []byte) {
-	return toytlv.Record('S', time0, []byte(s))
+	return LWWtlv(0, 0, []byte(s))
 }
 
 // convert a TLV value to a plain golang value
 func Splain(tlv []byte) string {
-	return string(LWWvalue(tlv))
+	_, _, val := LWWparse(tlv)
+	return string(val)
 }
 
 // merge TLV values
 func Smerge(tlvs [][]byte) (tlv []byte) {
-	return LWWmerge('S', tlvs)
+	return LWWmerge(tlvs)
 }
 
 // produce an op that turns the old value into the new one
-func Sdelta(old_tlv, new_tlv []byte) (tlv_delta []byte) {
-	return LWWdelta(old_tlv, new_tlv)
+func Sdelta(tlv []byte, new_val string) (tlv_delta []byte) {
+	time, _, val := LWWparse(tlv)
+	nv := []byte(new_val)
+	if bytes.Compare(val, nv) != 0 {
+		tlv_delta = LWWtlv(time+1, 0, nv)
+	}
+	return
 }
 
 // checks a TLV value for validity (format violations)
 func Svalid(tlv []byte) bool {
-	if len(tlv) < 4 {
-		return false
-	}
-	return true
+	_, src, val := LWWparse(tlv)
+	return val != nil && src < (1<<SrcBits)
+}
+
+func Sdiff(tlv []byte, vvdiff VV) []byte {
+	return LWWdiff(tlv, vvdiff)
 }
 
 // R is a last-write-wins ID
@@ -177,37 +187,45 @@ func Rstring(tlv []byte) (txt string) {
 
 // parse a text form into a TLV value
 func Rparse(txt string) (tlv []byte) {
-	id := ParseID([]byte(txt))
+	id := IDFromString([]byte(txt))
 	return Rtlv(id)
 }
 
 // convert plain golang value into a TLV form
 func Rtlv(i ID) (tlv []byte) {
-	return toytlv.Record('R', time0, ZipID(i))
+	return LWWtlv(0, 0, i.ZipBytes())
 }
 
 // convert a TLV value to a plain golang value
 func Rplain(tlv []byte) ID {
-	return UnzipID(LWWvalue(tlv))
+	_, _, val := LWWparse(tlv)
+	return IDFromZipBytes(val)
 }
 
 // merge TLV values
 func Rmerge(tlvs [][]byte) (tlv []byte) {
-	return LWWmerge('R', tlvs)
+	return LWWmerge(tlvs)
 }
 
 // produce an op that turns the old value into the new one
-func Rdelta(old_tlv, new_tlv []byte) (tlv_delta []byte) {
-	return LWWdelta(old_tlv, new_tlv)
+func Rdelta(tlv []byte, new_val ID) (tlv_delta []byte) {
+	time, _, val := LWWparse(tlv)
+	nv := new_val.ZipBytes()
+	if bytes.Compare(val, nv) != 0 {
+		tlv_delta = LWWtlv(time+1, 0, nv)
+	}
+	return
 }
 
 // checks a TLV value for validity (format violations)
 func Rvalid(tlv []byte) bool {
-	if len(tlv) < 4 {
-		return false
-	}
+	_, src, val := LWWparse(tlv)
+	return val != nil && src < (1<<SrcBits)
 	// todo correct sizes
-	return true
+}
+
+func Rdiff(tlv []byte, vvdiff VV) []byte {
+	return LWWdiff(tlv, vvdiff)
 }
 
 // F is a last-write-wins float64
@@ -226,30 +244,36 @@ func Fparse(txt string) (tlv []byte) {
 
 // convert plain golang value into a TLV form
 func Ftlv(i float64) (tlv []byte) {
-	return toytlv.Record('F', time0, ZipUint64(math.Float64bits(i)))
+	return LWWtlv(0, 0, ZipFloat64(i))
 }
 
 // convert a TLV value to a plain golang value
 func Fplain(tlv []byte) float64 {
-	bits := UnzipUint64(LWWvalue(tlv))
-	return math.Float64frombits(bits)
+	_, _, val := LWWparse(tlv)
+	return UnzipFloat64(val)
 }
 
 // merge TLV values
 func Fmerge(tlvs [][]byte) (tlv []byte) {
-	return LWWmerge('F', tlvs)
+	return LWWmerge(tlvs)
 }
 
 // produce an op that turns the old value into the new one
-func Fdelta(old_tlv, new_tlv []byte) (tlv_delta []byte) {
-	return LWWdelta(old_tlv, new_tlv)
+func Fdelta(tlv []byte, new_val float64) (tlv_delta []byte) {
+	time, _, val := LWWparse(tlv)
+	nv := ZipFloat64(new_val)
+	if bytes.Compare(val, nv) != 0 {
+		tlv_delta = LWWtlv(time+1, 0, nv)
+	}
+	return
 }
 
 // checks a TLV value for validity (format violations)
 func Fvalid(tlv []byte) bool {
-	if len(tlv) < 4 {
-		return false
-	}
-	// todo do we accept NaN?
-	return true
+	_, src, val := LWWparse(tlv)
+	return val != nil && src < (1<<SrcBits) && len(val) <= 8
+}
+
+func Fdiff(tlv []byte, vvdiff VV) []byte {
+	return LWWdiff(tlv, vvdiff)
 }

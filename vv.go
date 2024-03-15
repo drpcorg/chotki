@@ -3,120 +3,212 @@ package main
 import (
 	"errors"
 	"github.com/learn-decentralized-systems/toytlv"
+	"slices"
 )
 
-type VV map[uint32]uint32
+// note that src->0 is a meaningful record (the log is known)
+type VV map[uint64]uint64
 
-func (vv VV) Get(orig uint32) (val uint32) {
-	val, _ = vv[orig]
-	return
+func (vv VV) Get(src uint64) (pro uint64) {
+	return vv[src]
 }
 
-func (vv VV) Set(src, seq uint32) {
-	vv[src] = seq
+// Set the progress for the specified source
+func (vv VV) Set(src, pro uint64) {
+	vv[src] = pro
 }
 
-// Adds the src-seq pair to the VV, returns whether it was unseen
-func (vv VV) Put(src, seq uint32) bool {
+// Put the src-pro pair to the VV, returns whether it was
+// unseen (i.e. made any difference)
+func (vv VV) Put(src, pro uint64) bool {
 	pre, ok := vv[src]
-	if ok && pre >= seq {
+	if ok && pre >= pro {
 		return false
 	}
-	vv[src] = seq
+	vv[src] = pro
 	return true
 }
 
 // Adds the id to the VV, returns whether it was unseen
 func (vv VV) PutID(id ID) bool {
-	return vv.Put(id.Src(), id.Seq())
+	return vv.Put(id.Src(), id.Pro())
 }
 
 var ErrSeen = errors.New("previously seen id")
 var ErrGap = errors.New("id sequence gap")
 
-func (vv VV) PutSeq(orig, val uint32) error {
-	has, _ := vv[orig]
-	if has >= val {
-		return ErrSeen
-	} else if has+1 < val {
-		return ErrGap
-	} else {
-		vv[orig] = val
-		return nil
+// Whether this VV overlaps with another one (have common non-zero entry)
+func (vv VV) Overlaps(b VV) bool {
+	for src, _ := range vv {
+		_, ok := b[src]
+		if ok {
+			return true
+		}
 	}
+	return false
 }
 
-// TLV Vv record
-func (vv VV) TLV() (ret []byte) {
-	bm, ret := toytlv.OpenHeader(ret, 'V')
-	for orig, seq := range vv {
-		ret = toytlv.Append(ret, 'V', ZipUint64Pair(uint64(seq), uint64(orig)))
+func (vv VV) Ahead(b VV) VV {
+	ahead := make(VV)
+	for src, seqoff := range vv {
+		peerseqoff, ok := b[src]
+		if !ok || seqoff > peerseqoff {
+			ahead[src] = seqoff
+		}
 	}
-	toytlv.CloseHeader(ret, bm)
+	return ahead
+}
+
+func (vv VV) IDs() (ids []ID) {
+	for src, pro := range vv {
+		ids = append(ids, IDfromSrcPro(src, pro))
+	}
+	slices.Sort(ids)
 	return
 }
 
-const (
+// TLV Vv record, nil for empty
+func (vv VV) TLV() (ret []byte) {
+	ids := vv.IDs()
+	for _, id := range ids {
+		ret = toytlv.Append(ret, 'V', id.ZipBytes())
+	}
+	return
+}
+
+const ( // todo
 	VvSeen = -1
 	VvNext = 0
 	VvGap  = 1
 )
 
-func (vv VV) SeeNextID(id ID) int {
-	return vv.SeeNextSrcSeq(id.Src(), id.SeqOff())
-}
-
-// returns VvSeen for already seen, VvGap for causal gaps, VvNext for OK
-func (vv VV) SeeNextSrcSeq(src, seq uint32) int {
-	val, _ := vv[src]
-	if val >= seq {
-		return VvSeen
-	}
-	if val+1 < seq { // FIXME :)
-		return VvGap
-	}
-	vv[src] = seq
-	return VvNext
-}
-
-var ErrBadVRecord = errors.New("bad Vv record")
+var ErrBadVRecord = errors.New("bad V record")
+var ErrBadV0Record = errors.New("bad V0 record")
 
 // consumes: Vv record
-func (vv VV) AddTLV(rec []byte) error {
-	lit, body, rest, err := toytlv.TakeAnyWary(rec)
-	if err != nil {
-		return err
-	}
-	if len(rest) != 0 || lit != 'V' {
-		return ErrBadVRecord
-	}
-	for len(body) > 0 {
+func (vv VV) PutTLV(rec []byte) (err error) {
+	rest := rec
+	for len(rest) > 0 {
 		var val []byte
-		val, body, err = toytlv.TakeWary('V', body)
+		val, rest, err = toytlv.TakeWary('V', rest)
 		if err != nil {
-			return err
+			break
 		}
-		big, lil := UnzipUint64Pair(val)
-		seq, src := uint32(big), uint32(lil)
-		have := vv[src]
-		if seq > have {
-			vv[src] = seq
-		}
+		id := IDFromZipBytes(val)
+		vv.PutID(id)
 	}
-	return nil
+	return
 }
 
-func (vv VV) Seen(bb VV) bool {
-	for src, bseq := range bb {
-		seq := vv[src]
-		if bseq > seq {
+func VValid(tlv []byte) bool {
+	for len(tlv) > 0 {
+		var body []byte
+		body, tlv = toytlv.Take('V', tlv)
+		if body == nil || len(body) > 16 { //todo valid pair len
 			return false
 		}
 	}
 	return true
 }
 
-func (vv VV) GetID(orig uint32) ID {
-	seq := vv.Get(orig)
-	return MakeID(orig, seq, 0)
+func (vv VV) Seen(bb VV) bool {
+	for src, pro := range bb {
+		seq := vv[src]
+		if pro > seq {
+			return false
+		}
+	}
+	return true
+}
+
+func (vv VV) GetID(src uint64) ID {
+	return IDfromSrcPro(src, vv[src])
+}
+
+func (vv VV) String() string {
+	ids := vv.IDs()
+	ret := make([]byte, 0, len(vv)*32)
+	for i := 0; i+1 < len(ids); i++ {
+		ret = append(ret, ids[i].String()...)
+		ret = append(ret, ',')
+	}
+	if len(ids) > 0 {
+		ret = append(ret, ids[len(ids)-1].String()...)
+	}
+	return string(ret)
+}
+
+func VVFromString(vvs string) (vv VV) {
+	vv = make(VV)
+	rest := []byte(vvs)
+	var id ID
+	for len(rest) > 0 && id != BadId {
+		id, rest = readIDFromString(rest)
+		vv.PutID(id)
+	}
+	return
+}
+
+func VVFromTLV(tlv []byte) (vv VV) {
+	vv = make(VV)
+	_ = vv.PutTLV(tlv)
+	return
+}
+
+func Vstring(tlv []byte) (txt string) {
+	vv := make(VV)
+	_ = vv.PutTLV(tlv)
+	return vv.String()
+}
+
+func Vparse(txt string) (tlv []byte) {
+	vv := VVFromString(txt)
+	return Vtlv(vv)
+}
+
+func Vtlv(vv VV) (tlv []byte) {
+	return vv.TLV()
+}
+
+func Vplain(tlv []byte) VV {
+	return VVFromTLV(tlv)
+}
+
+func Vmerge(tlvs [][]byte) (tlv []byte) {
+	vv := make(VV)
+	for _, v := range tlvs {
+		_ = vv.PutTLV(v)
+	}
+	return vv.TLV()
+}
+
+func Vdelta(tlv []byte, new_val VV) (tlv_delta []byte) {
+	old := make(VV)
+	delta := make(VV)
+	_ = old.PutTLV(tlv)
+	for src, pro := range new_val {
+		pre := old[src]
+		if pro != pre {
+			delta.Put(src, pro)
+		}
+	}
+	return delta.TLV()
+}
+
+func Vvalid(tlv []byte) bool {
+	vv := make(VV)
+	return vv.PutTLV(tlv) == nil
+}
+
+func Vdiff(tlv []byte, vvdiff VV) (diff_tlv []byte) {
+	old := make(VV)
+	diff := make(VV)
+	_ = old.PutTLV(tlv)
+	for src, pro := range old {
+		pre, ok := vvdiff[src]
+		if ok && pro > pre {
+			diff[src] = pro
+		}
+	}
+	return diff.TLV()
 }

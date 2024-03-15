@@ -7,29 +7,40 @@ import (
 	"github.com/learn-decentralized-systems/toytlv"
 )
 
-// ID is an 64-bit locator/identifier that contains:
-//   - op seq number (30 bits),
-//   - offset (10 bits), and
-//   - the replica id (24 bits).
-//
-// This is NOT a Lamport timestamp (need more bits for that).
+/*
+		ID is an 64-bit locator/identifier.
+	    This is NOT a Lamport timestamp (need more bits for that).
+
+0...............16..............32..............48.............64
++-------+-------+-------+-------+-------+-------+-------+-------
+|offset(12)||......sequence.(32.bits)......||.source.(20.bits).|
+|...........progress.(44.bits).............|....................
+|rdt||field|....................................................
+*/
 type ID uint64
+
+const ID0 ID = 0
 
 const SeqBits = 32
 const OffBits = 12
 const SrcBits = 20
-const SeqOffBits = SeqBits + OffBits
-const SeqOffMask = uint64(uint64(1)<<SeqOffBits) - 1
+const ProBits = SeqBits + OffBits
+const ProMask = uint64(uint64(1)<<ProBits) - 1
 const OffMask = uint64(1<<OffBits) - 1
-const FieldTypeBits = 5
-const FieldNoBits = OffBits - FieldTypeBits
-const FieldTypeMask = (uint16(1) << FieldTypeBits) - 1
+const RdtBits = 5
+const RdtInc = 1 << RdtBits
+const FNoBits = OffBits - RdtBits
+const RdtMask = (uint16(1) << RdtBits) - 1
 
 const SeqOne = 1 << OffBits
-const BadId = ID(uint64(0xfff) << SeqOffBits)
+const BadId = ID(0xffffffffffffffff)
 const ZeroId = ID(0)
 
-func MakeID(src uint32, seq uint32, off uint16) ID {
+func IDfromSrcPro(src, pro uint64) ID {
+	return ID((src << ProBits) | pro)
+}
+
+func IDFromSrcSeqOff(src uint64, seq uint64, off uint16) ID {
 	ret := uint64(src)
 	ret <<= SeqBits
 	ret |= uint64(seq)
@@ -38,13 +49,13 @@ func MakeID(src uint32, seq uint32, off uint16) ID {
 	return ID(ret)
 }
 
-func SrcSeqOff(id ID) (src uint32, seq uint32, off uint16) {
+func SrcSeqOff(id ID) (src uint64, seq uint64, off uint16) {
 	n := uint64(id)
 	off = uint16(n & OffMask)
 	n >>= OffBits
-	seq = uint32(n)
+	seq = n
 	n >>= SeqBits
-	src = uint32(n)
+	src = n
 	return
 }
 
@@ -53,34 +64,43 @@ func MakeField(rdt byte, field byte) (off uint16) {
 		panic("bad RDT lit")
 	}
 	off = uint16(field)
-	off <<= FieldTypeBits
+	off <<= RdtBits
 	off |= uint16(rdt - 'A')
 	return
 }
 
 func (id ID) FieldRDT() (field, rdt byte) {
-	const FieldNoMask = (1 << FieldNoBits) - 1
-	rdt = byte(uint16(id)&FieldTypeMask) + 'A'
-	field = uint8(id>>FieldTypeBits) & FieldNoMask
+	const FieldNoMask = (1 << FNoBits) - 1
+	rdt = byte(uint16(id)&RdtMask) + 'A'
+	field = uint8(id>>RdtBits) & FieldNoMask
 	return
 }
 
+func (id ID) ZeroOff() ID {
+	return id & ID(^OffMask)
+}
+
+func (id ID) FNo() (fno byte) {
+	mask := ID(1<<FNoBits) - 1
+	return byte((id >> RdtBits) & mask)
+}
+
 func FieldNameType(off uint16) (field, rdt byte) {
-	rdt = byte((off & FieldTypeMask) + 'A')
-	field = byte(off >> FieldTypeBits)
+	rdt = byte((off & RdtMask) + 'A')
+	field = byte(off >> RdtBits)
 	return
 }
 
 // Seq is the op sequence number (each replica generates its own
 // sequence numbers)
-func (id ID) Seq() uint32 {
+func (id ID) Seq() uint64 {
 	i := uint64(id)
-	return uint32((i & SeqOffMask) >> OffBits)
+	return (i & ProMask) >> OffBits
 }
 
-func (id ID) SeqOff() uint32 {
+func (id ID) Pro() uint64 {
 	i := uint64(id)
-	return uint32(i & SeqOffMask)
+	return i & ProMask
 }
 
 func (id ID) Off() uint16 {
@@ -92,29 +112,27 @@ func (id ID) ToOff(newoff uint16) ID {
 }
 
 // Src is the replica id. That is normally a small number.
-func (id ID) Src() uint32 {
-	return uint32(id >> SeqOffBits)
+func (id ID) Src() uint64 {
+	return uint64(id >> ProBits)
 }
 
 func (id ID) Bytes() []byte {
 	var ret [8]byte
-	binary.LittleEndian.PutUint64(ret[:], uint64(id))
+	binary.BigEndian.PutUint64(ret[:], uint64(id))
 	return ret[:]
 }
 
+func IDFromBytes(by []byte) ID {
+	return ID(binary.BigEndian.Uint64(by))
+}
+
 func (id ID) ZipBytes() []byte {
-	i := uint64(id)
-	return ZipUint64Pair(i&SeqOffMask, i>>SeqOffBits)
+	return ZipUint64Pair(id.Pro(), id.Src())
 }
 
-func ZipID(id ID) (zip []byte) {
-	i := uint64(id)
-	return ZipUint64Pair(i&SeqOffMask, i>>SeqOffBits)
-}
-
-func UnzipID(zip []byte) ID {
-	big, lil := UnzipUint64Pair(zip)
-	return ID(big | (lil << SeqOffBits))
+func IDFromZipBytes(zip []byte) ID {
+	big, lil := UnzipUint64Pair(zip) // todo range check
+	return ID(big | (lil << ProBits))
 }
 
 func (id ID) Feed(into []byte) (res []byte) {
@@ -138,7 +156,7 @@ func TakeIDWary(lit byte, pack []byte) (id ID, rest []byte, err error) {
 	if idbytes == nil {
 		err = ErrBadId
 	} else {
-		id = UnzipID(idbytes)
+		id = IDFromZipBytes(idbytes)
 	}
 	return
 }
@@ -164,7 +182,7 @@ func Parse583Off(hex583 []byte) (off uint16) {
 	return uint16(UnHex(hex583[len(hex583)-3:]))
 }
 
-func (id ID) Hex583(ret []byte) []byte {
+func (id ID) Hex583() []byte {
 	hex := []byte{'0', '0', '0', '0', '0', '-', '0', '0', '0', '0', '0', '0', '0', '0', '-', '0', '0', '0'}
 	k := Hex583Len - 1
 	u := uint64(id)
@@ -185,11 +203,11 @@ func (id ID) Hex583(ret []byte) []byte {
 		u >>= 4
 		k--
 	}
-	return append(ret, hex...)
+	return hex
 }
 
 func (id ID) String583() string {
-	return string(id.Hex583(nil))
+	return string(id.Hex583())
 }
 
 func UnHex(hex []byte) (num uint64) {
@@ -210,24 +228,26 @@ func UnHex(hex []byte) (num uint64) {
 }
 
 func ParseIDString(id string) ID {
-	return ParseID([]byte(id))
+	return IDFromString([]byte(id))
 }
 
 func ParseBracketedID(bid []byte) ID {
 	if len(bid) < 7 || bid[0] != '{' || bid[len(bid)-1] != '}' {
 		return BadId
 	}
-	return ParseID(bid[1 : len(bid)-1])
+	return IDFromString(bid[1 : len(bid)-1])
 }
 
-func ParseID(id []byte) ID {
-	if len(id) > 16+2 {
-		return BadId
-	}
+func IDFromString(idstr []byte) (parsed ID) {
+	parsed, _ = readIDFromString(idstr)
+	return
+}
+
+func readIDFromString(idstr []byte) (id ID, rest []byte) {
 	var parts [3]uint64
 	i, p := 0, 0
-	for i < len(id) && p < 3 {
-		c := id[i]
+	for i < len(idstr) && p < 3 {
+		c := idstr[i]
 		if c >= '0' && c <= '9' {
 			parts[p] = (parts[p] << 4) | uint64(c-'0')
 		} else if c >= 'A' && c <= 'F' {
@@ -237,10 +257,11 @@ func ParseID(id []byte) ID {
 		} else if c == '-' {
 			p++
 		} else {
-			return BadId
+			break
 		}
 		i++
 	}
+	rest = idstr[i:]
 	switch p {
 	case 0: // off
 		parts[2] = parts[0]
@@ -248,10 +269,19 @@ func ParseID(id []byte) ID {
 	case 1: // src-seq
 	case 2: // src-seq-off
 	case 3:
-		return BadId
+		id = BadId
 	}
 	if parts[1] > 0xffffffff || parts[2] > 0xfff || parts[0] > 0xfffff {
-		return BadId
+		id = BadId
 	}
-	return MakeID(uint32(parts[0]), uint32(parts[1]), uint16(parts[2]))
+	return IDFromSrcSeqOff(parts[0], parts[1], uint16(parts[2])), rest
+}
+
+func readIDFromTLV(tlv []byte) (id ID, rest []byte) {
+	lit, body, rest := toytlv.TakeAny(tlv)
+	if lit == '-' || lit == 0 {
+		return BadId, nil
+	}
+	id = IDFromZipBytes(body)
+	return
 }

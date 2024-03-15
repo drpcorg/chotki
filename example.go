@@ -4,9 +4,8 @@ import (
 	"github.com/cockroachdb/pebble"
 )
 
-const ExampleTypeId uint64 = (0x8e << SeqOffBits) | (0x5e84 << OffBits)
-const ExampleName = (1 << FieldTypeBits) | ('S' - 'A')
-const ExampleScore = (2 << FieldTypeBits) | ('C' - 'A')
+const ExampleName = (1 << RdtBits) | ('S' - 'A')
+const ExampleScore = (2 << RdtBits) | ('C' - 'A')
 
 type Example struct {
 	Name  string
@@ -40,13 +39,12 @@ func (ex *Example) Load(i *pebble.Iterator) (err error) {
 	return
 }
 
-func (x *Example) Store(i *pebble.Iterator) (changes [][]byte, err error) {
+func (x *Example) Store(i *pebble.Iterator, src uint64) (changes [][]byte, err error) {
 	if !i.Next() {
 		return nil, nil
 	}
 	if Parse583Off(i.Key()[1:]) == ExampleName {
-		new_tlv := Stlv(x.Name)
-		delta := Sdelta(i.Value(), new_tlv)
+		delta := Sdelta(i.Value(), x.Name)
 		if delta != nil {
 			changes = append(changes, delta)
 		}
@@ -55,8 +53,7 @@ func (x *Example) Store(i *pebble.Iterator) (changes [][]byte, err error) {
 		}
 	}
 	if Parse583Off(i.Key()[1:]) == ExampleScore {
-		new_tlv := Itlv(x.Score)
-		delta := Idelta(i.Value(), new_tlv)
+		delta := Idelta(i.Value(), x.Score)
 		if delta != nil {
 			changes = append(changes, delta)
 		}

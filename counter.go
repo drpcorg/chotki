@@ -8,7 +8,7 @@ type counter64 int64
 
 func ProbeID(lit byte, input []byte) ID {
 	idbody, _ := toytlv.Take(lit, input)
-	return UnzipID(idbody)
+	return IDFromZipBytes(idbody)
 }
 
 func ProbeI(input []byte) ID {
@@ -21,10 +21,10 @@ func CMerge(inputs [][]byte) (merged []byte) {
 	heap := Uint64Heap(_heap[0:0])
 	for i, in := range inputs { // fixme 4096
 		id := ProbeI(in)
-		reid := MakeID(id.Src(), id.Seq(), uint16(i)) // todo i order
+		reid := IDFromSrcSeqOff(id.Src(), id.Seq(), uint16(i)) // todo i order
 		heap.Push(^uint64(reid))
 	}
-	prev := uint32(0)
+	prev := uint64(0)
 	for len(heap) > 0 {
 		id := ID(^heap.Pop())
 		//fmt.Printf("picked %s\n", id.String())
@@ -42,7 +42,7 @@ func CMerge(inputs [][]byte) (merged []byte) {
 		if len(inputs[i]) != 0 {
 			id := ProbeI(inputs[i])
 			//fmt.Printf("queued %s\n", id.String())
-			reid := MakeID(id.Src(), id.Seq(), uint16(i)) // todo i order
+			reid := IDFromSrcSeqOff(id.Src(), id.Seq(), uint16(i)) // todo i order
 			heap.Push(^uint64(reid))
 		}
 	}
@@ -53,7 +53,7 @@ func CState(sum int64) []byte {
 	return toytlv.Record('C', ZipZagInt64(sum))
 }
 
-func parseC(state []byte, src uint32) (sum, mine int64) {
+func parseC(state []byte, src uint64) (sum, mine int64) {
 	rest := state
 	var err error
 	var id ID

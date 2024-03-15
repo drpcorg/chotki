@@ -259,6 +259,8 @@ github.com/learn-decentralized-systems/toyqueue v0.1.1 h1:oMtNIv1KliUyVUGYyHMee5
 github.com/learn-decentralized-systems/toyqueue v0.1.1/go.mod h1:T5PrFDCcxA1O7hb2MAlHYYFA89ry8hvXUuwg+drS1UQ=
 github.com/learn-decentralized-systems/toyqueue v0.1.2 h1:tJqMzmPa2f1VspsNJbyqSUSIhjFXTV0910wh2HtQFF4=
 github.com/learn-decentralized-systems/toyqueue v0.1.2/go.mod h1:T5PrFDCcxA1O7hb2MAlHYYFA89ry8hvXUuwg+drS1UQ=
+github.com/learn-decentralized-systems/toyqueue v0.1.4 h1:9NvnbbenUpkhb/8bkAkGbhNvnNqaYTBLXFglHpeq25Y=
+github.com/learn-decentralized-systems/toyqueue v0.1.4/go.mod h1:T5PrFDCcxA1O7hb2MAlHYYFA89ry8hvXUuwg+drS1UQ=
 github.com/learn-decentralized-systems/toytlv v0.0.0-20231217094629-439638b09afe h1:KLczTkzkUjfWuS41C/fqe3jujsTYQvrm0S8G0WajUPM=
 github.com/learn-decentralized-systems/toytlv v0.0.0-20231217094629-439638b09afe/go.mod h1:NxjanLt+LhWs3gJjA1Y26RGT75h61P+TcUx6tdrI5rA=
 github.com/learn-decentralized-systems/toytlv v0.1.1 h1:mtfK2kVw6McrLiiVB0FsVUOLejWDnMvTvXY6/Nfpuhw=
