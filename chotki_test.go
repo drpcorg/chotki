@@ -39,10 +39,13 @@ type KVMerger interface {
 
 func TestChotki_Sync(t *testing.T) {
 	_ = os.RemoveAll("cho1c")
-	var a Chotki
-	err := a.Create(0x1c, "test replica")
+	_ = os.RemoveAll("cho1d")
+	var a, b Chotki
+	err := a.Create(0x1c, "test replica A")
 	assert.Nil(t, err)
 	a.DumpAll()
+	err = b.Create(0x1d, "test replica B")
+	assert.Nil(t, err)
 
 	queue := toyqueue.RecordQueue{Limit: 1024}
 	snap := a.db.NewSnapshot()
@@ -53,9 +56,22 @@ func TestChotki_Sync(t *testing.T) {
 	recs, err := queue.Feed()
 	assert.Nil(t, err)
 	assert.Equal(t, 2, len(recs)) // one block, one vv
+	vpack, err := ParseVPack(recs[1])
+	assert.Nil(t, err)
+	_, _ = fmt.Fprintln(os.Stderr, "--- synced vv ---")
+	DumpVPacket(vpack)
+
+	err = b.Drain(recs)
+	assert.Nil(t, err)
+	b.DumpAll()
+	bvv, err := b.VersionVector()
+	assert.Nil(t, err)
+	assert.Equal(t, "0,1c-0,1d-0", bvv.String())
 
 	_ = a.Close()
+	_ = b.Close()
 	_ = os.RemoveAll("cho1c")
+	_ = os.RemoveAll("cho1d")
 }
 
 func TestChotki_AbsorbBatch(t *testing.T) {

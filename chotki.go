@@ -151,6 +151,7 @@ func (ch *Chotki) Open(orig uint64) (err error) {
 		_ = ch.db.Close()
 		return err
 	}
+	ch.syncs = make(map[ID]*pebble.Batch)
 	// ch.last = ch.heads.GetID(orig) todo root VV
 	//ch.inq.Limit = 8192
 	/*ch.fan.Feeder = &ch.outq
@@ -261,6 +262,19 @@ func (ch *Chotki) Drain(recs toyqueue.Records) (err error) {
 
 	// todo err = ch.outq.Drain(recs) // nonblocking
 
+	return
+}
+
+func (ch *Chotki) VersionVector() (vv VV, err error) {
+	key0 := VKey(ID0)
+	val, clo, err := ch.db.Get(key0)
+	if err == nil {
+		vv = make(VV)
+		err = vv.PutTLV(val)
+	}
+	if clo != nil {
+		_ = clo.Close()
+	}
 	return
 }
 

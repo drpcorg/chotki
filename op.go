@@ -9,13 +9,15 @@ func ParsePacket(pack []byte) (lit byte, id, ref ID, body []byte, err error) {
 		return
 	}
 	body = pack[hlen : hlen+blen]
-	i, ihlen, iblen := toytlv.ProbeHeader(body)
-	if i != 'I' {
-		err = ErrBadPacket
-		return
+	if lit != 'Y' && lit != 'V' {
+		i, ihlen, iblen := toytlv.ProbeHeader(body)
+		if i != 'I' {
+			err = ErrBadPacket
+			return
+		}
+		id = IDFromZipBytes(body[ihlen : ihlen+iblen])
+		body = body[ihlen+iblen:]
 	}
-	id = IDFromZipBytes(body[ihlen : ihlen+iblen])
-	body = body[ihlen+iblen:]
 	r, rhlen, rblen := toytlv.ProbeHeader(body)
 	if r == 'R' {
 		ref = IDFromZipBytes(body[rhlen : rhlen+rblen])

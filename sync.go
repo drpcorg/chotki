@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"github.com/cockroachdb/pebble"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
@@ -65,12 +64,15 @@ func (ch *Chotki) SyncPeer(peer toyqueue.DrainCloser, snap *pebble.Snapshot, pee
 	}
 	vpack := make([]byte, 0, 4096)
 	bmark, vpack := toytlv.OpenHeader(vpack, 'V')
-	vpack = append(vpack, vit.Value()...)
+	v := toytlv.Record('V',
+		toytlv.Record('R', ID0V.ZipBytes()),
+		vit.Value())
+	vpack = append(vpack, v...)
 	sendvv := dbvv.Ahead(peervv)
 
 	for vit.Next() {
 		at := FieldKeyId(vit.Key()).ZeroOff()
-		fmt.Printf("at %s\n", at.String())
+		//fmt.Printf("at %s\n", at.String())
 		vv := make(VV)
 		err = vv.PutTLV(vit.Value())
 		if err != nil {
@@ -127,6 +129,34 @@ func (ch *Chotki) scanObjects(fit *pebble.Iterator, block ID, sendvv VV, peer to
 	if err == nil {
 		toytlv.CloseHeader(parcel, bmark)
 		err = peer.Drain(toyqueue.Records{parcel})
+	}
+	return
+}
+
+func ParseVPack(vpack []byte) (vvs map[ID]VV, err error) {
+	lit, body, rest := toytlv.TakeAny(vpack)
+	if lit != 'V' || len(rest) > 0 {
+		return nil, ErrBadVPacket
+	}
+	vvs = make(map[ID]VV)
+	vrest := body
+	for len(vrest) > 0 {
+		var rv, r, v []byte
+		lit, rv, vrest = toytlv.TakeAny(vrest)
+		if lit != 'V' {
+			return nil, ErrBadVPacket
+		}
+		lit, r, v := toytlv.TakeAny(rv)
+		if lit != 'R' {
+			return nil, ErrBadVPacket
+		}
+		syncvv := make(VV)
+		err = syncvv.PutTLV(v)
+		if err != nil {
+			return nil, ErrBadVPacket
+		}
+		id := IDFromZipBytes(r)
+		vvs[id] = syncvv
 	}
 	return
 }

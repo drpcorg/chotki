@@ -4,6 +4,7 @@ import (
 	hex2 "encoding/hex"
 	"fmt"
 	"github.com/cockroachdb/pebble"
+	"os"
 )
 
 func ChotkiKVString(key, value []byte) string {
@@ -39,9 +40,9 @@ func ChotkiKVString(key, value []byte) string {
 }
 
 func (ch *Chotki) DumpAll() {
-	fmt.Println("=====OBJECTS=====")
+	_, _ = fmt.Fprintf(os.Stderr, "=====OBJECTS=====\n")
 	ch.DumpObjects()
-	fmt.Println("=====VVS=====")
+	_, _ = fmt.Fprintf(os.Stderr, "=====VVS=====\n")
 	ch.DumpVV()
 }
 
@@ -52,7 +53,7 @@ func (ch *Chotki) DumpObjects() {
 	}
 	i := ch.db.NewIter(&io)
 	for i.SeekGE([]byte{'O'}); i.Valid(); i.Next() {
-		fmt.Println(ChotkiKVString(i.Key(), i.Value()))
+		_, _ = fmt.Fprintln(os.Stderr, ChotkiKVString(i.Key(), i.Value()))
 	}
 }
 
@@ -67,6 +68,12 @@ func (ch *Chotki) DumpVV() {
 		id &= ^ID(OffMask)
 		vv := make(VV)
 		_ = vv.PutTLV(i.Value())
-		fmt.Printf("%s:\t%s\n", id.String(), vv.String())
+		fmt.Printf("%s -> \t%s\n", id.String(), vv.String())
+	}
+}
+
+func DumpVPacket(vvs map[ID]VV) {
+	for id, vv := range vvs {
+		_, _ = fmt.Fprintf(os.Stderr, "%s -> %s\n", id.String(), vv.String())
 	}
 }
