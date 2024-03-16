@@ -22,7 +22,7 @@ func TestVMerge(t *testing.T) {
 	}
 	//result := Vmerge(args)
 	ma := PebbleMergeAdaptor{
-		key: FieldKey('O', ID(0).ToOff(VVName)),
+		id: ID0V,
 	}
 	_ = ma.MergeOlder(args[0])
 	_ = ma.MergeNewer(args[1])

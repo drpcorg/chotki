@@ -39,6 +39,8 @@ type Chotki struct {
 	lock   sync.Mutex
 	idlock sync.Mutex
 
+	tcp toytlv.TCPDepot
+
 	opts Options
 }
 
@@ -84,10 +86,14 @@ func (o *Options) SetDefaults() {
 }
 
 func merger(key, value []byte) (pebble.ValueMerger, error) {
-	pma := PebbleMergeAdaptor{
-		key: key,
+	if len(key) != 9 {
+		return nil, nil
 	}
-	_ = pma.MergeOlder(value)
+	id := IDFromBytes(key[1:])
+	pma := PebbleMergeAdaptor{
+		id:   id,
+		vals: append([][]byte{value}),
+	}
 	return &pma, nil
 }
 
@@ -197,7 +203,6 @@ func (ch *Chotki) warn(format string, a ...any) {
 }
 
 func (ch *Chotki) Drain(recs toyqueue.Records) (err error) {
-	pb := pebble.Batch{}
 	rest := recs
 	apply := toyqueue.Records{}
 
@@ -213,6 +218,7 @@ func (ch *Chotki) Drain(recs toyqueue.Records) (err error) {
 		if id.Src() == ch.src && id > ch.last {
 			ch.last = id
 		}
+		pb := pebble.Batch{}
 		switch lit {
 		case 'L': // create replica log
 			if ref != ID0 && id.Off() != 0 {
@@ -246,13 +252,10 @@ func (ch *Chotki) Drain(recs toyqueue.Records) (err error) {
 		default:
 			_, _ = fmt.Fprintf(os.Stderr, "unsupported packet %c skipped\n", lit)
 		}
+
+		err = ch.db.Apply(&pb, &WriteOptions)
 	}
 	if err != nil { // fixme separate packets
-		return
-	}
-
-	err = ch.db.Apply(&pb, &WriteOptions)
-	if err != nil {
 		return
 	}
 

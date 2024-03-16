@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/learn-decentralized-systems/toytlv"
 	"io"
+	"slices"
 )
 
 type Merger interface {
@@ -11,29 +12,30 @@ type Merger interface {
 }
 
 type PebbleMergeAdaptor struct {
-	key        []byte
-	inew, iold [][]byte
+	id   ID
+	old  bool
+	vals [][]byte
 }
 
 func (a *PebbleMergeAdaptor) MergeNewer(value []byte) error {
-	a.inew = append(a.inew, value)
+	a.vals = append(a.vals, value)
 	return nil
 }
 func (a *PebbleMergeAdaptor) MergeOlder(value []byte) error {
-	a.iold = append(a.iold, value)
+	a.vals = append(a.vals, value)
+	a.old = true
 	return nil
 }
 
 func (a *PebbleMergeAdaptor) Finish(includesBase bool) (res []byte, cl io.Closer, err error) {
-	for i, j := 0, len(a.iold)-1; i < j; i, j = i+1, j-1 {
-		a.iold[i], a.iold[j] = a.iold[j], a.iold[i]
+	if a.old {
+		slices.Reverse(a.vals)
 	}
-	inputs := append(a.iold, a.inew...)
+	inputs := a.vals
 	if len(inputs) == 0 {
 		return nil, nil, nil
 	}
-	off := Parse583Off(a.key[1:])
-	_, rdt := FieldNameType(off)
+	rdt := (uint16(a.id) & RdtMask) + 'A'
 	switch rdt {
 	case 'A': // object's ref is immutable
 		res = Amerge(inputs)

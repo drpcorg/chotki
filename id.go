@@ -85,7 +85,7 @@ func (id ID) FNo() (fno byte) {
 	return byte((id >> RdtBits) & mask)
 }
 
-func FieldNameType(off uint16) (field, rdt byte) {
+func FNoRdt(off uint16) (field, rdt byte) {
 	rdt = byte((off & RdtMask) + 'A')
 	field = byte(off >> RdtBits)
 	return

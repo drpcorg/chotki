@@ -52,7 +52,7 @@ func TestChotki_Sync(t *testing.T) {
 	assert.Nil(t, err)
 	recs, err := queue.Feed()
 	assert.Nil(t, err)
-	assert.Equal(t, 1, len(recs))
+	assert.Equal(t, 2, len(recs)) // one block, one vv
 
 	_ = a.Close()
 	_ = os.RemoveAll("cho1c")

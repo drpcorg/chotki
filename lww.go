@@ -34,7 +34,10 @@ func LWWmerge(tlvs [][]byte) (tlv []byte) {
 		l, hlen, blen := toytlv.ProbeHeader(rec)
 		tsb := rec[hlen : hlen+blen]
 		time, _ := UnzipUint64Pair(tsb)
-		if (l == 'T' || l == '0') && time > maxt {
+		if l != 'T' && l != '0' {
+			continue
+		}
+		if time > maxt || (time == maxt && bytes.Compare(rec, win) > 0) {
 			maxt = time
 			win = rec
 		}

@@ -179,7 +179,8 @@ func Vmerge(tlvs [][]byte) (tlv []byte) {
 	for _, v := range tlvs {
 		_ = vv.PutTLV(v)
 	}
-	return vv.TLV()
+	tlv = vv.TLV()
+	return
 }
 
 func Vdelta(tlv []byte, new_val VV) (tlv_delta []byte) {

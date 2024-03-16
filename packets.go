@@ -14,17 +14,11 @@ func FieldID(oid ID, fno byte, rdt byte) ID {
 }
 
 func (ch *Chotki) UpdateVTree(id, ref ID, pb *pebble.Batch) (err error) {
-	err = pb.Merge(
-		VKey(ref),
-		toytlv.Record('V', id.ZipBytes()),
-		&WriteOptions)
-	if err != nil {
-		return
+	v := toytlv.Record('V', id.ZipBytes())
+	err = pb.Merge(VKey(ref), v, &WriteOptions)
+	if err == nil {
+		err = pb.Merge(VKey(ID0), v, &WriteOptions)
 	}
-	err = pb.Merge(
-		VKey(ID0),
-		toytlv.Record('V', id.ZipBytes()),
-		&WriteOptions)
 	return
 }
 
@@ -63,35 +57,34 @@ func (ch *Chotki) ApplyV(id, ref ID, body []byte, batch *pebble.Batch) (err erro
 }
 
 func (ch *Chotki) ApplyLO(id, ref ID, body []byte, batch *pebble.Batch) (err error) {
-	key := FieldKey('O', id)
-	value := ref.ZipBytes()
-	err = batch.Merge(key, value, &WriteOptions)
-	if err != nil {
-		return
-	}
+	err = batch.Merge(
+		FieldKey('O', id),
+		ref.ZipBytes(),
+		&WriteOptions)
 	rest := body
-	for fno := byte(1); len(rest) > 0 && fno < (1<<FNoBits); fno++ {
+	for fno := byte(1); len(rest) > 0 && fno < (1<<FNoBits) && err == nil; fno++ {
 		lit, hlen, blen := toytlv.ProbeHeader(rest)
 		if lit == 0 || lit == '-' {
 			return ErrBadPacket
 		}
 		body = rest[hlen : hlen+blen]
-		fkey := OKey(FieldID(id, fno, lit))
+		fid := FieldID(id, fno, lit)
+		fkey := OKey(fid)
 		switch lit {
-		case 'I', 'S', 'R', 'F': // ensure correct attribution
+		case 'I', 'S', 'R', 'F':
 			time, src, value := LWWparse(body)
 			if value == nil {
 				return ErrBadPacket
 			}
-			if src != id.Src() {
+			if src != id.Src() { // ensure correct attribution
 				body = LWWtlv(time, id.Src(), value)
 			}
 		default:
 		}
-		err = batch.Merge(fkey, body, &WriteOptions) // fixme make atomic
-		if err != nil {
-			return
-		}
+		err = batch.Merge(
+			fkey,
+			body,
+			&WriteOptions)
 		rest = rest[hlen+blen:]
 	}
 	if err == nil {
@@ -110,23 +103,17 @@ func (ch *Chotki) ApplyE(id, r ID, body []byte, batch *pebble.Batch) (err error)
 	var ref ID // FIXME offs
 	var xb []byte
 	rest := body
-	for len(rest) > 0 {
+	for len(rest) > 0 && err == nil {
 		ref, xb, rest, err = ReadRX(rest)
 		if err != nil {
-			return
+			break
 		}
 		xid++
 		key := FieldKey('O', ref)
 		value := toytlv.Append(nil, 'I', xid.ZipBytes())
 		value = append(value, xb...)
 		err = batch.Merge(key, value, &WriteOptions)
-		if err != nil {
-			return
-		}
 	}
-	vvkey := []byte{'V'}
-	vvval := toytlv.Record('V', xid.ZipBytes())
-	err = batch.Merge(vvkey, vvval, &WriteOptions)
 	if err == nil {
 		err = ch.UpdateVTree(id, r, batch)
 	}
