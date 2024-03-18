@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"math"
+	"math/bits"
 )
 
 const Bytes4 = 0xffffffff
@@ -201,10 +202,12 @@ func UnzipInt64(zip []byte) int64 {
 }
 
 func ZipFloat64(f float64) []byte {
-	return ZipUint64(math.Float64bits(f))
+	fb := math.Float64bits(f)
+	b := bits.Reverse64(fb)
+	return ZipUint64(b)
 }
 
 func UnzipFloat64(zip []byte) float64 {
-	bits := UnzipUint64(zip)
-	return math.Float64frombits(bits)
+	b := UnzipUint64(zip)
+	return math.Float64frombits(bits.Reverse64(b))
 }

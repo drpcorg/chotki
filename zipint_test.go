@@ -39,3 +39,18 @@ func TestZigZagInt64(t *testing.T) {
 		assert.Equal(t, i, i2)
 	}
 }
+
+func TestZipFloat64(t *testing.T) {
+	test := map[float64]int{
+		0:     0,
+		1:     2,
+		1234:  3,
+		12.25: 3,
+	}
+	for f, l := range test {
+		u := ZipFloat64(f)
+		assert.Equal(t, l, len(u))
+		f2 := UnzipFloat64(u)
+		assert.Equal(t, f, f2)
+	}
+}
