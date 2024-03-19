@@ -8,9 +8,9 @@ import (
 	"github.com/learn-decentralized-systems/toytlv"
 )
 
-const ID0V = ID0 | ID('V'-'A')
+const ID0V = ID0 | id64('V'-'A')
 const VBlockBits = 28
-const VBlockMask = (ID(1) << VBlockBits) - 1
+const VBlockMask = (id64(1) << VBlockBits) - 1
 
 func (ch *Chotki) AddPeer(peer toyqueue.FeedDrainCloser) error {
 	// fixme add firehose 21 12
@@ -98,16 +98,22 @@ func (ch *Chotki) SyncPeer(peer toyqueue.DrainCloser, snap *pebble.Snapshot, pee
 	return
 }
 
-func (ch *Chotki) scanObjects(fit *pebble.Iterator, block ID, sendvv VV, peer toyqueue.DrainCloser) (err error) {
+func (ch *Chotki) scanObjects(fit *pebble.Iterator, block id64, sendvv VV, peer toyqueue.DrainCloser) (err error) {
 	key := OKey(block)
 	fit.SeekGE(key)
 	bmark, parcel := toytlv.OpenHeader(nil, 'Y')
 	parcel = append(parcel, toytlv.Record('R', block.ZipBytes())...)
 	till := block + VBlockMask + 1
-	for fit.Valid() {
+	for ; fit.Valid(); fit.Next() {
 		id := IDFromBytes(fit.Key()[1:])
 		if id == BadId || id >= till {
 			break
+		}
+		lim, ok := sendvv[id.Src()]
+		if ok && id.Pro() > lim {
+			parcel = append(parcel, toytlv.Record('F', ZipUint64(uint64(id-block)))...)
+			parcel = append(parcel, toytlv.Record(id.RDT(), fit.Value())...)
+			continue
 		}
 		rdt := 'A' + byte(uint16(id)&RdtMask)
 		var diff []byte
@@ -124,7 +130,6 @@ func (ch *Chotki) scanObjects(fit *pebble.Iterator, block ID, sendvv VV, peer to
 			parcel = append(parcel, toytlv.Record('F', ZipUint64(uint64(id-block)))...)
 			parcel = append(parcel, toytlv.Record(rdt, diff)...)
 		}
-		fit.Next()
 	}
 	if err == nil {
 		toytlv.CloseHeader(parcel, bmark)
@@ -133,12 +138,12 @@ func (ch *Chotki) scanObjects(fit *pebble.Iterator, block ID, sendvv VV, peer to
 	return
 }
 
-func ParseVPack(vpack []byte) (vvs map[ID]VV, err error) {
+func ParseVPack(vpack []byte) (vvs map[id64]VV, err error) {
 	lit, body, rest := toytlv.TakeAny(vpack)
 	if lit != 'V' || len(rest) > 0 {
 		return nil, ErrBadVPacket
 	}
-	vvs = make(map[ID]VV)
+	vvs = make(map[id64]VV)
 	vrest := body
 	for len(vrest) > 0 {
 		var rv, r, v []byte

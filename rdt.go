@@ -14,7 +14,7 @@ type RDT interface {
 	Diff(state []byte) (changes []byte)
 }
 
-func MakeObjectPacket(id, typedecl ID, states ...[]byte) (packet []byte) {
+func MakeObjectPacket(id, typedecl id64, states ...[]byte) (packet []byte) {
 	packet = toytlv.Append(packet, 'I', id.ZipBytes())
 	packet = toytlv.Append(packet, 'R', typedecl.ZipBytes())
 	for i, state := range states {

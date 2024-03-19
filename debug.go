@@ -16,7 +16,7 @@ func ChotkiKVString(key, value []byte) string {
 	id := IDFromBytes(key[1:])
 	rdt := (uint16(id) & RdtMask) + 'A'
 	fno := (uint64(id) & OffMask) >> RdtBits
-	id = (id & ID(^OffMask)) | ID(fno)
+	id = (id & id64(^OffMask)) | id64(fno)
 	line = append(line, id.String()...)
 	line = append(line, '.', byte(rdt), ':', '\t')
 	switch rdt {
@@ -65,14 +65,14 @@ func (ch *Chotki) DumpVV() {
 	i := ch.db.NewIter(&io)
 	for i.SeekGE(VKey(ID0)); i.Valid(); i.Next() {
 		id := IDFromBytes(i.Key()[1:])
-		id &= ^ID(OffMask)
+		id &= ^id64(OffMask)
 		vv := make(VV)
 		_ = vv.PutTLV(i.Value())
 		fmt.Printf("%s -> \t%s\n", id.String(), vv.String())
 	}
 }
 
-func DumpVPacket(vvs map[ID]VV) {
+func DumpVPacket(vvs map[id64]VV) {
 	for id, vv := range vvs {
 		_, _ = fmt.Fprintf(os.Stderr, "%s -> %s\n", id.String(), vv.String())
 	}

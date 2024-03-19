@@ -6,7 +6,7 @@ import (
 	"slices"
 )
 
-// note that src->0 is a meaningful record (the log is known)
+// VV is a version vector, max ids seen from each known replica.
 type VV map[uint64]uint64
 
 func (vv VV) Get(src uint64) (pro uint64) {
@@ -30,7 +30,7 @@ func (vv VV) Put(src, pro uint64) bool {
 }
 
 // Adds the id to the VV, returns whether it was unseen
-func (vv VV) PutID(id ID) bool {
+func (vv VV) PutID(id id64) bool {
 	return vv.Put(id.Src(), id.Pro())
 }
 
@@ -50,16 +50,16 @@ func (vv VV) Overlaps(b VV) bool {
 
 func (vv VV) Ahead(b VV) VV {
 	ahead := make(VV)
-	for src, seqoff := range vv {
-		peerseqoff, ok := b[src]
-		if !ok || seqoff > peerseqoff {
-			ahead[src] = seqoff
+	for src, pro := range vv {
+		bpro, ok := b[src]
+		if !ok || pro > bpro {
+			ahead[src] = bpro
 		}
 	}
 	return ahead
 }
 
-func (vv VV) IDs() (ids []ID) {
+func (vv VV) IDs() (ids []id64) {
 	for src, pro := range vv {
 		ids = append(ids, IDfromSrcPro(src, pro))
 	}
@@ -121,7 +121,7 @@ func (vv VV) Seen(bb VV) bool {
 	return true
 }
 
-func (vv VV) GetID(src uint64) ID {
+func (vv VV) GetID(src uint64) id64 {
 	return IDfromSrcPro(src, vv[src])
 }
 
@@ -141,7 +141,7 @@ func (vv VV) String() string {
 func VVFromString(vvs string) (vv VV) {
 	vv = make(VV)
 	rest := []byte(vvs)
-	var id ID
+	var id id64
 	for len(rest) > 0 && id != BadId {
 		id, rest = readIDFromString(rest)
 		vv.PutID(id)

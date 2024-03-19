@@ -66,7 +66,7 @@ func TestChotki_Sync(t *testing.T) {
 	b.DumpAll()
 	bvv, err := b.VersionVector()
 	assert.Nil(t, err)
-	assert.Equal(t, "0,1c-0,1d-0", bvv.String())
+	assert.Equal(t, "0,1c-0-32,1d-0-32", bvv.String())
 
 	_ = a.Close()
 	_ = b.Close()
@@ -79,7 +79,7 @@ func TestChotki_AbsorbBatch(t *testing.T) {
 	var a, b Chotki
 	err := a.Create(0x1e, "test replica")
 	assert.Nil(t, err)
-	var tid, oid ID
+	var tid, oid id64
 	tid, err = a.CreateType("Example", "Sname", "Iscore")
 	assert.Equal(t, "1e-1", tid.String())
 	oid, err = a.CreateObject(tid, "Ivan Petrov", "102")

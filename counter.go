@@ -6,12 +6,12 @@ import (
 
 type counter64 int64
 
-func ProbeID(lit byte, input []byte) ID {
+func ProbeID(lit byte, input []byte) id64 {
 	idbody, _ := toytlv.Take(lit, input)
 	return IDFromZipBytes(idbody)
 }
 
-func ProbeI(input []byte) ID {
+func ProbeI(input []byte) id64 {
 	return ProbeID('I', input)
 }
 
@@ -26,7 +26,7 @@ func CMerge(inputs [][]byte) (merged []byte) {
 	}
 	prev := uint64(0)
 	for len(heap) > 0 {
-		id := ID(^heap.Pop())
+		id := id64(^heap.Pop())
 		//fmt.Printf("picked %s\n", id.String())
 		i := int(id.Off())
 		iclen := toytlv.ProbeHeaders("IC", inputs[i])
@@ -56,7 +56,7 @@ func CState(sum int64) []byte {
 func parseC(state []byte, src uint64) (sum, mine int64) {
 	rest := state
 	var err error
-	var id ID
+	var id id64
 	var cbody []byte
 	for len(rest) > 0 {
 		id, rest, err = TakeIDWary('I', rest)
@@ -78,7 +78,7 @@ func (c *counter64) Apply(state []byte) {
 	*c = counter64(sum)
 }
 
-func (c counter64) Diff(id ID, state []byte) (changes []byte) {
+func (c counter64) Diff(id id64, state []byte) (changes []byte) {
 	sum, mine := parseC(state, id.Src())
 	if sum != int64(c) {
 		d := int64(c) - sum

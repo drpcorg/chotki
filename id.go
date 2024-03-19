@@ -8,7 +8,7 @@ import (
 )
 
 /*
-		ID is an 64-bit locator/identifier.
+		id64 is an 64-bit locator/identifier.
 	    This is NOT a Lamport timestamp (need more bits for that).
 
 0...............16..............32..............48.............64
@@ -17,9 +17,9 @@ import (
 |...........progress.(44.bits).............|....................
 |rdt||field|....................................................
 */
-type ID uint64
+type id64 uint64
 
-const ID0 ID = 0
+const ID0 id64 = 0
 
 const SeqBits = 32
 const OffBits = 12
@@ -33,23 +33,23 @@ const FNoBits = OffBits - RdtBits
 const RdtMask = (uint16(1) << RdtBits) - 1
 
 const SeqOne = 1 << OffBits
-const BadId = ID(0xffffffffffffffff)
-const ZeroId = ID(0)
+const BadId = id64(0xffffffffffffffff)
+const ZeroId = id64(0)
 
-func IDfromSrcPro(src, pro uint64) ID {
-	return ID((src << ProBits) | pro)
+func IDfromSrcPro(src, pro uint64) id64 {
+	return id64((src << ProBits) | pro)
 }
 
-func IDFromSrcSeqOff(src uint64, seq uint64, off uint16) ID {
+func IDFromSrcSeqOff(src uint64, seq uint64, off uint16) id64 {
 	ret := uint64(src)
 	ret <<= SeqBits
 	ret |= uint64(seq)
 	ret <<= OffBits
 	ret |= uint64(off)
-	return ID(ret)
+	return id64(ret)
 }
 
-func SrcSeqOff(id ID) (src uint64, seq uint64, off uint16) {
+func SrcSeqOff(id id64) (src uint64, seq uint64, off uint16) {
 	n := uint64(id)
 	off = uint16(n & OffMask)
 	n >>= OffBits
@@ -69,19 +69,23 @@ func MakeField(rdt byte, field byte) (off uint16) {
 	return
 }
 
-func (id ID) FieldRDT() (field, rdt byte) {
+func (id id64) FieldRDT() (field, rdt byte) {
 	const FieldNoMask = (1 << FNoBits) - 1
 	rdt = byte(uint16(id)&RdtMask) + 'A'
 	field = uint8(id>>RdtBits) & FieldNoMask
 	return
 }
 
-func (id ID) ZeroOff() ID {
-	return id & ID(^OffMask)
+func (id id64) RDT() byte {
+	return (byte(id) & RdtBits) + 'A'
 }
 
-func (id ID) FNo() (fno byte) {
-	mask := ID(1<<FNoBits) - 1
+func (id id64) ZeroOff() id64 {
+	return id & id64(^OffMask)
+}
+
+func (id id64) FNo() (fno byte) {
+	mask := id64(1<<FNoBits) - 1
 	return byte((id >> RdtBits) & mask)
 }
 
@@ -93,65 +97,65 @@ func FNoRdt(off uint16) (field, rdt byte) {
 
 // Seq is the op sequence number (each replica generates its own
 // sequence numbers)
-func (id ID) Seq() uint64 {
+func (id id64) Seq() uint64 {
 	i := uint64(id)
 	return (i & ProMask) >> OffBits
 }
 
-func (id ID) Pro() uint64 {
+func (id id64) Pro() uint64 {
 	i := uint64(id)
 	return i & ProMask
 }
 
-func (id ID) Off() uint16 {
+func (id id64) Off() uint16 {
 	return uint16(uint64(id) & OffMask)
 }
 
-func (id ID) ToOff(newoff uint16) ID {
-	return ID((uint64(id) & ^OffMask) | uint64(newoff))
+func (id id64) ToOff(newoff uint16) id64 {
+	return id64((uint64(id) & ^OffMask) | uint64(newoff))
 }
 
 // Src is the replica id. That is normally a small number.
-func (id ID) Src() uint64 {
+func (id id64) Src() uint64 {
 	return uint64(id >> ProBits)
 }
 
-func (id ID) Bytes() []byte {
+func (id id64) Bytes() []byte {
 	var ret [8]byte
 	binary.BigEndian.PutUint64(ret[:], uint64(id))
 	return ret[:]
 }
 
-func IDFromBytes(by []byte) ID {
-	return ID(binary.BigEndian.Uint64(by))
+func IDFromBytes(by []byte) id64 {
+	return id64(binary.BigEndian.Uint64(by))
 }
 
-func (id ID) ZipBytes() []byte {
+func (id id64) ZipBytes() []byte {
 	return ZipUint64Pair(id.Pro(), id.Src())
 }
 
-func IDFromZipBytes(zip []byte) ID {
+func IDFromZipBytes(zip []byte) id64 {
 	big, lil := UnzipUint64Pair(zip) // todo range check
-	return ID(big | (lil << ProBits))
+	return id64(big | (lil << ProBits))
 }
 
-func (id ID) Feed(into []byte) (res []byte) {
+func (id id64) Feed(into []byte) (res []byte) {
 	pair := id.ZipBytes()
 	res = toytlv.AppendHeader(into, 'I', len(pair))
 	res = append(res, pair...)
 	return res
 }
 
-func (id *ID) Drain(from []byte) (rest []byte) { // FIXME
+func (id *id64) Drain(from []byte) (rest []byte) { // FIXME
 	body, rest := toytlv.Take('I', from)
 	seq, orig := UnzipUint64Pair(body)
-	*id = ID((seq << SrcBits) | orig)
+	*id = id64((seq << SrcBits) | orig)
 	return rest
 }
 
 var ErrBadId = errors.New("not an expected id")
 
-func TakeIDWary(lit byte, pack []byte) (id ID, rest []byte, err error) {
+func TakeIDWary(lit byte, pack []byte) (id id64, rest []byte, err error) {
 	idbytes, rest := toytlv.Take(lit, pack)
 	if idbytes == nil {
 		err = ErrBadId
@@ -161,7 +165,7 @@ func TakeIDWary(lit byte, pack []byte) (id ID, rest []byte, err error) {
 	return
 }
 
-func (id ID) String() string {
+func (id id64) String() string {
 	seq := id.Seq()
 	off := id.Off()
 	src := id.Src()
@@ -182,7 +186,7 @@ func Parse583Off(hex583 []byte) (off uint16) {
 	return uint16(UnHex(hex583[len(hex583)-3:]))
 }
 
-func (id ID) Hex583() []byte {
+func (id id64) Hex583() []byte {
 	hex := []byte{'0', '0', '0', '0', '0', '-', '0', '0', '0', '0', '0', '0', '0', '0', '-', '0', '0', '0'}
 	k := Hex583Len - 1
 	u := uint64(id)
@@ -206,7 +210,7 @@ func (id ID) Hex583() []byte {
 	return hex
 }
 
-func (id ID) String583() string {
+func (id id64) String583() string {
 	return string(id.Hex583())
 }
 
@@ -227,23 +231,23 @@ func UnHex(hex []byte) (num uint64) {
 	return
 }
 
-func ParseIDString(id string) ID {
+func ParseIDString(id string) id64 {
 	return IDFromString([]byte(id))
 }
 
-func ParseBracketedID(bid []byte) ID {
+func ParseBracketedID(bid []byte) id64 {
 	if len(bid) < 7 || bid[0] != '{' || bid[len(bid)-1] != '}' {
 		return BadId
 	}
 	return IDFromString(bid[1 : len(bid)-1])
 }
 
-func IDFromString(idstr []byte) (parsed ID) {
+func IDFromString(idstr []byte) (parsed id64) {
 	parsed, _ = readIDFromString(idstr)
 	return
 }
 
-func readIDFromString(idstr []byte) (id ID, rest []byte) {
+func readIDFromString(idstr []byte) (id id64, rest []byte) {
 	var parts [3]uint64
 	i, p := 0, 0
 	for i < len(idstr) && p < 3 {
@@ -277,7 +281,7 @@ func readIDFromString(idstr []byte) (id ID, rest []byte) {
 	return IDFromSrcSeqOff(parts[0], parts[1], uint16(parts[2])), rest
 }
 
-func readIDFromTLV(tlv []byte) (id ID, rest []byte) {
+func readIDFromTLV(tlv []byte) (id id64, rest []byte) {
 	lit, body, rest := toytlv.TakeAny(tlv)
 	if lit == '-' || lit == 0 {
 		return BadId, nil

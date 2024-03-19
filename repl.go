@@ -30,7 +30,7 @@ func filterInput(r rune) (rune, bool) {
 	return r, true
 }
 
-func ShowObject(chotki *Chotki, id ID) error {
+func ShowObject(chotki *Chotki, id id64) error {
 	i := chotki.ObjectIterator(id)
 	for i.Valid() {
 		keyid := IDFromString(i.Key()[1:])
@@ -43,7 +43,7 @@ func ShowObject(chotki *Chotki, id ID) error {
 var ErrBadObjectJson = errors.New("bad JSON object serialization")
 var ErrUnsupportedType = errors.New("unsupported field type")
 
-func CreateObjectFromList(chotki *Chotki, list []interface{}) (id ID, err error) {
+func CreateObjectFromList(chotki *Chotki, list []interface{}) (id id64, err error) {
 	packet := toyqueue.Records{}
 	// todo ref type json
 	// todo add id, ref
@@ -78,7 +78,7 @@ func CreateObjectFromList(chotki *Chotki, list []interface{}) (id ID, err error)
 }
 
 // ["{10-4f8-0}", +1, "string", 1.0, ...]
-func CreateObject(chotki *Chotki, jsn []byte) (id ID, err error) {
+func CreateObject(chotki *Chotki, jsn []byte) (id id64, err error) {
 	var parsed interface{}
 	err = json.Unmarshal(jsn, &parsed)
 	if err != nil {
