@@ -10,13 +10,13 @@ import (
 
 func TestChotki_Debug(t *testing.T) {
 	oid := IDFromSrcSeqOff(0x1e, 0x1ab, 0)
-	key := OKey(FieldID(oid, 1, 'I'))
+	key := OKey(oid+1, 'I')
 	value := Itlv(-13)
 	str := ChotkiKVString(key, value)
 	fmt.Printf("%s\n", str)
 	assert.Equal(t, "O.1e-1ab-1.I:\t-13", string(str))
 
-	skey := OKey(FieldID(oid, 2, 'S'))
+	skey := OKey(oid+2, 'S')
 	svalue := Stlv("funny\tstring\n")
 	sstr := ChotkiKVString(skey, svalue)
 	fmt.Printf("%s\n", sstr)
@@ -66,7 +66,7 @@ func TestChotki_Sync(t *testing.T) {
 	b.DumpAll()
 	bvv, err := b.VersionVector()
 	assert.Nil(t, err)
-	assert.Equal(t, "0,1c-0-32,1d-0-32", bvv.String())
+	assert.Equal(t, "1,1c-0-1,1d-0-1", bvv.String())
 
 	_ = a.Close()
 	_ = b.Close()

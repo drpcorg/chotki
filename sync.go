@@ -8,7 +8,6 @@ import (
 	"github.com/learn-decentralized-systems/toytlv"
 )
 
-const ID0V = ID0 | id64('V'-'A')
 const VBlockBits = 28
 const VBlockMask = (id64(1) << VBlockBits) - 1
 
@@ -65,13 +64,13 @@ func (ch *Chotki) SyncPeer(peer toyqueue.DrainCloser, snap *pebble.Snapshot, pee
 	vpack := make([]byte, 0, 4096)
 	bmark, vpack := toytlv.OpenHeader(vpack, 'V')
 	v := toytlv.Record('V',
-		toytlv.Record('R', ID0V.ZipBytes()),
+		toytlv.Record('R', ID0.ZipBytes()),
 		vit.Value())
 	vpack = append(vpack, v...)
-	sendvv := dbvv.Ahead(peervv)
+	sendvv := dbvv.InterestOver(peervv)
 
 	for vit.Next() {
-		at := FieldKeyId(vit.Key()).ZeroOff()
+		at := VKeyId(vit.Key()).ZeroOff()
 		//fmt.Printf("at %s\n", at.String())
 		vv := make(VV)
 		err = vv.PutTLV(vit.Value())
@@ -79,7 +78,7 @@ func (ch *Chotki) SyncPeer(peer toyqueue.DrainCloser, snap *pebble.Snapshot, pee
 			err = ErrBadVRecord
 			break
 		}
-		if vv.Overlaps(sendvv) {
+		if vv.ProgressedOver(peervv) {
 			err = ch.scanObjects(fit, at, sendvv, peer)
 			v := toytlv.Record('V',
 				toytlv.Record('R', at.ZipBytes()),
@@ -99,26 +98,26 @@ func (ch *Chotki) SyncPeer(peer toyqueue.DrainCloser, snap *pebble.Snapshot, pee
 }
 
 func (ch *Chotki) scanObjects(fit *pebble.Iterator, block id64, sendvv VV, peer toyqueue.DrainCloser) (err error) {
-	key := OKey(block)
+	key := OKey(block, 0)
 	fit.SeekGE(key)
 	bmark, parcel := toytlv.OpenHeader(nil, 'Y')
 	parcel = append(parcel, toytlv.Record('R', block.ZipBytes())...)
 	till := block + VBlockMask + 1
 	for ; fit.Valid(); fit.Next() {
-		id := IDFromBytes(fit.Key()[1:])
+		id, rdt := OKeyIdRdt(fit.Key())
 		if id == BadId || id >= till {
 			break
 		}
 		lim, ok := sendvv[id.Src()]
-		if ok && id.Pro() > lim {
+		if ok && (id.Pro() > lim || lim == 0) {
 			parcel = append(parcel, toytlv.Record('F', ZipUint64(uint64(id-block)))...)
-			parcel = append(parcel, toytlv.Record(id.RDT(), fit.Value())...)
+			parcel = append(parcel, toytlv.Record(rdt, fit.Value())...)
 			continue
 		}
-		rdt := 'A' + byte(uint16(id)&RdtMask)
 		var diff []byte
 		switch rdt {
-		case 'A': // fixme ref - see by the id
+		case 'A':
+			diff = nil
 		case 'I':
 			diff = Idiff(fit.Value(), sendvv)
 		case 'S':

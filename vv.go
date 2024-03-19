@@ -38,17 +38,17 @@ var ErrSeen = errors.New("previously seen id")
 var ErrGap = errors.New("id sequence gap")
 
 // Whether this VV overlaps with another one (have common non-zero entry)
-func (vv VV) Overlaps(b VV) bool {
-	for src, _ := range vv {
-		_, ok := b[src]
-		if ok {
+func (vv VV) ProgressedOver(b VV) bool {
+	for src, pro := range vv {
+		bpro, ok := b[src]
+		if !ok || pro > bpro {
 			return true
 		}
 	}
 	return false
 }
 
-func (vv VV) Ahead(b VV) VV {
+func (vv VV) InterestOver(b VV) VV {
 	ahead := make(VV)
 	for src, pro := range vv {
 		bpro, ok := b[src]

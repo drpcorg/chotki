@@ -47,22 +47,34 @@ type Chotki struct {
 var ErrCausalityBroken = errors.New("order fail: refs an unknown op")
 var ErrOutOfOrder = errors.New("order fail: sequence gap")
 
-func FieldKey(lit byte, id id64) []byte {
-	var ret = [16]byte{lit}
-	return binary.BigEndian.AppendUint64(ret[:1], uint64(id))
+func OKey(id id64, rdt byte) (key []byte) {
+	var ret = [16]byte{'O'}
+	key = binary.BigEndian.AppendUint64(ret[:1], uint64(id))
+	key = append(key, rdt)
+	return
 }
 
-func OKey(id id64) []byte {
-	return FieldKey('O', id)
+const LidLKeyLen = 1 + 8 + 1
+
+func OKeyIdRdt(key []byte) (id id64, rdt byte) {
+	if len(key) != LidLKeyLen {
+		return BadId, 0
+	}
+	rdt = key[LidLKeyLen-1]
+	id = IDFromBytes(key[1 : LidLKeyLen-1])
+	return
 }
 
-func VKey(id id64) []byte {
+func VKey(id id64) (key []byte) {
+	var ret = [16]byte{'V'}
 	block := id & ^VBlockMask
-	return FieldKey('V', block|('V'-'A'))
+	key = binary.BigEndian.AppendUint64(ret[:1], uint64(block))
+	key = append(key, 'V')
+	return
 }
 
-func FieldKeyId(key []byte) id64 {
-	if len(key) != 9 {
+func VKeyId(key []byte) id64 {
+	if len(key) != LidLKeyLen {
 		return BadId
 	}
 	return IDFromBytes(key[1:])
@@ -86,12 +98,13 @@ func (o *Options) SetDefaults() {
 }
 
 func merger(key, value []byte) (pebble.ValueMerger, error) {
-	if len(key) != 9 {
+	/*if len(key) != 10 {
 		return nil, nil
-	}
-	id := IDFromBytes(key[1:])
+	}*/
+	id, rdt := OKeyIdRdt(key)
 	pma := PebbleMergeAdaptor{
 		id:   id,
+		rdt:  rdt,
 		vals: append([][]byte{value}),
 	}
 	return &pma, nil
@@ -384,7 +397,7 @@ func (ch *Chotki) GetObject(id id64, empty RDT) error {
 	}
 */
 func (ch *Chotki) ObjectKeyRange(oid id64) (fro, til []byte) {
-	return FieldKey('O', oid), FieldKey('O', oid|id64(OffMask))
+	return OKey(oid, 0), OKey('O', 0xff)
 }
 
 // returns nil for "not found"
@@ -395,7 +408,7 @@ func (ch *Chotki) ObjectIterator(oid id64) *pebble.Iterator {
 		UpperBound: til,
 	}
 	ret := ch.db.NewIter(&io)
-	if ret.SeekGE(FieldKey('O', oid)) {
+	if ret.SeekGE(OKey(oid, 0)) {
 		return ret
 	} else {
 		_ = ret.Close()

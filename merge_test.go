@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-const VVName = (1 << RdtBits) | ('V' - 'A')
-
 func TestVMerge(t *testing.T) {
 	args := [][]byte{
 		toytlv.Concat(
@@ -22,7 +20,7 @@ func TestVMerge(t *testing.T) {
 	}
 	//result := Vmerge(args)
 	ma := PebbleMergeAdaptor{
-		id: ID0V,
+		id: ID0,
 	}
 	_ = ma.MergeOlder(args[0])
 	_ = ma.MergeNewer(args[1])

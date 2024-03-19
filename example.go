@@ -4,8 +4,8 @@ import (
 	"github.com/cockroachdb/pebble"
 )
 
-const ExampleName = (1 << RdtBits) | ('S' - 'A')
-const ExampleScore = (2 << RdtBits) | ('C' - 'A')
+const ExampleName = 1
+const ExampleScore = 2
 
 type Example struct {
 	Name  string
@@ -23,14 +23,17 @@ func (ex *Example) Load(i *pebble.Iterator) (err error) {
 	if !i.Next() {
 		return nil
 	}
-	if Parse583Off(i.Key()[1:]) == ExampleName {
+	id, rdt := OKeyIdRdt(i.Key())
+	_ = rdt // fixme skip garbage
+	if id.Off() == ExampleName {
 		ex.Name = Splain(i.Value())
 		if !i.Next() {
 			return
 		}
+		id, rdt = OKeyIdRdt(i.Key())
 	}
 	// todo skip garbage
-	if Parse583Off(i.Key()[1:]) == ExampleScore {
+	if id.Off() == ExampleScore {
 		ex.Score = Iplain(i.Value())
 		if !i.Next() {
 			return

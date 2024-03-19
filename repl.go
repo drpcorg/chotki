@@ -33,9 +33,8 @@ func filterInput(r rune) (rune, bool) {
 func ShowObject(chotki *Chotki, id id64) error {
 	i := chotki.ObjectIterator(id)
 	for i.Valid() {
-		keyid := IDFromString(i.Key()[1:])
-		field, rdt := keyid.FieldRDT()
-		_, _ = fmt.Fprintf(os.Stderr, "%c#%d\t\n", rdt, field)
+		id, rdt := OKeyIdRdt(i.Key())
+		_, _ = fmt.Fprintf(os.Stderr, "%c#%d\t\n", rdt, id.Off())
 	}
 	return nil
 }
@@ -47,7 +46,7 @@ func CreateObjectFromList(chotki *Chotki, list []interface{}) (id id64, err erro
 	packet := toyqueue.Records{}
 	// todo ref type json
 	// todo add id, ref
-	for n, f := range list {
+	for _, f := range list {
 		var rdt byte
 		var body []byte
 		switch f.(type) {
@@ -70,8 +69,6 @@ func CreateObjectFromList(chotki *Chotki, list []interface{}) (id id64, err erro
 			err = ErrUnsupportedType
 			return
 		}
-		foff := MakeField(rdt, byte(n))
-		packet = append(packet, toytlv.Record('R', ZipUint64(uint64(foff))))
 		packet = append(packet, toytlv.Record(rdt, body))
 	}
 	return chotki.CommitPacket('O', ID0, packet)

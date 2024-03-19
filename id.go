@@ -8,14 +8,14 @@ import (
 )
 
 /*
-		id64 is an 64-bit locator/identifier.
-	    This is NOT a Lamport timestamp (need more bits for that).
+	id64 is an 64-bit locator/identifier.
+	This is NOT a Lamport timestamp (need more bits for that).
+	This is *log time*, not *logical time*.
 
 0...............16..............32..............48.............64
 +-------+-------+-------+-------+-------+-------+-------+-------
 |offset(12)||......sequence.(32.bits)......||.source.(20.bits).|
 |...........progress.(44.bits).............|....................
-|rdt||field|....................................................
 */
 type id64 uint64
 
@@ -27,10 +27,6 @@ const SrcBits = 20
 const ProBits = SeqBits + OffBits
 const ProMask = uint64(uint64(1)<<ProBits) - 1
 const OffMask = uint64(1<<OffBits) - 1
-const RdtBits = 5
-const RdtInc = 1 << RdtBits
-const FNoBits = OffBits - RdtBits
-const RdtMask = (uint16(1) << RdtBits) - 1
 
 const SeqOne = 1 << OffBits
 const BadId = id64(0xffffffffffffffff)
@@ -59,40 +55,8 @@ func SrcSeqOff(id id64) (src uint64, seq uint64, off uint16) {
 	return
 }
 
-func MakeField(rdt byte, field byte) (off uint16) {
-	if rdt < 'A' || rdt > 'Z' {
-		panic("bad RDT lit")
-	}
-	off = uint16(field)
-	off <<= RdtBits
-	off |= uint16(rdt - 'A')
-	return
-}
-
-func (id id64) FieldRDT() (field, rdt byte) {
-	const FieldNoMask = (1 << FNoBits) - 1
-	rdt = byte(uint16(id)&RdtMask) + 'A'
-	field = uint8(id>>RdtBits) & FieldNoMask
-	return
-}
-
-func (id id64) RDT() byte {
-	return (byte(id) & RdtBits) + 'A'
-}
-
 func (id id64) ZeroOff() id64 {
 	return id & id64(^OffMask)
-}
-
-func (id id64) FNo() (fno byte) {
-	mask := id64(1<<FNoBits) - 1
-	return byte((id >> RdtBits) & mask)
-}
-
-func FNoRdt(off uint16) (field, rdt byte) {
-	rdt = byte((off & RdtMask) + 'A')
-	field = byte(off >> RdtBits)
-	return
 }
 
 // Seq is the op sequence number (each replica generates its own

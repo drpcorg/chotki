@@ -13,6 +13,7 @@ type Merger interface {
 
 type PebbleMergeAdaptor struct {
 	id   id64
+	rdt  byte
 	old  bool
 	vals [][]byte
 }
@@ -35,8 +36,7 @@ func (a *PebbleMergeAdaptor) Finish(includesBase bool) (res []byte, cl io.Closer
 	if len(inputs) == 0 {
 		return nil, nil, nil
 	}
-	rdt := (uint16(a.id) & RdtMask) + 'A'
-	switch rdt {
+	switch a.rdt {
 	case 'A': // object's ref is immutable
 		res = Amerge(inputs)
 	case 'C':

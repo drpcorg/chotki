@@ -6,13 +6,6 @@ import (
 	"github.com/learn-decentralized-systems/toytlv"
 )
 
-func FieldID(oid id64, fno byte, rdt byte) id64 {
-	oid &= id64(^OffMask)
-	oid |= id64(rdt - 'A')
-	oid |= id64(fno) << RdtBits
-	return oid
-}
-
 func (ch *Chotki) UpdateVTree(id, ref id64, pb *pebble.Batch) (err error) {
 	v := toytlv.Record('V', id.ZipBytes())
 	err = pb.Merge(VKey(ref), v, &WriteOptions)
@@ -25,26 +18,26 @@ func (ch *Chotki) UpdateVTree(id, ref id64, pb *pebble.Batch) (err error) {
 func (ch *Chotki) ApplyY(id, ref id64, body []byte, batch *pebble.Batch) (err error) {
 	// see Chotki.SyncPeer()
 	rest := body
+	var rdt byte
 	for len(rest) > 0 && err == nil {
-		var dzip, tlv []byte
+		var dzip, bare []byte
 		dzip, rest = toytlv.Take('F', rest)
 		d := UnzipUint64(dzip)
 		at := ref + id64(d) // fixme
-		_, tlv, rest = toytlv.TakeAny(rest)
-		err = batch.Merge(OKey(at), tlv, &WriteOptions)
+		rdt, bare, rest = toytlv.TakeAny(rest)
+		err = batch.Merge(OKey(at, rdt), bare, &WriteOptions)
 	}
 	return
 }
 
 func (ch *Chotki) ApplyV(id, ref id64, body []byte, batch *pebble.Batch) (err error) {
-	_key := [32]byte{'V'}
 	rest := body
 	for len(rest) > 0 {
 		var rec, idb []byte
 		rec, rest = toytlv.Take('V', rest)
 		idb, rec = toytlv.Take('R', rec)
 		id := IDFromZipBytes(idb)
-		key := append(_key[:1], id.Bytes()...)
+		key := VKey(id)
 		if !VValid(rec) {
 			err = ErrBadVPacket
 		} else {
@@ -56,19 +49,19 @@ func (ch *Chotki) ApplyV(id, ref id64, body []byte, batch *pebble.Batch) (err er
 
 func (ch *Chotki) ApplyLO(id, ref id64, body []byte, batch *pebble.Batch) (err error) {
 	err = batch.Merge(
-		FieldKey('O', id),
+		OKey(id, 'A'),
 		ref.ZipBytes(),
 		&WriteOptions)
 	rest := body
 	var fid id64
-	for fno := byte(1); len(rest) > 0 && fno < (1<<FNoBits) && err == nil; fno++ {
+	for fno := id64(1); len(rest) > 0 && err == nil; fno++ {
 		lit, hlen, blen := toytlv.ProbeHeader(rest)
 		if lit == 0 || lit == '-' {
 			return ErrBadPacket
 		}
 		body = rest[hlen : hlen+blen]
-		fid = FieldID(id, fno, lit)
-		fkey := OKey(fid)
+		fid = id + fno
+		fkey := OKey(fid, lit)
 		switch lit {
 		case 'I', 'S', 'R', 'F':
 			time, src, value := LWWparse(body)
@@ -108,7 +101,7 @@ func (ch *Chotki) ApplyE(id, r id64, body []byte, batch *pebble.Batch) (err erro
 			break
 		}
 		xid++
-		key := FieldKey('O', ref)
+		key := OKey(ref, '?')
 		value := toytlv.Append(nil, 'I', xid.ZipBytes())
 		value = append(value, xb...)
 		err = batch.Merge(key, value, &WriteOptions)
