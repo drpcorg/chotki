@@ -18,7 +18,7 @@ func TestParseID(t *testing.T) {
 		"0",
 		"3",
 		"fa3-57",
-		"fffff-ffffffff-fff",
+		"fffff-ffffffff-ffa",
 	}
 	for _, str := range ids {
 		id := ParseIDString(str)

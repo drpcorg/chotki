@@ -219,6 +219,7 @@ func (ch *Chotki) Drain(recs toyqueue.Records) (err error) {
 		if id.Src() == ch.src && id > ch.last {
 			ch.last = id
 		}
+		yv := false
 		pb := pebble.Batch{}
 		switch lit {
 		case 'L': // create replica log
@@ -240,6 +241,7 @@ func (ch *Chotki) Drain(recs toyqueue.Records) (err error) {
 				ch.syncs[id] = d
 			}
 			err = ch.ApplyY(id, ref, body, d)
+			yv = true
 		case 'V':
 			d, ok := ch.syncs[ref]
 			if !ok {
@@ -250,11 +252,13 @@ func (ch *Chotki) Drain(recs toyqueue.Records) (err error) {
 				err = ch.db.Apply(d, &WriteOptions)
 				delete(ch.syncs, ref)
 			}
+			yv = true
 		default:
 			_, _ = fmt.Fprintf(os.Stderr, "unsupported packet %c skipped\n", lit)
 		}
-
-		err = ch.db.Apply(&pb, &WriteOptions)
+		if !yv && err == nil {
+			err = ch.db.Apply(&pb, &WriteOptions)
+		}
 	}
 	if err != nil { // fixme separate packets
 		return

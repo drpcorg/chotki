@@ -24,15 +24,13 @@ func (ch *Chotki) UpdateVTree(id, ref ID, pb *pebble.Batch) (err error) {
 
 func (ch *Chotki) ApplyY(id, ref ID, body []byte, batch *pebble.Batch) (err error) {
 	// see Chotki.SyncPeer()
-	vvtlv, rest := toytlv.Take('V', body)
-	if vvtlv == nil {
-		return ErrBadYPacket
-	}
+	rest := body
 	for len(rest) > 0 && err == nil {
-		dzip, rest := toytlv.Take('F', rest)
+		var dzip, tlv []byte
+		dzip, rest = toytlv.Take('F', rest)
 		d := UnzipUint64(dzip)
 		at := ref + ID(d) // fixme
-		_, tlv, rest := toytlv.TakeAny(rest)
+		_, tlv, rest = toytlv.TakeAny(rest)
 		err = batch.Merge(OKey(at), tlv, &WriteOptions)
 	}
 	return

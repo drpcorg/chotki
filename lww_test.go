@@ -20,8 +20,9 @@ func TestI(t *testing.T) {
 	int1 := int64(123)
 	assert.Equal(t, tlv1, Itlv(int1))
 	str2 := "345"
-	int2 := Iparse(str2)
-	assert.Equal(t, 345, int2)
+	tlv2 := Iparse(str2)
+	int2 := Iplain(tlv2)
+	assert.Equal(t, int64(345), int2)
 	delta12 := Idelta(tlv1, 345)
 	merged := Imerge([][]byte{tlv1, delta12})
 	assert.Equal(t, str2, Istring(merged))
