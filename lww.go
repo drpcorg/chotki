@@ -140,6 +140,9 @@ func Sstring(tlv []byte) (txt string) {
 
 // parse a text form into a TLV value; nil on error
 func Sparse(txt string) (tlv []byte) {
+	if len(txt) < 2 || txt[0] != '"' || txt[len(txt)-1] != '"' {
+		return nil
+	}
 	unq := txt[1 : len(txt)-1]
 	unesc, _ := Unescape([]byte(unq), nil)
 	return LWWtlv(0, 0, unesc)
@@ -181,7 +184,7 @@ func Sdiff(tlv []byte, vvdiff VV) []byte {
 	return LWWdiff(tlv, vvdiff)
 }
 
-// R is a last-write-wins id64
+// R is a last-write-wins ID
 
 // produce a text form (for REPL mostly)
 func Rstring(tlv []byte) (txt string) {
@@ -195,12 +198,12 @@ func Rparse(txt string) (tlv []byte) {
 }
 
 // convert plain golang value into a TLV form
-func Rtlv(i id64) (tlv []byte) {
+func Rtlv(i ID) (tlv []byte) {
 	return LWWtlv(0, 0, i.ZipBytes())
 }
 
 // convert a TLV value to a plain golang value
-func Rplain(tlv []byte) id64 {
+func Rplain(tlv []byte) ID {
 	_, _, val := LWWparse(tlv)
 	return IDFromZipBytes(val)
 }
@@ -211,7 +214,7 @@ func Rmerge(tlvs [][]byte) (tlv []byte) {
 }
 
 // produce an op that turns the old value into the new one
-func Rdelta(tlv []byte, new_val id64) (tlv_delta []byte) {
+func Rdelta(tlv []byte, new_val ID) (tlv_delta []byte) {
 	time, _, val := LWWparse(tlv)
 	nv := new_val.ZipBytes()
 	if bytes.Compare(val, nv) != 0 {

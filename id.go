@@ -8,7 +8,7 @@ import (
 )
 
 /*
-	id64 is an 64-bit locator/identifier.
+	ID is an 64-bit locator/identifier.
 	This is NOT a Lamport timestamp (need more bits for that).
 	This is *log time*, not *logical time*.
 
@@ -17,109 +17,109 @@ import (
 |offset(12)||......sequence.(32.bits)......||.source.(20.bits).|
 |...........progress.(44.bits).............|....................
 */
-type id64 uint64
+type ID uint64
 
-const ID0 id64 = 0
+const ID0 ID = 0
 
 const SeqBits = 32
 const OffBits = 12
 const SrcBits = 20
 const ProBits = SeqBits + OffBits
 const ProMask = uint64(uint64(1)<<ProBits) - 1
-const OffMask = uint64(1<<OffBits) - 1
+const OffMask = ID(1<<OffBits) - 1
+const ProInc = ID(1 << OffBits)
 
 const SeqOne = 1 << OffBits
-const BadId = id64(0xffffffffffffffff)
-const ZeroId = id64(0)
+const BadId = ID(0xffffffffffffffff)
+const ZeroId = ID(0)
 
-func IDfromSrcPro(src, pro uint64) id64 {
-	return id64((src << ProBits) | pro)
+func IDfromSrcPro(src, pro uint64) ID {
+	return ID((src << ProBits) | pro)
 }
 
-func IDFromSrcSeqOff(src uint64, seq uint64, off uint16) id64 {
+func IDFromSrcSeqOff(src uint64, seq uint64, off uint16) ID {
 	ret := uint64(src)
 	ret <<= SeqBits
 	ret |= uint64(seq)
 	ret <<= OffBits
 	ret |= uint64(off)
-	return id64(ret)
+	return ID(ret)
 }
 
-func SrcSeqOff(id id64) (src uint64, seq uint64, off uint16) {
-	n := uint64(id)
-	off = uint16(n & OffMask)
-	n >>= OffBits
-	seq = n
-	n >>= SeqBits
-	src = n
+func SrcSeqOff(id ID) (src uint64, seq uint64, off uint16) {
+	off = uint16(id & OffMask)
+	id >>= OffBits
+	seq = uint64(id)
+	id >>= SeqBits
+	src = uint64(id)
 	return
 }
 
-func (id id64) ZeroOff() id64 {
-	return id & id64(^OffMask)
+func (id ID) ZeroOff() ID {
+	return id & ID(^OffMask)
 }
 
 // Seq is the op sequence number (each replica generates its own
 // sequence numbers)
-func (id id64) Seq() uint64 {
+func (id ID) Seq() uint64 {
 	i := uint64(id)
 	return (i & ProMask) >> OffBits
 }
 
-func (id id64) Pro() uint64 {
+func (id ID) Pro() uint64 {
 	i := uint64(id)
 	return i & ProMask
 }
 
-func (id id64) Off() uint16 {
-	return uint16(uint64(id) & OffMask)
+func (id ID) Off() uint16 {
+	return uint16(id & OffMask)
 }
 
-func (id id64) ToOff(newoff uint16) id64 {
-	return id64((uint64(id) & ^OffMask) | uint64(newoff))
+func (id ID) ToOff(newoff uint16) ID {
+	return (id & ^OffMask) | ID(newoff)
 }
 
 // Src is the replica id. That is normally a small number.
-func (id id64) Src() uint64 {
+func (id ID) Src() uint64 {
 	return uint64(id >> ProBits)
 }
 
-func (id id64) Bytes() []byte {
+func (id ID) Bytes() []byte {
 	var ret [8]byte
 	binary.BigEndian.PutUint64(ret[:], uint64(id))
 	return ret[:]
 }
 
-func IDFromBytes(by []byte) id64 {
-	return id64(binary.BigEndian.Uint64(by))
+func IDFromBytes(by []byte) ID {
+	return ID(binary.BigEndian.Uint64(by))
 }
 
-func (id id64) ZipBytes() []byte {
+func (id ID) ZipBytes() []byte {
 	return ZipUint64Pair(id.Pro(), id.Src())
 }
 
-func IDFromZipBytes(zip []byte) id64 {
+func IDFromZipBytes(zip []byte) ID {
 	big, lil := UnzipUint64Pair(zip) // todo range check
-	return id64(big | (lil << ProBits))
+	return ID(big | (lil << ProBits))
 }
 
-func (id id64) Feed(into []byte) (res []byte) {
+func (id ID) Feed(into []byte) (res []byte) {
 	pair := id.ZipBytes()
 	res = toytlv.AppendHeader(into, 'I', len(pair))
 	res = append(res, pair...)
 	return res
 }
 
-func (id *id64) Drain(from []byte) (rest []byte) { // FIXME
+func (id *ID) Drain(from []byte) (rest []byte) { // FIXME
 	body, rest := toytlv.Take('I', from)
 	seq, orig := UnzipUint64Pair(body)
-	*id = id64((seq << SrcBits) | orig)
+	*id = ID((seq << SrcBits) | orig)
 	return rest
 }
 
 var ErrBadId = errors.New("not an expected id")
 
-func TakeIDWary(lit byte, pack []byte) (id id64, rest []byte, err error) {
+func TakeIDWary(lit byte, pack []byte) (id ID, rest []byte, err error) {
 	idbytes, rest := toytlv.Take(lit, pack)
 	if idbytes == nil {
 		err = ErrBadId
@@ -129,7 +129,7 @@ func TakeIDWary(lit byte, pack []byte) (id id64, rest []byte, err error) {
 	return
 }
 
-func (id id64) String() string {
+func (id ID) String() string {
 	seq := id.Seq()
 	off := id.Off()
 	src := id.Src()
@@ -150,7 +150,7 @@ func Parse583Off(hex583 []byte) (off uint16) {
 	return uint16(UnHex(hex583[len(hex583)-3:]))
 }
 
-func (id id64) Hex583() []byte {
+func (id ID) Hex583() []byte {
 	hex := []byte{'0', '0', '0', '0', '0', '-', '0', '0', '0', '0', '0', '0', '0', '0', '-', '0', '0', '0'}
 	k := Hex583Len - 1
 	u := uint64(id)
@@ -174,7 +174,7 @@ func (id id64) Hex583() []byte {
 	return hex
 }
 
-func (id id64) String583() string {
+func (id ID) String583() string {
 	return string(id.Hex583())
 }
 
@@ -195,23 +195,23 @@ func UnHex(hex []byte) (num uint64) {
 	return
 }
 
-func ParseIDString(id string) id64 {
+func ParseIDString(id string) ID {
 	return IDFromString([]byte(id))
 }
 
-func ParseBracketedID(bid []byte) id64 {
+func ParseBracketedID(bid []byte) ID {
 	if len(bid) < 7 || bid[0] != '{' || bid[len(bid)-1] != '}' {
 		return BadId
 	}
 	return IDFromString(bid[1 : len(bid)-1])
 }
 
-func IDFromString(idstr []byte) (parsed id64) {
+func IDFromString(idstr []byte) (parsed ID) {
 	parsed, _ = readIDFromString(idstr)
 	return
 }
 
-func readIDFromString(idstr []byte) (id id64, rest []byte) {
+func readIDFromString(idstr []byte) (id ID, rest []byte) {
 	var parts [3]uint64
 	i, p := 0, 0
 	for i < len(idstr) && p < 3 {
@@ -245,7 +245,7 @@ func readIDFromString(idstr []byte) (id id64, rest []byte) {
 	return IDFromSrcSeqOff(parts[0], parts[1], uint16(parts[2])), rest
 }
 
-func readIDFromTLV(tlv []byte) (id id64, rest []byte) {
+func readIDFromTLV(tlv []byte) (id ID, rest []byte) {
 	lit, body, rest := toytlv.TakeAny(tlv)
 	if lit == '-' || lit == 0 {
 		return BadId, nil

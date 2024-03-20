@@ -2,7 +2,7 @@ package main
 
 import "github.com/learn-decentralized-systems/toytlv"
 
-func ParsePacket(pack []byte) (lit byte, id, ref id64, body []byte, err error) {
+func ParsePacket(pack []byte) (lit byte, id, ref ID, body []byte, err error) {
 	lit, hlen, blen := toytlv.ProbeHeader(pack)
 	if lit == 0 || lit == '-' || hlen+blen > len(pack) {
 		err = ErrBadPacket
@@ -43,7 +43,7 @@ func PacketSrcSeq(pack []byte) (src, seq uint32) { // FIXME offset
 	return
 }
 
-func PacketID(pack []byte) id64 {
+func PacketID(pack []byte) ID {
 	lit, hlen, blen := toytlv.ProbeHeader(pack)
 	if lit == 0 || hlen+blen > len(pack) {
 		return ZeroId

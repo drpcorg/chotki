@@ -12,7 +12,7 @@ type Merger interface {
 }
 
 type PebbleMergeAdaptor struct {
-	id   id64
+	id   ID
 	rdt  byte
 	old  bool
 	vals [][]byte

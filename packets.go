@@ -6,7 +6,7 @@ import (
 	"github.com/learn-decentralized-systems/toytlv"
 )
 
-func (ch *Chotki) UpdateVTree(id, ref id64, pb *pebble.Batch) (err error) {
+func (ch *Chotki) UpdateVTree(id, ref ID, pb *pebble.Batch) (err error) {
 	v := toytlv.Record('V', id.ZipBytes())
 	err = pb.Merge(VKey(ref), v, &WriteOptions)
 	if err == nil {
@@ -15,7 +15,7 @@ func (ch *Chotki) UpdateVTree(id, ref id64, pb *pebble.Batch) (err error) {
 	return
 }
 
-func (ch *Chotki) ApplyY(id, ref id64, body []byte, batch *pebble.Batch) (err error) {
+func (ch *Chotki) ApplyY(id, ref ID, body []byte, batch *pebble.Batch) (err error) {
 	// see Chotki.SyncPeer()
 	rest := body
 	var rdt byte
@@ -23,14 +23,14 @@ func (ch *Chotki) ApplyY(id, ref id64, body []byte, batch *pebble.Batch) (err er
 		var dzip, bare []byte
 		dzip, rest = toytlv.Take('F', rest)
 		d := UnzipUint64(dzip)
-		at := ref + id64(d) // fixme
+		at := ref + ID(d) // fixme
 		rdt, bare, rest = toytlv.TakeAny(rest)
 		err = batch.Merge(OKey(at, rdt), bare, &WriteOptions)
 	}
 	return
 }
 
-func (ch *Chotki) ApplyV(id, ref id64, body []byte, batch *pebble.Batch) (err error) {
+func (ch *Chotki) ApplyV(id, ref ID, body []byte, batch *pebble.Batch) (err error) {
 	rest := body
 	for len(rest) > 0 {
 		var rec, idb []byte
@@ -47,14 +47,14 @@ func (ch *Chotki) ApplyV(id, ref id64, body []byte, batch *pebble.Batch) (err er
 	return
 }
 
-func (ch *Chotki) ApplyLO(id, ref id64, body []byte, batch *pebble.Batch) (err error) {
+func (ch *Chotki) ApplyLOT(id, ref ID, body []byte, batch *pebble.Batch) (err error) {
 	err = batch.Merge(
 		OKey(id, 'A'),
 		ref.ZipBytes(),
 		&WriteOptions)
 	rest := body
-	var fid id64
-	for fno := id64(1); len(rest) > 0 && err == nil; fno++ {
+	var fid ID
+	for fno := ID(1); len(rest) > 0 && err == nil; fno++ {
 		lit, hlen, blen := toytlv.ProbeHeader(rest)
 		if lit == 0 || lit == '-' {
 			return ErrBadPacket
@@ -87,24 +87,25 @@ func (ch *Chotki) ApplyLO(id, ref id64, body []byte, batch *pebble.Batch) (err e
 
 var ErrOffsetOpId = errors.New("op id is offset")
 
-func (ch *Chotki) ApplyE(id, r id64, body []byte, batch *pebble.Batch) (err error) {
-	if id.Off() != 0 {
+func (ch *Chotki) ApplyE(id, r ID, body []byte, batch *pebble.Batch) (err error) {
+	if id.Off() != 0 || r.Off() != 0 {
 		return ErrOffsetOpId
 	}
-	xid := id
-	var ref id64 // FIXME offs
-	var xb []byte
 	rest := body
 	for len(rest) > 0 && err == nil {
-		ref, xb, rest, err = ReadRX(rest)
-		if err != nil {
-			break
+		var fint, bare []byte
+		var lit byte
+		fint, rest = toytlv.Take('F', rest)
+		field := UnzipUint64(fint)
+		if field > uint64(OffMask) {
+			return ErrBadEPacket
 		}
-		xid++
-		key := OKey(ref, '?')
-		value := toytlv.Append(nil, 'I', xid.ZipBytes())
-		value = append(value, xb...)
-		err = batch.Merge(key, value, &WriteOptions)
+		lit, bare, rest = toytlv.TakeAny(rest)
+		fkey := OKey(r+ID(field), lit)
+		err = batch.Merge(
+			fkey,
+			bare,
+			&WriteOptions)
 	}
 	if err == nil {
 		err = ch.UpdateVTree(id, r, batch)

@@ -24,13 +24,13 @@ type Options struct {
 
 // TLV all the way down
 type Chotki struct {
-	last id64
+	last ID
 	src  uint64
 
 	db  *pebble.DB
 	dir string
 
-	syncs map[id64]*pebble.Batch
+	syncs map[ID]*pebble.Batch
 
 	// queues to broadcast all new packets
 	outq toyqueue.RecordQueue
@@ -42,12 +42,14 @@ type Chotki struct {
 	tcp toytlv.TCPDepot
 
 	opts Options
+
+	types map[ID]string
 }
 
 var ErrCausalityBroken = errors.New("order fail: refs an unknown op")
 var ErrOutOfOrder = errors.New("order fail: sequence gap")
 
-func OKey(id id64, rdt byte) (key []byte) {
+func OKey(id ID, rdt byte) (key []byte) {
 	var ret = [16]byte{'O'}
 	key = binary.BigEndian.AppendUint64(ret[:1], uint64(id))
 	key = append(key, rdt)
@@ -56,7 +58,7 @@ func OKey(id id64, rdt byte) (key []byte) {
 
 const LidLKeyLen = 1 + 8 + 1
 
-func OKeyIdRdt(key []byte) (id id64, rdt byte) {
+func OKeyIdRdt(key []byte) (id ID, rdt byte) {
 	if len(key) != LidLKeyLen {
 		return BadId, 0
 	}
@@ -65,7 +67,7 @@ func OKeyIdRdt(key []byte) (id id64, rdt byte) {
 	return
 }
 
-func VKey(id id64) (key []byte) {
+func VKey(id ID) (key []byte) {
 	var ret = [16]byte{'V'}
 	block := id & ^VBlockMask
 	key = binary.BigEndian.AppendUint64(ret[:1], uint64(block))
@@ -73,7 +75,7 @@ func VKey(id id64) (key []byte) {
 	return
 }
 
-func VKeyId(key []byte) id64 {
+func VKeyId(key []byte) ID {
 	if len(key) != LidLKeyLen {
 		return BadId
 	}
@@ -125,7 +127,7 @@ func (ch *Chotki) Create(orig uint64, name string) (err error) {
 	if err != nil {
 		return
 	}
-	var _0 id64
+	var _0 ID
 	id0 := IDFromSrcSeqOff(orig, 0, 0)
 	rec0 := toytlv.Concat(
 		toytlv.Record('L',
@@ -164,7 +166,14 @@ func (ch *Chotki) Open(orig uint64) (err error) {
 		_ = ch.db.Close()
 		return err
 	}
-	ch.syncs = make(map[id64]*pebble.Batch)
+	ch.types = make(map[ID]string)
+	ch.syncs = make(map[ID]*pebble.Batch)
+	var vv VV
+	vv, err = ch.VersionVector()
+	if err != nil {
+		return
+	}
+	ch.last = vv.GetID(ch.src)
 	// ch.last = ch.heads.GetID(orig) todo root VV
 	//ch.inq.Limit = 8192
 	/*ch.fan.Feeder = &ch.outq
@@ -230,22 +239,30 @@ func (ch *Chotki) Drain(recs toyqueue.Records) (err error) {
 		}
 		apply = append(apply, packet)
 		if id.Src() == ch.src && id > ch.last {
+			if id.Off() != 0 {
+				return ErrBadPacket
+			}
 			ch.last = id
 		}
 		yv := false
 		pb := pebble.Batch{}
 		switch lit {
 		case 'L': // create replica log
-			if ref != ID0 && id.Off() != 0 {
+			if ref != ID0 {
 				return ErrBadLPacket
 			}
-			err = ch.ApplyLO(id, ref, body, &pb)
+			err = ch.ApplyLOT(id, ref, body, &pb)
 		case 'O': // create object
-			if ref == ID0 || id.Off() != 0 {
+			if ref == ID0 {
 				return ErrBadLPacket
 			}
-			err = ch.ApplyLO(id, ref, body, &pb)
+			err = ch.ApplyLOT(id, ref, body, &pb)
+		case 'T':
+			err = ch.ApplyLOT(id, ref, body, &pb)
 		case 'E':
+			if ref == ID0 {
+				return ErrBadLPacket
+			}
 			err = ch.ApplyE(id, ref, body, &pb)
 		case 'Y':
 			d, ok := ch.syncs[ref]
@@ -299,7 +316,7 @@ var WriteOptions = pebble.WriteOptions{Sync: false}
 
 var ErrBadIRecord = errors.New("bad id-ref record")
 
-func ReadRX(op []byte) (ref id64, exec, rest []byte, err error) {
+func ReadRX(op []byte) (ref ID, exec, rest []byte, err error) {
 	ref, rest, err = TakeIDWary('R', op)
 	if err != nil {
 		return
@@ -313,20 +330,17 @@ func ReadRX(op []byte) (ref id64, exec, rest []byte, err error) {
 }
 
 var ErrBadPacket = errors.New("bad packet")
+var ErrBadEPacket = errors.New("bad E packet")
 var ErrBadVPacket = errors.New("bad V packet")
 var ErrBadYPacket = errors.New("bad Y packet")
 var ErrBadLPacket = errors.New("bad L packet")
+var ErrBadTPacket = errors.New("bad T packet")
 var ErrBadOPacket = errors.New("bad O packet")
 var ErrSrcUnknown = errors.New("source unknown")
 var ErrSyncUnknown = errors.New("sync session unknown")
 var ErrBadRRecord = errors.New("bad ref record")
 
 var KeyLogLen = []byte("Mloglen")
-
-// todo batching batches
-func (ch *Chotki) AbsorbBatch(pack Batch) (err error) {
-	return err
-}
 
 func (ch *Chotki) Close() error {
 	_ = ch.db.Close()
@@ -341,67 +355,24 @@ func Join(records ...[]byte) (ret []byte) {
 }
 
 // Here new packets are timestamped and queued for save
-func (ch *Chotki) CommitPacket(lit byte, ref id64, body toyqueue.Records) (id id64, err error) {
+func (ch *Chotki) CommitPacket(lit byte, ref ID, body toyqueue.Records) (id ID, err error) {
 	ch.idlock.Lock()
-	ch.last += SeqOne
-	id = ch.last
+	id = (ch.last & ^OffMask) + ProInc
 	i := toytlv.Record('I', id.ZipBytes())
-	packet := toytlv.Record(lit, i, Join(body...))
+	r := toytlv.Record('R', ref.ZipBytes())
+	packet := toytlv.Record(lit, i, r, Join(body...))
 	err = ch.Drain(toyqueue.Records{packet})
 	ch.idlock.Unlock()
 	return
 }
 
-func (ch *Chotki) CreateType(name string, fields ...string) (id id64, err error) {
-	var fspecs toyqueue.Records
-	fspecs = append(fspecs, toytlv.Record('S', []byte(name)))
-	for _, field := range fields {
-		fspecs = append(fspecs, toytlv.Record('S', []byte(field)))
-	}
-	return ch.CommitPacket('T', ID0, fspecs)
-}
-
-func (ch *Chotki) CreateObject(tid id64, fields ...string) (id id64, err error) {
-	// todo here we read the type!!!
-	return ID0, nil
-}
-
-// FindObject navigates object fields recursively to reach the object
-// at the specified path.
-func (ch *Chotki) FindObject(root id64, path string, empty RDT) error {
-	return nil
-}
-
-func (ch *Chotki) GetObject(id id64, empty RDT) error {
-	key := [64]byte{'O'}
-	state, clo, err := ch.db.Get(append(key[0:1], id.String()...))
-	if err != nil {
-		return err
-	}
-	empty.Apply(state)
-	_ = clo.Close()
-	return nil
-}
-
-/*
-	func (ch *Chotki) MergeObject(id id64, changed RDT) error {
-		key := string(id.ZipBytes())
-		state, err := ch.db.Get('D', key)
-		if err != nil {
-			return err
-		}
-		diff := changed.Diff([]byte(state))
-		// todo ch.NewID()
-		err = ch.db.Merge('D', key, string(diff))
-		return err
-	}
-*/
-func (ch *Chotki) ObjectKeyRange(oid id64) (fro, til []byte) {
-	return OKey(oid, 0), OKey('O', 0xff)
+func (ch *Chotki) ObjectKeyRange(oid ID) (fro, til []byte) {
+	oid = oid & ^OffMask
+	return OKey(oid, 0), OKey(oid+ProInc, 0xff)
 }
 
 // returns nil for "not found"
-func (ch *Chotki) ObjectIterator(oid id64) *pebble.Iterator {
+func (ch *Chotki) ObjectIterator(oid ID) *pebble.Iterator {
 	fro, til := ch.ObjectKeyRange(oid)
 	io := pebble.IterOptions{
 		LowerBound: fro,

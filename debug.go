@@ -68,7 +68,7 @@ func (ch *Chotki) DumpVV() {
 	}
 }
 
-func DumpVPacket(vvs map[id64]VV) {
+func DumpVPacket(vvs map[ID]VV) {
 	for id, vv := range vvs {
 		_, _ = fmt.Fprintf(os.Stderr, "%s -> %s\n", id.String(), vv.String())
 	}

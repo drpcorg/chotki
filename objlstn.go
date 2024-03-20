@@ -4,20 +4,20 @@ import (
 	"github.com/learn-decentralized-systems/toyqueue"
 )
 
-type FieldTrigger func(id id64, state []byte)
+type FieldTrigger func(id ID, state []byte)
 
 type ObjectListener struct {
 	inq   toyqueue.FeedCloser
-	lstns map[id64][]*FieldTrigger
+	lstns map[ID][]*FieldTrigger
 }
 
-func (ol *ObjectListener) AddTrigger(id id64, trigger *FieldTrigger) {
+func (ol *ObjectListener) AddTrigger(id ID, trigger *FieldTrigger) {
 	triggers := ol.lstns[id]
 	triggers = append(triggers, trigger)
 	ol.lstns[id] = triggers
 }
 
-func (ol *ObjectListener) RemoveTrigger(id id64, trigger *FieldTrigger) {
+func (ol *ObjectListener) RemoveTrigger(id ID, trigger *FieldTrigger) {
 	triggers := ol.lstns[id]
 	for n := 0; n < len(triggers); n++ {
 		if triggers[n] == trigger {

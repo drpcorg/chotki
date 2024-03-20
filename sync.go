@@ -9,7 +9,7 @@ import (
 )
 
 const VBlockBits = 28
-const VBlockMask = (id64(1) << VBlockBits) - 1
+const VBlockMask = (ID(1) << VBlockBits) - 1
 
 func (ch *Chotki) AddPeer(peer toyqueue.FeedDrainCloser) error {
 	// fixme add firehose 21 12
@@ -97,7 +97,7 @@ func (ch *Chotki) SyncPeer(peer toyqueue.DrainCloser, snap *pebble.Snapshot, pee
 	return
 }
 
-func (ch *Chotki) scanObjects(fit *pebble.Iterator, block id64, sendvv VV, peer toyqueue.DrainCloser) (err error) {
+func (ch *Chotki) scanObjects(fit *pebble.Iterator, block ID, sendvv VV, peer toyqueue.DrainCloser) (err error) {
 	key := OKey(block, 0)
 	fit.SeekGE(key)
 	bmark, parcel := toytlv.OpenHeader(nil, 'Y')
@@ -137,12 +137,12 @@ func (ch *Chotki) scanObjects(fit *pebble.Iterator, block id64, sendvv VV, peer 
 	return
 }
 
-func ParseVPack(vpack []byte) (vvs map[id64]VV, err error) {
+func ParseVPack(vpack []byte) (vvs map[ID]VV, err error) {
 	lit, body, rest := toytlv.TakeAny(vpack)
 	if lit != 'V' || len(rest) > 0 {
 		return nil, ErrBadVPacket
 	}
-	vvs = make(map[id64]VV)
+	vvs = make(map[ID]VV)
 	vrest := body
 	for len(vrest) > 0 {
 		var rv, r, v []byte

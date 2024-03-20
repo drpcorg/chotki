@@ -9,8 +9,8 @@ func TestCases(t *testing.T) {
 	off := ParseIDString("0ff")
 	assert.Equal(t, uint64(off), uint64(0xff))
 
-	zip := id64(1).ZipBytes()
-	assert.Equal(t, id64(1), IDFromZipBytes(zip))
+	zip := ID(1).ZipBytes()
+	assert.Equal(t, ID(1), IDFromZipBytes(zip))
 }
 
 func TestParseID(t *testing.T) {

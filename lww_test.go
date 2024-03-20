@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
@@ -67,4 +68,13 @@ func TestF(t *testing.T) {
 	delta12 := Fdelta(tlv1, Fplain(tlv2))
 	merged := Fmerge([][]byte{tlv1, delta12})
 	assert.Equal(t, str2, Fstring(merged))
+}
+
+func TestIMerge(t *testing.T) {
+	var i1 int64 = 123
+	var i2 int64 = 345
+	tlv1 := Itlv(i1)
+	tlv2 := Idelta(tlv1, i2)
+	merge := Imerge(toyqueue.Records{tlv1, tlv2})
+	assert.Equal(t, tlv2, merge)
 }

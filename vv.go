@@ -30,7 +30,7 @@ func (vv VV) Put(src, pro uint64) bool {
 }
 
 // Adds the id to the VV, returns whether it was unseen
-func (vv VV) PutID(id id64) bool {
+func (vv VV) PutID(id ID) bool {
 	return vv.Put(id.Src(), id.Pro())
 }
 
@@ -59,7 +59,7 @@ func (vv VV) InterestOver(b VV) VV {
 	return ahead
 }
 
-func (vv VV) IDs() (ids []id64) {
+func (vv VV) IDs() (ids []ID) {
 	for src, pro := range vv {
 		ids = append(ids, IDfromSrcPro(src, pro))
 	}
@@ -121,7 +121,7 @@ func (vv VV) Seen(bb VV) bool {
 	return true
 }
 
-func (vv VV) GetID(src uint64) id64 {
+func (vv VV) GetID(src uint64) ID {
 	return IDfromSrcPro(src, vv[src])
 }
 
@@ -141,7 +141,7 @@ func (vv VV) String() string {
 func VVFromString(vvs string) (vv VV) {
 	vv = make(VV)
 	rest := []byte(vvs)
-	var id id64
+	var id ID
 	for len(rest) > 0 && id != BadId {
 		id, rest = readIDFromString(rest)
 		vv.PutID(id)
