@@ -211,3 +211,15 @@ func UnzipFloat64(zip []byte) float64 {
 	b := UnzipUint64(zip)
 	return math.Float64frombits(bits.Reverse64(b))
 }
+
+func ZipIntUint64Pair(i int64, u uint64) []byte {
+	z := ZigZagInt64(i)
+	return ZipUint64Pair(z, u)
+}
+
+func UnzipIntUint64Pair(zip []byte) (i int64, u uint64) {
+	var z uint64
+	z, u = UnzipUint64Pair(zip)
+	i = ZagZigUint64(z)
+	return
+}

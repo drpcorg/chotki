@@ -9,19 +9,19 @@ import (
 // shared functions
 
 // for bad format, value==nil (an empty value is an empty slice)
-func LWWparse(bulk []byte) (time, src uint64, value []byte) {
+func LWWparse(bulk []byte) (rev int64, src uint64, value []byte) {
 	lit, hlen, blen := toytlv.ProbeHeader(bulk)
 	if lit != 'T' && lit != '0' || hlen+blen > len(bulk) {
 		return
 	}
 	tsb := bulk[hlen : hlen+blen]
-	time, src = UnzipUint64Pair(tsb)
+	rev, src = UnzipIntUint64Pair(tsb)
 	value = bulk[hlen+blen:]
 	return
 }
 
-func LWWtlv(time, src uint64, value []byte) (bulk []byte) {
-	pair := ZipUint64Pair(time, src)
+func LWWtlv(rev int64, src uint64, value []byte) (bulk []byte) {
+	pair := ZipIntUint64Pair(rev, src)
 	bulk = make([]byte, 1, len(pair)+len(value))
 	bulk[0] = '0' + byte(len(pair))
 	return append(append(bulk, pair...), value...)
@@ -89,10 +89,13 @@ func Imerge(tlvs [][]byte) (tlv []byte) {
 
 // produce an op that turns the old value into the new one
 func Idelta(tlv []byte, new_val int64) (tlv_delta []byte) {
-	time, _, val := LWWparse(tlv)
+	rev, _, val := LWWparse(tlv)
+	if rev < 0 {
+		rev = -rev
+	}
 	nv := ZipInt64(new_val)
 	if bytes.Compare(val, nv) != 0 {
-		tlv_delta = LWWtlv(time+1, 0, nv)
+		tlv_delta = LWWtlv(rev+1, 0, nv)
 	}
 	return
 }
@@ -166,10 +169,13 @@ func Smerge(tlvs [][]byte) (tlv []byte) {
 
 // produce an op that turns the old value into the new one
 func Sdelta(tlv []byte, new_val string) (tlv_delta []byte) {
-	time, _, val := LWWparse(tlv)
+	rev, _, val := LWWparse(tlv)
+	if rev < 0 {
+		rev = -rev
+	}
 	nv := []byte(new_val)
 	if bytes.Compare(val, nv) != 0 {
-		tlv_delta = LWWtlv(time+1, 0, nv)
+		tlv_delta = LWWtlv(rev+1, 0, nv)
 	}
 	return
 }
@@ -215,10 +221,13 @@ func Rmerge(tlvs [][]byte) (tlv []byte) {
 
 // produce an op that turns the old value into the new one
 func Rdelta(tlv []byte, new_val ID) (tlv_delta []byte) {
-	time, _, val := LWWparse(tlv)
+	rev, _, val := LWWparse(tlv)
+	if rev < 0 {
+		rev = -rev
+	}
 	nv := new_val.ZipBytes()
 	if bytes.Compare(val, nv) != 0 {
-		tlv_delta = LWWtlv(time+1, 0, nv)
+		tlv_delta = LWWtlv(rev+1, 0, nv)
 	}
 	return
 }
@@ -266,10 +275,13 @@ func Fmerge(tlvs [][]byte) (tlv []byte) {
 
 // produce an op that turns the old value into the new one
 func Fdelta(tlv []byte, new_val float64) (tlv_delta []byte) {
-	time, _, val := LWWparse(tlv)
+	rev, _, val := LWWparse(tlv)
+	if rev < 0 {
+		rev = -rev
+	}
 	nv := ZipFloat64(new_val)
 	if bytes.Compare(val, nv) != 0 {
-		tlv_delta = LWWtlv(time+1, 0, nv)
+		tlv_delta = LWWtlv(rev+1, 0, nv)
 	}
 	return
 }

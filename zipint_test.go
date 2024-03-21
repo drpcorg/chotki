@@ -54,3 +54,12 @@ func TestZipFloat64(t *testing.T) {
 		assert.Equal(t, f, f2)
 	}
 }
+
+func TestZipID(t *testing.T) {
+	var i0 int64 = -7
+	var u0 uint64 = 15
+	zip := ZipIntUint64Pair(i0, u0)
+	i, u := UnzipIntUint64Pair(zip)
+	assert.Equal(t, i0, i)
+	assert.Equal(t, u0, u)
+}
