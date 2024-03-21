@@ -28,6 +28,7 @@ const ProBits = SeqBits + OffBits
 const ProMask = uint64(uint64(1)<<ProBits) - 1
 const OffMask = ID(1<<OffBits) - 1
 const ProInc = ID(1 << OffBits)
+const MaxSrc = (1 << SrcBits) - 1
 
 const SeqOne = 1 << OffBits
 const BadId = ID(0xffffffffffffffff)

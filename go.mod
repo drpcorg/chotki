@@ -8,7 +8,7 @@ require (
 	github.com/learn-decentralized-systems/toykv v0.0.0-20231218053616-8d6e32388877
 	github.com/learn-decentralized-systems/toylog v0.1.6
 	github.com/learn-decentralized-systems/toyqueue v0.1.4
-	github.com/learn-decentralized-systems/toytlv v0.1.9
+	github.com/learn-decentralized-systems/toytlv v0.2.0
 	github.com/stretchr/testify v1.8.4
 )
 

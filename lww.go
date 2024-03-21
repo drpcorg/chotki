@@ -6,7 +6,7 @@ import (
 	"github.com/learn-decentralized-systems/toytlv"
 )
 
-// shared functions
+// Common LWW functions
 
 // for bad format, value==nil (an empty value is an empty slice)
 func LWWparse(bulk []byte) (rev int64, src uint64, value []byte) {
@@ -21,28 +21,47 @@ func LWWparse(bulk []byte) (rev int64, src uint64, value []byte) {
 }
 
 func LWWtlv(rev int64, src uint64, value []byte) (bulk []byte) {
-	pair := ZipIntUint64Pair(rev, src)
-	bulk = make([]byte, 1, len(pair)+len(value))
-	bulk[0] = '0' + byte(len(pair))
-	return append(append(bulk, pair...), value...)
+	time := ZipIntUint64Pair(rev, src)
+	bulk = make([]byte, 0, len(time)+len(value)+2)
+	bulk = toytlv.AppendTiny(bulk, 'T', time)
+	bulk = append(bulk, value...)
+	return
 }
 
 func LWWmerge(tlvs [][]byte) (tlv []byte) {
-	var win []byte
-	var maxt uint64
+	var winrec []byte
+	var winrev int64
+	var winsrc uint64
+	var winhlbl int
 	for _, rec := range tlvs {
 		l, hlen, blen := toytlv.ProbeHeader(rec)
-		tsb := rec[hlen : hlen+blen]
-		time, _ := UnzipUint64Pair(tsb)
+		hlbl := hlen + blen
+		tsb := rec[hlen:hlbl]
+		rev, src := UnzipIntUint64Pair(tsb)
+		if rev < 0 {
+			rev = -rev
+		}
 		if l != 'T' && l != '0' {
 			continue
 		}
-		if time > maxt || (time == maxt && bytes.Compare(rec, win) > 0) {
-			maxt = time
-			win = rec
+		if rev < winrev {
+			continue
 		}
+		if rev == winrev {
+			valtie := bytes.Compare(rec[hlbl:], winrec[winhlbl:])
+			if valtie < 0 {
+				continue
+			}
+			if valtie == 0 && src < winsrc {
+				continue
+			}
+		}
+		winrev = rev
+		winrec = rec
+		winsrc = src
+		winhlbl = hlbl
 	}
-	return win
+	return winrec
 }
 
 func LWWdiff(tlv []byte, vvdiff VV) []byte {
@@ -68,8 +87,6 @@ func Iparse(txt string) (tlv []byte) {
 	_, _ = fmt.Sscanf(txt, "%d", &i)
 	return Itlv(i)
 }
-
-var time0 = []byte{0, 0, 0, 0}
 
 // convert native golang value into a TLV form
 func Itlv(i int64) (tlv []byte) {
@@ -103,7 +120,7 @@ func Idelta(tlv []byte, new_val int64) (tlv_delta []byte) {
 // checks a TLV value for validity (format violations)
 func Ivalid(tlv []byte) bool {
 	_, src, val := LWWparse(tlv)
-	return val != nil && len(val) <= 8 && src < (1<<SrcBits)
+	return val != nil && len(val) <= 8 && src <= MaxSrc
 }
 
 func Idiff(tlv []byte, vvdiff VV) []byte {
@@ -183,7 +200,7 @@ func Sdelta(tlv []byte, new_val string) (tlv_delta []byte) {
 // checks a TLV value for validity (format violations)
 func Svalid(tlv []byte) bool {
 	_, src, val := LWWparse(tlv)
-	return val != nil && src < (1<<SrcBits)
+	return val != nil && src <= MaxSrc
 }
 
 func Sdiff(tlv []byte, vvdiff VV) []byte {
@@ -235,7 +252,7 @@ func Rdelta(tlv []byte, new_val ID) (tlv_delta []byte) {
 // checks a TLV value for validity (format violations)
 func Rvalid(tlv []byte) bool {
 	_, src, val := LWWparse(tlv)
-	return val != nil && src < (1<<SrcBits)
+	return val != nil && src <= MaxSrc
 	// todo correct sizes
 }
 
@@ -289,7 +306,7 @@ func Fdelta(tlv []byte, new_val float64) (tlv_delta []byte) {
 // checks a TLV value for validity (format violations)
 func Fvalid(tlv []byte) bool {
 	_, src, val := LWWparse(tlv)
-	return val != nil && src < (1<<SrcBits) && len(val) <= 8
+	return val != nil && src <= MaxSrc && len(val) <= 8
 }
 
 func Fdiff(tlv []byte, vvdiff VV) []byte {
