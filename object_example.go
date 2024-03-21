@@ -27,7 +27,7 @@ func (ex *Example) Load(i *pebble.Iterator) (err error) {
 	id, rdt := OKeyIdRdt(i.Key())
 	_ = rdt // fixme skip garbage
 	if id.Off() == ExampleName {
-		ex.Name = Splain(i.Value())
+		ex.Name = Snative(i.Value())
 		if !i.Next() {
 			return
 		}
@@ -35,7 +35,7 @@ func (ex *Example) Load(i *pebble.Iterator) (err error) {
 	}
 	// todo skip garbage
 	if id.Off() == ExampleScore {
-		ex.Score = Iplain(i.Value())
+		ex.Score = Inative(i.Value())
 		if !i.Next() {
 			return
 		}

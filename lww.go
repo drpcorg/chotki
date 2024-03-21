@@ -59,7 +59,7 @@ func LWWdiff(tlv []byte, vvdiff VV) []byte {
 
 // produce a text form (for REPL mostly)
 func Istring(tlv []byte) (txt string) {
-	return fmt.Sprintf("%d", Iplain(tlv))
+	return fmt.Sprintf("%d", Inative(tlv))
 }
 
 // parse a text form into a TLV value
@@ -71,13 +71,13 @@ func Iparse(txt string) (tlv []byte) {
 
 var time0 = []byte{0, 0, 0, 0}
 
-// convert plain golang value into a TLV form
+// convert native golang value into a TLV form
 func Itlv(i int64) (tlv []byte) {
 	return LWWtlv(0, 0, ZipInt64(i))
 }
 
-// convert a TLV value to a plain golang value
-func Iplain(tlv []byte) int64 {
+// convert a TLV value to a native golang value
+func Inative(tlv []byte) int64 {
 	_, _, val := LWWparse(tlv)
 	return UnzipInt64(val)
 }
@@ -148,13 +148,13 @@ func Sparse(txt string) (tlv []byte) {
 	return LWWtlv(0, 0, unesc)
 }
 
-// convert plain golang value into a TLV form
+// convert native golang value into a TLV form
 func Stlv(s string) (tlv []byte) {
 	return LWWtlv(0, 0, []byte(s))
 }
 
-// convert a TLV value to a plain golang value
-func Splain(tlv []byte) string {
+// convert a TLV value to a native golang value
+func Snative(tlv []byte) string {
 	_, _, val := LWWparse(tlv)
 	return string(val)
 }
@@ -188,7 +188,7 @@ func Sdiff(tlv []byte, vvdiff VV) []byte {
 
 // produce a text form (for REPL mostly)
 func Rstring(tlv []byte) (txt string) {
-	return Rplain(tlv).String()
+	return Rnative(tlv).String()
 }
 
 // parse a text form into a TLV value
@@ -197,13 +197,13 @@ func Rparse(txt string) (tlv []byte) {
 	return Rtlv(id)
 }
 
-// convert plain golang value into a TLV form
+// convert native golang value into a TLV form
 func Rtlv(i ID) (tlv []byte) {
 	return LWWtlv(0, 0, i.ZipBytes())
 }
 
-// convert a TLV value to a plain golang value
-func Rplain(tlv []byte) ID {
+// convert a TLV value to a native golang value
+func Rnative(tlv []byte) ID {
 	_, _, val := LWWparse(tlv)
 	return IDFromZipBytes(val)
 }
@@ -238,7 +238,7 @@ func Rdiff(tlv []byte, vvdiff VV) []byte {
 
 // produce a text form (for REPL mostly)
 func Fstring(tlv []byte) (txt string) {
-	return fmt.Sprintf("%f", Fplain(tlv))
+	return fmt.Sprintf("%f", Fnative(tlv))
 }
 
 // parse a text form into a TLV value
@@ -248,13 +248,13 @@ func Fparse(txt string) (tlv []byte) {
 	return Ftlv(i)
 }
 
-// convert plain golang value into a TLV form
+// convert native golang value into a TLV form
 func Ftlv(i float64) (tlv []byte) {
 	return LWWtlv(0, 0, ZipFloat64(i))
 }
 
-// convert a TLV value to a plain golang value
-func Fplain(tlv []byte) float64 {
+// convert a TLV value to a native golang value
+func Fnative(tlv []byte) float64 {
 	_, _, val := LWWparse(tlv)
 	return UnzipFloat64(val)
 }

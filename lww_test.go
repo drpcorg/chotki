@@ -22,7 +22,7 @@ func TestI(t *testing.T) {
 	assert.Equal(t, tlv1, Itlv(int1))
 	str2 := "345"
 	tlv2 := Iparse(str2)
-	int2 := Iplain(tlv2)
+	int2 := Inative(tlv2)
 	assert.Equal(t, int64(345), int2)
 	delta12 := Idelta(tlv1, 345)
 	merged := Imerge([][]byte{tlv1, delta12})
@@ -33,25 +33,25 @@ func TestS(t *testing.T) {
 	str1 := "fcuk\n\"zis\"\n"
 	tlv1 := Stlv(str1)
 	quoted := Sstring(tlv1)
-	unquoted := string(Splain(Sparse(quoted)))
+	unquoted := string(Snative(Sparse(quoted)))
 	assert.Equal(t, str1, unquoted)
-	assert.Equal(t, str1, Splain(tlv1))
+	assert.Equal(t, str1, Snative(tlv1))
 	str2 := "fcuk\n\"zat\"\n"
 	delta12 := Sdelta(tlv1, str2)
 	merged := Smerge([][]byte{tlv1, delta12})
-	assert.Equal(t, str2, Splain(merged))
+	assert.Equal(t, str2, Snative(merged))
 }
 
 func TestR(t *testing.T) {
 	str1 := "ae-32"
 	tlv1 := Rparse(str1)
 	id1 := IDFromSrcSeqOff(0xae, 0x32, 0)
-	id2 := Rplain(tlv1)
+	id2 := Rnative(tlv1)
 	assert.Equal(t, id1, id2)
 
 	str2 := "ae-33"
 	tlv2 := Rparse(str2)
-	delta12 := Rdelta(tlv1, Rplain(tlv2))
+	delta12 := Rdelta(tlv1, Rnative(tlv2))
 	merged := Rmerge([][]byte{tlv1, delta12})
 	assert.Equal(t, str2, Rstring(merged))
 }
@@ -60,12 +60,12 @@ func TestF(t *testing.T) {
 	str1 := "3.1415"
 	tlv1 := Fparse(str1)
 	id1 := 3.1415
-	id2 := Fplain(tlv1)
+	id2 := Fnative(tlv1)
 	assert.Equal(t, id1, id2)
 
 	str2 := "3.141592"
 	tlv2 := Fparse(str2)
-	delta12 := Fdelta(tlv1, Fplain(tlv2))
+	delta12 := Fdelta(tlv1, Fnative(tlv2))
 	merged := Fmerge([][]byte{tlv1, delta12})
 	assert.Equal(t, str2, Fstring(merged))
 }
