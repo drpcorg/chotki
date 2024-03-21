@@ -59,23 +59,24 @@ func (ch *Chotki) ApplyLOT(id, ref ID, body []byte, batch *pebble.Batch) (err er
 		if lit == 0 || lit == '-' {
 			return ErrBadPacket
 		}
-		body = rest[hlen : hlen+blen]
+		var bare, rebar []byte
+		bare = rest[hlen : hlen+blen]
 		fid = id + fno
 		fkey := OKey(fid, lit)
 		switch lit {
-		case 'I', 'S', 'R', 'F':
-			time, src, value := LWWparse(body)
-			if value == nil {
-				return ErrBadPacket
-			}
-			if src != id.Src() { // ensure correct attribution
-				body = LWWtlv(time, id.Src(), value)
-			}
+		case 'I', 'S', 'F', 'R':
+			rebar, err = IsfrReSource(bare, id.Src())
+		case 'M', 'E', 'L':
+			rebar, err = MelReSource(bare, id.Src())
 		default:
+			rebar = bare
+		}
+		if err != nil {
+			break
 		}
 		err = batch.Merge(
 			fkey,
-			body,
+			rebar,
 			&WriteOptions)
 		rest = rest[hlen+blen:]
 	}
@@ -93,7 +94,7 @@ func (ch *Chotki) ApplyE(id, r ID, body []byte, batch *pebble.Batch) (err error)
 	}
 	rest := body
 	for len(rest) > 0 && err == nil {
-		var fint, bare []byte
+		var fint, bare, rebar []byte
 		var lit byte
 		fint, rest = toytlv.Take('F', rest)
 		field := UnzipUint64(fint)
@@ -101,10 +102,21 @@ func (ch *Chotki) ApplyE(id, r ID, body []byte, batch *pebble.Batch) (err error)
 			return ErrBadEPacket
 		}
 		lit, bare, rest = toytlv.TakeAny(rest)
+		switch lit {
+		case 'I', 'S', 'F', 'R':
+			rebar, err = IsfrReSource(bare, id.Src())
+		case 'M', 'E', 'L':
+			rebar, err = MelReSource(bare, id.Src())
+		default:
+			rebar = bare
+		}
+		if err != nil {
+			break
+		}
 		fkey := OKey(r+ID(field), lit)
 		err = batch.Merge(
 			fkey,
-			bare,
+			rebar,
 			&WriteOptions)
 	}
 	if err == nil {

@@ -316,19 +316,6 @@ var WriteOptions = pebble.WriteOptions{Sync: false}
 
 var ErrBadIRecord = errors.New("bad id-ref record")
 
-func ReadRX(op []byte) (ref ID, exec, rest []byte, err error) {
-	ref, rest, err = TakeIDWary('R', op)
-	if err != nil {
-		return
-	}
-	var lit byte
-	lit, exec, rest = toytlv.TakeAnyRecord(rest)
-	if lit < 'A' {
-		err = ErrBadIRecord
-	}
-	return
-}
-
 var ErrBadPacket = errors.New("bad packet")
 var ErrBadEPacket = errors.New("bad E packet")
 var ErrBadVPacket = errors.New("bad V packet")

@@ -8,13 +8,13 @@ import (
 
 func TestTLV(t *testing.T) {
 	body := []byte("test")
-	tlv := LWWtlv(234, 123, body)
-	time, src, val := LWWparse(tlv)
+	tlv := IsfrTlv(234, 123, body)
+	time, src, val := IsfrParse(tlv)
 	assert.Equal(t, 234, int(time))
 	assert.Equal(t, 123, int(src))
 	assert.Equal(t, body, val)
 
-	doc := LWWtlv(4, 5, ZipInt64(-11))
+	doc := IsfrTlv(4, 5, ZipInt64(-11))
 	assert.Equal(t, []byte{0x32, 0x08, 0x05, 0x15}, doc)
 }
 
@@ -83,12 +83,12 @@ func TestIMerge(t *testing.T) {
 }
 
 func TestLWWTie(t *testing.T) {
-	a := LWWtlv(4, 8, ZipInt64(1))
-	b := LWWtlv(4, 7, ZipInt64(2))
-	c := LWWtlv(4, 5, ZipInt64(2))
+	a := IsfrTlv(4, 8, ZipInt64(1))
+	b := IsfrTlv(4, 7, ZipInt64(2))
+	c := IsfrTlv(4, 5, ZipInt64(2))
 	d := Imerge(toyqueue.Records{a, b, c})
 	assert.Equal(t, int64(2), Inative(d))
-	rev, src, _ := LWWparse(d)
+	rev, src, _ := IsfrParse(d)
 	assert.Equal(t, int64(4), rev)
 	assert.Equal(t, uint64(7), src)
 }
