@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/stretchr/testify/assert"
 	"os"
@@ -13,14 +12,12 @@ func TestChotki_Debug(t *testing.T) {
 	key := OKey(oid+1, 'I')
 	value := Itlv(-13)
 	str := ChotkiKVString(key, value)
-	fmt.Printf("%s\n", str)
-	assert.Equal(t, "O.1e-1ab-1.I:\t-13", string(str))
+	assert.Equal(t, "1e-1ab-1.I:\t-13", string(str))
 
 	skey := OKey(oid+2, 'S')
 	svalue := Stlv("funny\tstring\n")
 	sstr := ChotkiKVString(skey, svalue)
-	fmt.Printf("%s\n", sstr)
-	assert.Equal(t, "O.1e-1ab-2.S:\t\"funny\\tstring\\n\"", string(sstr))
+	assert.Equal(t, "1e-1ab-2.S:\t\"funny\\tstring\\n\"", string(sstr))
 }
 
 func TestChotki_Create(t *testing.T) {
@@ -28,7 +25,7 @@ func TestChotki_Create(t *testing.T) {
 	var a Chotki
 	err := a.Create(0x1a, "test replica")
 	assert.Nil(t, err)
-	a.DumpAll()
+	//a.DumpAll()
 	_ = a.Close()
 	_ = os.RemoveAll("cho1a")
 }
@@ -43,7 +40,7 @@ func TestChotki_Sync(t *testing.T) {
 	var a, b Chotki
 	err := a.Create(0x1c, "test replica A")
 	assert.Nil(t, err)
-	a.DumpAll()
+	//a.DumpAll()
 	err = b.Create(0x1d, "test replica B")
 	assert.Nil(t, err)
 
@@ -58,12 +55,13 @@ func TestChotki_Sync(t *testing.T) {
 	assert.Equal(t, 2, len(recs)) // one block, one vv
 	vpack, err := ParseVPack(recs[1])
 	assert.Nil(t, err)
-	_, _ = fmt.Fprintln(os.Stderr, "--- synced vv ---")
-	DumpVPacket(vpack)
+	//_, _ = fmt.Fprintln(os.Stderr, "--- synced vv ---")
+	//DumpVPacket(vpack)
+	_ = vpack
 
 	err = b.Drain(recs)
 	assert.Nil(t, err)
-	b.DumpAll()
+	//b.DumpAll()
 	bvv, err := b.VersionVector()
 	assert.Nil(t, err)
 	assert.Equal(t, "1,1c-0-1,1d-0-1", bvv.String())

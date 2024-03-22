@@ -149,7 +149,6 @@ func (ch *Chotki) Create(orig uint64, name string) (err error) {
 func (ch *Chotki) Open(orig uint64) (err error) {
 	ch.src = orig
 	opts := pebble.Options{
-		DisableWAL:       true,
 		ErrorIfNotExists: true,
 		Merger: &pebble.Merger{
 			Name:  "CRDT",
@@ -366,7 +365,7 @@ func (ch *Chotki) ObjectIterator(oid ID) *pebble.Iterator {
 		UpperBound: til,
 	}
 	ret := ch.db.NewIter(&io)
-	if ret.SeekGE(OKey(oid, 0)) {
+	if ret.SeekGE(fro) {
 		return ret
 	} else {
 		_ = ret.Close()

@@ -19,7 +19,7 @@ func TestTypes(t *testing.T) {
 	oid, err = a.CreateObject(tid, "\"Petrov\"", "42")
 	assert.Equal(t, tid+ProInc, oid)
 
-	a.DumpAll()
+	//a.DumpAll()
 
 	tid2, fields, err := a.GetObject(oid)
 	assert.Nil(t, err)

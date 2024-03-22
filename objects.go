@@ -49,7 +49,7 @@ func (ch *Chotki) CreateType(parent ID, fields ...string) (id ID, err error) {
 	var fspecs toyqueue.Records
 	fspecs = append(fspecs, toytlv.Record('A', parent.ZipBytes()))
 	for _, field := range fields {
-		if len(field) < 2 || field[0] < 'A' || field[1] > 'Z' || !utf8.ValidString(field) || hasUnsafeChars(field) {
+		if len(field) < 2 || field[0] < 'A' || field[0] > 'Z' || !utf8.ValidString(field) || hasUnsafeChars(field) {
 			return BadId, ErrBadTypeDescription
 		}
 		fspecs = append(fspecs, toytlv.Record('A', []byte(field)))

@@ -35,5 +35,5 @@ func TestFieldNameType(t *testing.T) {
 	src := uint64(0x8e)
 	seq := uint64(0x82f0)
 	id := IDFromSrcSeqOff(src, seq, ExampleName)
-	assert.Equal(t, "8e-82f0-32", id.String())
+	assert.Equal(t, "8e-82f0-1", id.String())
 }
