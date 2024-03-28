@@ -1,4 +1,4 @@
-package main
+package chotki
 
 import (
 	"encoding/binary"
@@ -34,7 +34,7 @@ type Chotki struct {
 
 	// queues to broadcast all new packets
 	outq toyqueue.RecordQueue
-	fan  toyqueue.Feeder2Drainers
+	fan  toyqueue.Fanout
 
 	lock   sync.Mutex
 	idlock sync.Mutex
@@ -69,7 +69,7 @@ func OKeyIdRdt(key []byte) (id ID, rdt byte) {
 
 func VKey(id ID) (key []byte) {
 	var ret = [16]byte{'V'}
-	block := id & ^VBlockMask
+	block := id & ^SyncBlockMask
 	key = binary.BigEndian.AppendUint64(ret[:1], uint64(block))
 	key = append(key, 'V')
 	return
@@ -173,21 +173,22 @@ func (ch *Chotki) Open(orig uint64) (err error) {
 		return
 	}
 	ch.last = vv.GetID(ch.src)
-	// ch.last = ch.heads.GetID(orig) todo root VV
-	//ch.inq.Limit = 8192
-	/*ch.fan.Feeder = &ch.outq
+	// Host.last = Host.heads.GetID(orig) todo root VV
+	//Host.inq.Limit = 8192
+	/*Host.fan.Feeder = &Host.oqueue
 	 */
 	return
 }
 
 func (ch *Chotki) Feed() (toyqueue.Records, error) {
-	// fixme multi if ch.fan.
+	// fixme multi if Host.fan.
 	return ch.outq.Feed()
 }
 
 func (ch *Chotki) OpenTCP(tcp *toytlv.TCPDepot) {
 	tcp.Open(func(conn net.Conn) toyqueue.FeedDrainCloser {
-		return &Baker{ch: ch}
+		// fixme snapshot etc
+		return &Syncer{Host: ch}
 	})
 	// ...
 	io := pebble.IterOptions{}
@@ -216,7 +217,7 @@ func (ch *Chotki) AddPacketHose(hose toyqueue.DrainCloser) error {
 }
 
 func (ch *Chotki) RemovePacketHose(hose toyqueue.DrainCloser) error {
-	// todo return ch.fan.RemoveDrain(hose)
+	// todo return Host.fan.RemoveDrain(hose)
 	return nil
 }
 
@@ -293,7 +294,7 @@ func (ch *Chotki) Drain(recs toyqueue.Records) (err error) {
 		return
 	}
 
-	// todo err = ch.outq.Drain(recs) // nonblocking
+	// todo err = Host.oqueue.Drain(recs) // nonblocking
 
 	return
 }
@@ -316,6 +317,7 @@ var WriteOptions = pebble.WriteOptions{Sync: false}
 var ErrBadIRecord = errors.New("bad id-ref record")
 
 var ErrBadPacket = errors.New("bad packet")
+var ErrBadHPacket = errors.New("bad handshake packet")
 var ErrBadEPacket = errors.New("bad E packet")
 var ErrBadVPacket = errors.New("bad V packet")
 var ErrBadYPacket = errors.New("bad Y packet")

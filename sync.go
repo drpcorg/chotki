@@ -1,4 +1,4 @@
-package main
+package chotki
 
 import (
 	"bytes"
@@ -6,112 +6,180 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
+	"io"
+	"sync"
+	"time"
 )
 
-const VBlockBits = 28
-const VBlockMask = (ID(1) << VBlockBits) - 1
+const SyncBlockBits = 28
+const SyncBlockMask = (ID(1) << SyncBlockBits) - 1
 
-func (ch *Chotki) AddPeer(peer toyqueue.FeedDrainCloser) error {
-	// fixme add firehose 21 12
-	q := toyqueue.RecordQueue{Limit: 1024}
-	_ = ch.AddPacketHose(&q)
-	snap := ch.db.NewSnapshot()
-	key := [16]byte{'V'}
-	vvb, clo, err := snap.Get(append(key[:1], ID0.Bytes()...))
-	if err != nil {
-		return err
+const SyncOutQueueLimit = 1 << 20
+
+type Syncer struct {
+	Host   *Chotki
+	Mode   uint64
+	peert  ID
+	snap   *pebble.Snapshot
+	ostate int
+	istate int
+	oqueue toyqueue.RecordQueue
+	myvv   VV
+	peervv VV
+	lock   sync.Mutex
+	vvit   *pebble.Iterator
+	ffit   *pebble.Iterator
+	vpack  []byte
+}
+
+const (
+	SyncRead  = 1
+	SyncWrite = 2
+	SyncLive  = 4
+	SyncRW    = SyncRead | SyncWrite
+	SyncRL    = SyncRead | SyncLive
+	SyncRWL   = SyncRead | SyncWrite | SyncLive
+)
+
+const (
+	SendVV = iota
+	SendDelta
+	SendCurrent
+	SendEOF
+	SendNothing
+)
+
+func (sync *Syncer) Close() error {
+	sync.lock.Lock()
+	if sync.Host == nil {
+		sync.lock.Unlock()
+		return toyqueue.ErrClosed
 	}
-	err = peer.Drain(toyqueue.Records{vvb})
-	if err != nil {
-		return err
+	_ = sync.Host.RemovePacketHose(&sync.oqueue)
+	if sync.snap != nil {
+		_ = sync.snap.Close()
+		sync.snap = nil
 	}
-	_ = clo.Close()
-	// todo go ch.DoLivePeer(peer, q.Blocking())
-	recvv, err := peer.Feed()
-	if err != nil {
-		return err // fixme close
-	}
-	peervvb := recvv[0]
-	var peervv VV
-	err = peervv.PutTLV(peervvb) // todo unenvelope
-	if err != nil {
-		return err
-	}
-	// fixme recvv[1:]
-	ch.SyncPeer(peer, snap, peervv)
+	sync.ostate = SendNothing
+	sync.lock.Unlock()
 	return nil
 }
 
-func (ch *Chotki) SyncPeer(peer toyqueue.DrainCloser, snap *pebble.Snapshot, peervv VV) (err error) {
-	vit := snap.NewIter(&pebble.IterOptions{
-		LowerBound: []byte{'V'},
-		UpperBound: []byte{'W'},
-	})
-	fit := snap.NewIter(&pebble.IterOptions{
-		LowerBound: []byte{'O'},
-		UpperBound: []byte{'P'},
-	})
-	key0 := VKey(ID0)
-	ok := vit.SeekGE(key0)
-	if !ok || 0 != bytes.Compare(vit.Key(), key0) {
-		return ErrBadV0Record
-	}
-	dbvv := make(VV)
-	err = dbvv.PutTLV(vit.Value())
-	if err != nil {
-		return ErrBadV0Record
-	}
-	vpack := make([]byte, 0, 4096)
-	bmark, vpack := toytlv.OpenHeader(vpack, 'V')
-	v := toytlv.Record('V',
-		toytlv.Record('R', ID0.ZipBytes()),
-		vit.Value())
-	vpack = append(vpack, v...)
-	sendvv := dbvv.InterestOver(peervv)
-
-	for vit.Next() {
-		at := VKeyId(vit.Key()).ZeroOff()
-		//fmt.Printf("at %s\n", at.String())
-		vv := make(VV)
-		err = vv.PutTLV(vit.Value())
-		if err != nil {
-			err = ErrBadVRecord
-			break
+func (sync *Syncer) Feed() (recs toyqueue.Records, err error) {
+	switch sync.ostate {
+	case SendVV:
+		sync.ostate++
+		recs, err = sync.FeedHandshake()
+	case SendDelta:
+		for sync.istate == SendVV && sync.Host != nil {
+			time.Sleep(time.Millisecond)
 		}
-		if vv.ProgressedOver(peervv) {
-			err = ch.scanObjects(fit, at, sendvv, peer)
-			v := toytlv.Record('V',
-				toytlv.Record('R', at.ZipBytes()),
-				vit.Value()) // todo brief
-			vpack = append(vpack, v...)
+		recs, err = sync.FeedBlockDiff()
+		if err == io.EOF {
+			recs2, _ := sync.FeedDiffVV()
+			recs = append(recs, recs2...)
+			if (sync.Mode & SyncLive) != 0 {
+				sync.ostate++
+			} else {
+				sync.ostate = SendEOF
+			}
+			err = nil
 		}
+	case SendCurrent:
+		recs, err = sync.FeedUpdates()
+	case SendEOF:
+		_ = sync.oqueue.Close()
+		sync.ostate++
+		err = io.EOF
+	case SendNothing:
+		err = toyqueue.ErrClosed
 	}
-
-	if err == nil {
-		toytlv.CloseHeader(vpack, bmark)
-		err = peer.Drain(toyqueue.Records{vpack})
-	}
-
-	_ = vit.Close()
-	_ = fit.Close()
 	return
 }
 
-func (ch *Chotki) scanObjects(fit *pebble.Iterator, block ID, sendvv VV, peer toyqueue.DrainCloser) (err error) {
+func (sync *Syncer) FeedHandshake() (vv toyqueue.Records, err error) {
+	sync.oqueue.Limit = SyncOutQueueLimit
+	err = sync.Host.AddPacketHose(&sync.oqueue)
+	if err != nil {
+		_ = sync.Close()
+		return
+	}
+
+	sync.snap = sync.Host.db.NewSnapshot()
+	sync.vvit = sync.snap.NewIter(&pebble.IterOptions{
+		LowerBound: []byte{'V'},
+		UpperBound: []byte{'W'},
+	})
+	sync.ffit = sync.snap.NewIter(&pebble.IterOptions{
+		LowerBound: []byte{'O'},
+		UpperBound: []byte{'P'},
+	})
+
+	key0 := VKey(ID0)
+	ok := sync.vvit.SeekGE(key0)
+	if !ok || 0 != bytes.Compare(sync.vvit.Key(), key0) {
+		return nil, ErrBadV0Record
+	}
+	sync.myvv = make(VV)
+	err = sync.myvv.PutTLV(sync.vvit.Value())
+	if err != nil {
+		return nil, err
+	}
+
+	sync.vpack = make([]byte, 0, 4096)
+	_, sync.vpack = toytlv.OpenHeader(sync.vpack, 'V') // 5
+	v := toytlv.Record('V',
+		toytlv.Record('R', ID0.ZipBytes()),
+		sync.vvit.Value()) // todo use the one in handshake
+	sync.vpack = append(sync.vpack, v...)
+
+	// handshake: H(T{pro,src} M(mode) V(V{p,s}+))
+	hs := toytlv.Record('H',
+		toytlv.TinyRecord('T', sync.Host.last.ZipBytes()),
+		toytlv.TinyRecord('M', ZipUint64(sync.Mode)),
+		toytlv.Record('V', sync.vvit.Value()),
+	)
+
+	return toyqueue.Records{hs}, nil
+}
+
+func (sync *Syncer) FeedBlockDiff() (diff toyqueue.Records, err error) {
+	if !sync.vvit.Next() {
+		return nil, io.EOF
+	}
+	vv := make(VV)
+	err = vv.PutTLV(sync.vvit.Value())
+	if err != nil {
+		return nil, ErrBadVRecord
+	}
+	sendvv := make(VV)
+	// check for any changes
+	hasChanges := false // fixme up & repeat
+	for src, pro := range vv {
+		peerpro, ok := sync.peervv[src]
+		if !ok || pro > peerpro {
+			sendvv[src] = peerpro
+			hasChanges = true
+		}
+	}
+	if !hasChanges {
+		return toyqueue.Records{}, nil
+	}
+	block := VKeyId(sync.vvit.Key()).ZeroOff()
 	key := OKey(block, 0)
-	fit.SeekGE(key)
+	sync.ffit.SeekGE(key)
 	bmark, parcel := toytlv.OpenHeader(nil, 'Y')
 	parcel = append(parcel, toytlv.Record('R', block.ZipBytes())...)
-	till := block + VBlockMask + 1
-	for ; fit.Valid(); fit.Next() {
-		id, rdt := OKeyIdRdt(fit.Key())
+	till := block + SyncBlockMask + 1
+	for ; sync.ffit.Valid(); sync.ffit.Next() {
+		id, rdt := OKeyIdRdt(sync.ffit.Key())
 		if id == BadId || id >= till {
 			break
 		}
 		lim, ok := sendvv[id.Src()]
 		if ok && (id.Pro() > lim || lim == 0) {
 			parcel = append(parcel, toytlv.Record('F', ZipUint64(uint64(id-block)))...)
-			parcel = append(parcel, toytlv.Record(rdt, fit.Value())...)
+			parcel = append(parcel, toytlv.Record(rdt, sync.ffit.Value())...)
 			continue
 		}
 		var diff []byte
@@ -119,21 +187,115 @@ func (ch *Chotki) scanObjects(fit *pebble.Iterator, block ID, sendvv VV, peer to
 		case 'A':
 			diff = nil
 		case 'I':
-			diff = Idiff(fit.Value(), sendvv)
+			diff = Idiff(sync.ffit.Value(), sendvv)
 		case 'S':
-			diff = Sdiff(fit.Value(), sendvv)
+			diff = Sdiff(sync.ffit.Value(), sendvv)
 		default:
-			diff = fit.Value()
+			diff = sync.ffit.Value()
 		}
 		if len(diff) != 0 {
 			parcel = append(parcel, toytlv.Record('F', ZipUint64(uint64(id-block)))...)
 			parcel = append(parcel, toytlv.Record(rdt, diff)...)
 		}
 	}
-	if err == nil {
-		toytlv.CloseHeader(parcel, bmark)
-		err = peer.Drain(toyqueue.Records{parcel})
+	toytlv.CloseHeader(parcel, bmark)
+	v := toytlv.Record('V',
+		toytlv.Record('R', block.ZipBytes()),
+		sync.vvit.Value()) // todo brief
+	sync.vpack = append(sync.vpack, v...)
+	return toyqueue.Records{parcel}, err
+}
+
+func (sync *Syncer) FeedDiffVV() (vv toyqueue.Records, err error) {
+	toytlv.CloseHeader(sync.vpack, 5)
+	vv = append(vv, sync.vpack)
+	sync.vpack = nil
+	_ = sync.ffit.Close()
+	sync.ffit = nil
+	_ = sync.vvit.Close()
+	sync.vvit = nil
+	return
+}
+
+func (sync *Syncer) FeedUpdates() (vv toyqueue.Records, err error) {
+	return sync.oqueue.Feed()
+}
+
+func (sync *Syncer) Drain(recs toyqueue.Records) (err error) {
+	switch sync.istate {
+	case SendVV:
+		if len(recs) == 0 {
+			return ErrBadHPacket
+		}
+		err = sync.DrainHandshake(recs[0:1])
+		recs = recs[1:]
+		sync.istate++
+		if len(recs) == 0 {
+			break
+		}
+		fallthrough
+	case SendDelta:
+		err = sync.Host.Drain(recs)
+	case SendCurrent:
+		err = sync.Host.Drain(recs)
+	case SendEOF:
+		return toyqueue.ErrClosed
+	case SendNothing:
+		return toyqueue.ErrClosed
 	}
+	if err != nil { // todo send the error msg
+		sync.istate = SendEOF
+	}
+	return
+}
+
+func (sync *Syncer) DrainHandshake(recs toyqueue.Records) (err error) {
+	// handshake: H(T{pro,src} M(mode) V(V{p,s}+) ...)
+	hsbody, nothing := toytlv.Take('H', recs[0])
+	if len(hsbody) == 0 || len(nothing) > 0 {
+		return ErrBadHPacket
+	}
+	tbody, rest := toytlv.Take('T', hsbody)
+	if tbody == nil {
+		return ErrBadHPacket
+	}
+	sync.peert = IDFromZipBytes(tbody)
+	mbody, rest := toytlv.Take('M', rest)
+	if mbody == nil {
+		return ErrBadHPacket
+	}
+	peermode := UnzipUint64(mbody)
+	_ = peermode // todo
+	vbody, rest := toytlv.Take('V', rest)
+	if vbody == nil {
+		return ErrBadHPacket
+	}
+	sync.peervv = make(VV)
+	err = sync.peervv.PutTLV(vbody)
+	if err != nil {
+		return ErrBadHPacket
+	}
+	return nil
+}
+
+// Usage:
+// 1. FeedHandshake to the peer
+// 2. DrainPeerVV
+// 3. repeat FeedBlock
+// 4. FeedBlockVV
+// 5. Done
+type Differ struct {
+	snap   *pebble.Snapshot
+	peervv VV
+	vpack  []byte
+}
+
+func (diff *Differ) DrainPeerVV(vvrec toyqueue.Records) (err error) {
+	diff.peervv = make(VV)
+	if len(vvrec) != 1 {
+		return ErrBadVPacket // todo
+	}
+	err = diff.peervv.PutTLV(vvrec[0])
 	return
 }
 
@@ -165,112 +327,4 @@ func ParseVPack(vpack []byte) (vvs map[ID]VV, err error) {
 	return
 }
 
-type Baker struct {
-	ch        *Chotki
-	sout, sin int
-	batch     *pebble.Batch
-	delta     toyqueue.RecordQueue
-	inq       toyqueue.Drainer
-	outq      toyqueue.RecordQueue
-}
-
-const (
-	SendVV = iota
-	SendDelta
-	SendCurrent
-	SendEOF
-	SendNothing
-)
-
-func (b *Baker) Feed() (recs toyqueue.Records, err error) {
-	switch b.sout {
-	case SendVV:
-	case SendDelta:
-		recs, err = b.delta.Feed()
-		if err != nil {
-			b.sout++
-			err = nil
-		}
-	case SendCurrent:
-		recs, err = b.outq.Feed()
-		if err != nil {
-			b.sout++
-			err = nil
-		}
-	case SendEOF:
-		_ = b.outq.Close()
-		b.sout++
-	case SendNothing:
-		err = toyqueue.ErrClosed
-	}
-	return
-}
-
-func (b *Baker) Drain(recs toyqueue.Records) (err error) {
-	switch b.sin {
-	case SendVV:
-		vv := make(VV)
-		vvr := recs[0]
-		recs = recs[1:]
-		err = vv.PutTLV(vvr)
-		if err != nil {
-			break
-		}
-		b.outq.Limit = 1024
-		b.delta.Limit = 1024
-		err = b.ch.AddPacketHose(&b.outq)
-		if err != nil {
-			break
-		}
-		snap := b.ch.db.NewSnapshot()
-		go b.ch.SyncPeer(&b.delta, snap, vv)
-		b.batch = b.ch.db.NewBatch()
-		b.sin++
-		if len(recs) == 0 {
-			break
-		}
-		fallthrough
-	case SendDelta:
-		for len(recs) > 0 {
-			rec := recs[0]
-			recs = recs[1:]
-			lit, body, rest := toytlv.TakeAny(rec)
-			if len(rest) > 0 {
-				err = ErrBadPacket
-				break
-			}
-			switch lit {
-			case 'Y':
-				err = b.ch.ApplyY(ID0, ID0, body, b.batch)
-			case 'M':
-				wo := pebble.WriteOptions{Sync: true}
-				err = b.ch.db.Apply(b.batch, &wo)
-				b.sin++
-				if err == nil && len(recs) > 0 {
-					err = b.Drain(recs)
-				}
-			default:
-				err = ErrBadPacket
-			}
-		}
-	case SendCurrent:
-		err = b.ch.Drain(recs)
-		if err != nil {
-			b.sin++
-		}
-	case SendEOF:
-		return toyqueue.ErrClosed
-	case SendNothing:
-		return toyqueue.ErrClosed
-	}
-	if err != nil {
-		// close things
-	}
-	return
-}
-
 var ErrNotImplemented = errors.New("not implemented")
-
-func (b *Baker) Close() error {
-	return ErrNotImplemented
-}

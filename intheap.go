@@ -1,4 +1,4 @@
-package main
+package chotki
 
 type Uint64Heap []uint64
 

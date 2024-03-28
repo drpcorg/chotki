@@ -1,8 +1,9 @@
-package main
+package chotki
 
 import (
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/stretchr/testify/assert"
+	"io"
 	"os"
 	"testing"
 )
@@ -44,24 +45,13 @@ func TestChotki_Sync(t *testing.T) {
 	err = b.Create(0x1d, "test replica B")
 	assert.Nil(t, err)
 
-	queue := toyqueue.RecordQueue{Limit: 1024}
-	snap := a.db.NewSnapshot()
-	vv := make(VV)
-	vv.PutID(IDFromSrcSeqOff(0, 1, 0))
-	err = a.SyncPeer(&queue, snap, vv)
+	synca := Syncer{Host: &a, Mode: SyncRW}
+	syncb := Syncer{Host: &b, Mode: SyncRW}
+	err = toyqueue.Relay(&syncb, &synca)
 	assert.Nil(t, err)
-	recs, err := queue.Feed()
-	assert.Nil(t, err)
-	assert.Equal(t, 2, len(recs)) // one block, one vv
-	vpack, err := ParseVPack(recs[1])
-	assert.Nil(t, err)
-	//_, _ = fmt.Fprintln(os.Stderr, "--- synced vv ---")
-	//DumpVPacket(vpack)
-	_ = vpack
+	err = toyqueue.Pump(&synca, &syncb)
+	assert.Equal(t, io.EOF, err)
 
-	err = b.Drain(recs)
-	assert.Nil(t, err)
-	//b.DumpAll()
 	bvv, err := b.VersionVector()
 	assert.Nil(t, err)
 	assert.Equal(t, "1,1c-0-1,1d-0-1", bvv.String())

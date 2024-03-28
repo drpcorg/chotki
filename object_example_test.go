@@ -1,7 +1,9 @@
-package main
+package chotki
 
 import (
+	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/stretchr/testify/assert"
+	"io"
 	"os"
 	"testing"
 )
@@ -39,14 +41,12 @@ func TestORMExample(t *testing.T) {
 	err = b.Create(0x1f, "another test replica")
 	assert.Nil(t, err)
 
-	/* fixme
-	a2b, b2a := toyqueue.BlockingRecordQueuePair(1024)
-	a.AddPeer(a2b)
-	b.AddPeer(b2a)*/
-	snap := a.db.NewSnapshot()
-	vv, _ := b.VersionVector()
-	err = a.SyncPeer(&b, snap, vv)
+	syncera := Syncer{Host: &a, Mode: SyncRW}
+	syncerb := Syncer{Host: &b, Mode: SyncRW}
+	err = toyqueue.Relay(&syncerb, &syncera)
 	assert.Nil(t, err)
+	err = toyqueue.Pump(&syncera, &syncerb)
+	assert.Equal(t, io.EOF, err)
 
 	// fixme wait something
 	var exb Example
