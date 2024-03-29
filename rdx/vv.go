@@ -2,8 +2,9 @@ package rdx
 
 import (
 	"errors"
-	"github.com/learn-decentralized-systems/toytlv"
 	"slices"
+
+	"github.com/learn-decentralized-systems/toytlv"
 )
 
 // VV is a version vector, max ids seen from each known replica.

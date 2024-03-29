@@ -1,9 +1,9 @@
 package rdx
 
 import (
+	"errors"
 	"github.com/learn-decentralized-systems/toytlv"
 )
-import "errors"
 
 type Time struct {
 	rev int64

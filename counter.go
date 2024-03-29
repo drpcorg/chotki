@@ -5,7 +5,25 @@ import (
 	"github.com/learn-decentralized-systems/toytlv"
 )
 
-type counter64 int64
+type Counter64 int64
+
+func (c *Counter64) Apply(state []byte) {
+	sum, _ := parseC(state, 0)
+	*c = Counter64(sum)
+}
+
+func (c Counter64) Diff(id rdx.ID, state []byte) (changes []byte) {
+	sum, mine := parseC(state, id.Src())
+	if sum != int64(c) {
+		d := int64(c) - sum
+		new_own := mine + d
+		changes = toytlv.Concat(
+			toytlv.Record('I', id.ZipBytes()),
+			toytlv.Record('C', rdx.ZipUint64(rdx.ZigZagInt64(new_own))),
+		)
+	}
+	return
+}
 
 func ProbeID(lit byte, input []byte) rdx.ID {
 	idbody, _ := toytlv.Take(lit, input)
@@ -70,24 +88,6 @@ func parseC(state []byte, src uint64) (sum, mine int64) {
 			mine = inc
 		}
 		sum += inc
-	}
-	return
-}
-
-func (c *counter64) Apply(state []byte) {
-	sum, _ := parseC(state, 0)
-	*c = counter64(sum)
-}
-
-func (c counter64) Diff(id rdx.ID, state []byte) (changes []byte) {
-	sum, mine := parseC(state, id.Src())
-	if sum != int64(c) {
-		d := int64(c) - sum
-		new_own := mine + d
-		changes = toytlv.Concat(
-			toytlv.Record('I', id.ZipBytes()),
-			toytlv.Record('C', rdx.ZipUint64(rdx.ZigZagInt64(new_own))),
-		)
 	}
 	return
 }

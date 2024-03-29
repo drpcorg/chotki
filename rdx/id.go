@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+
 	"github.com/learn-decentralized-systems/toytlv"
 )
 
@@ -212,7 +213,7 @@ func IDFromString(idstr []byte) (parsed ID) {
 	return
 }
 
-func readIDFromString(idstr []byte) (id ID, rest []byte) {
+func readIDFromString(idstr []byte) (ID, []byte) {
 	var parts [3]uint64
 	i, p := 0, 0
 	for i < len(idstr) && p < 3 {
@@ -230,7 +231,8 @@ func readIDFromString(idstr []byte) (id ID, rest []byte) {
 		}
 		i++
 	}
-	rest = idstr[i:]
+	rest := idstr[i:]
+
 	switch p {
 	case 0: // off
 		parts[2] = parts[0]
@@ -238,19 +240,20 @@ func readIDFromString(idstr []byte) (id ID, rest []byte) {
 	case 1: // src-seq
 	case 2: // src-seq-off
 	case 3:
-		id = BadId
+		return BadId, rest
 	}
+
 	if parts[1] > 0xffffffff || parts[2] > 0xfff || parts[0] > 0xfffff {
-		id = BadId
+		return BadId, rest
 	}
+
 	return IDFromSrcSeqOff(parts[0], parts[1], uint16(parts[2])), rest
 }
 
-func readIDFromTLV(tlv []byte) (id ID, rest []byte) {
+func readIDFromTLV(tlv []byte) (ID, []byte) { //nolint:golint,unused
 	lit, body, rest := toytlv.TakeAny(tlv)
 	if lit == '-' || lit == 0 {
 		return BadId, nil
 	}
-	id = IDFromZipBytes(body)
-	return
+	return IDFromZipBytes(body), rest
 }

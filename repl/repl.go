@@ -33,7 +33,7 @@ func (a *AliasNode) String() string {
 	return "-ALIASES-"
 }
 func (a *AliasNode) List() (ret []string) {
-	for name, _ := range a.Names {
+	for name := range a.Names {
 		ret = append(ret, name)
 	}
 	return

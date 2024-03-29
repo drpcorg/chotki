@@ -2,7 +2,6 @@ package rdx
 
 import (
     "fmt"
-    "errors"
 )
 
 %%{
@@ -50,7 +49,7 @@ func ParseREPL(data []byte) (cmd string, path *RDX, rdx *RDX, err error) {
     %%write exec;
 
     if cs < REPL_first_final { 
-        err = errors.New(fmt.Sprintf("command parsing failed at pos %d", p))
+        err = fmt.Errorf("command parsing failed at pos %d", p)
     }
 
     return

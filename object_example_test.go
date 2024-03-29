@@ -17,8 +17,10 @@ func TestORMExample(t *testing.T) {
 	assert.Nil(t, err)
 	var tid, oid rdx.ID
 	tid, err = a.CreateType(rdx.ID0, "Sname", "Iscore")
+	assert.Nil(t, err)
 	assert.Equal(t, "1e-1", tid.String())
-	oid, err = a.CreateObject(tid, "\"Ivan Petrov\"", "102")
+
+	oid, _ = a.CreateObject(tid, "\"Ivan Petrov\"", "102")
 	assert.Equal(t, "1e-2", oid.String())
 	//a.DumpAll()
 

@@ -18,6 +18,7 @@ func TestTypes(t *testing.T) {
 	tid, err = a.CreateType(rdx.ID0, "SName", "IScore")
 	assert.Nil(t, err)
 	oid, err = a.CreateObject(tid, "\"Petrov\"", "42")
+	assert.Nil(t, err)
 	assert.Equal(t, tid+rdx.ProInc, oid)
 
 	//a.DumpAll()

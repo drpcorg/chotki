@@ -40,7 +40,7 @@ type Chotki struct {
 	lock   sync.Mutex
 	idlock sync.Mutex
 
-	tcp toytlv.TCPDepot
+	tcp toytlv.TCPDepot //nolint:golint,unused
 
 	opts Options
 
@@ -49,6 +49,7 @@ type Chotki struct {
 
 var ErrCausalityBroken = errors.New("order fail: refs an unknown op")
 var ErrOutOfOrder = errors.New("order fail: sequence gap")
+var ErrNotImplemented = errors.New("not implemented yet")
 
 func OKey(id rdx.ID, rdt byte) (key []byte) {
 	var ret = [16]byte{'O'}
@@ -108,7 +109,7 @@ func merger(key, value []byte) (pebble.ValueMerger, error) {
 	pma := PebbleMergeAdaptor{
 		id:   id,
 		rdt:  rdt,
-		vals: append([][]byte{value}),
+		vals: [][]byte{value},
 	}
 	return &pma, nil
 }
@@ -238,7 +239,7 @@ func (ch *Chotki) Drain(recs toyqueue.Records) (err error) {
 			ch.warn("bad packet: %s", err.Error())
 			continue
 		}
-		apply = append(apply, packet)
+		apply = append(apply, packet) //nolint:staticcheck
 		if id.Src() == ch.src && id > ch.last {
 			if id.Off() != 0 {
 				return rdx.ErrBadPacket
@@ -288,7 +289,7 @@ func (ch *Chotki) Drain(recs toyqueue.Records) (err error) {
 			_, _ = fmt.Fprintf(os.Stderr, "unsupported packet %c skipped\n", lit)
 		}
 		if !yv && err == nil {
-			err = ch.db.Apply(&pb, &WriteOptions)
+			_ = ch.db.Apply(&pb, &WriteOptions)
 		}
 	}
 	if err != nil { // fixme separate packets

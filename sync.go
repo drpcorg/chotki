@@ -2,7 +2,6 @@ package chotki
 
 import (
 	"bytes"
-	"errors"
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toyqueue"
@@ -252,22 +251,23 @@ func (sync *Syncer) Drain(recs toyqueue.Records) (err error) {
 
 func (sync *Syncer) DrainHandshake(recs toyqueue.Records) (err error) {
 	// handshake: H(T{pro,src} M(mode) V(V{p,s}+) ...)
-	hsbody, nothing := toytlv.Take('H', recs[0])
+	var hsbody, nothing, tbody, mbody, vbody, rest []byte
+	hsbody, nothing = toytlv.Take('H', recs[0])
 	if len(hsbody) == 0 || len(nothing) > 0 {
 		return ErrBadHPacket
 	}
-	tbody, rest := toytlv.Take('T', hsbody)
+	tbody, rest = toytlv.Take('T', hsbody)
 	if tbody == nil {
 		return ErrBadHPacket
 	}
 	sync.peert = rdx.IDFromZipBytes(tbody)
-	mbody, rest := toytlv.Take('M', rest)
+	mbody, rest = toytlv.Take('M', rest)
 	if mbody == nil {
 		return ErrBadHPacket
 	}
 	peermode := rdx.UnzipUint64(mbody)
 	_ = peermode // todo
-	vbody, rest := toytlv.Take('V', rest)
+	vbody, rest = toytlv.Take('V', rest)
 	if vbody == nil {
 		return ErrBadHPacket
 	}
@@ -276,28 +276,8 @@ func (sync *Syncer) DrainHandshake(recs toyqueue.Records) (err error) {
 	if err != nil {
 		return ErrBadHPacket
 	}
+	_ = rest // todo
 	return nil
-}
-
-// Usage:
-// 1. FeedHandshake to the peer
-// 2. DrainPeerVV
-// 3. repeat FeedBlock
-// 4. FeedBlockVV
-// 5. Done
-type Differ struct {
-	snap   *pebble.Snapshot
-	peervv rdx.VV
-	vpack  []byte
-}
-
-func (diff *Differ) DrainPeerVV(vvrec toyqueue.Records) (err error) {
-	diff.peervv = make(rdx.VV)
-	if len(vvrec) != 1 {
-		return ErrBadVPacket // todo
-	}
-	err = diff.peervv.PutTLV(vvrec[0])
-	return
 }
 
 func ParseVPack(vpack []byte) (vvs map[rdx.ID]rdx.VV, err error) {
@@ -327,5 +307,3 @@ func ParseVPack(vpack []byte) (vvs map[rdx.ID]rdx.VV, err error) {
 	}
 	return
 }
-
-var ErrNotImplemented = errors.New("not implemented")
