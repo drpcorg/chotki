@@ -1,15 +1,16 @@
-package main
+package chotki
 
 import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/cockroachdb/pebble"
-	"github.com/learn-decentralized-systems/toyqueue"
-	"github.com/learn-decentralized-systems/toytlv"
 	"net"
 	"os"
 	"sync"
+
+	"github.com/cockroachdb/pebble"
+	"github.com/learn-decentralized-systems/toyqueue"
+	"github.com/learn-decentralized-systems/toytlv"
 )
 
 type Packet []byte

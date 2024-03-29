@@ -1,4 +1,4 @@
-package main
+package chotki
 
 import (
 	hex2 "encoding/hex"

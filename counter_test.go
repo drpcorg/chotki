@@ -1,4 +1,4 @@
-package main
+package chotki
 
 import (
 	"github.com/learn-decentralized-systems/toytlv"
