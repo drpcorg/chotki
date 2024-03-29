@@ -23,6 +23,7 @@ var ErrTypeUnknown = errors.New("unknown object type")
 var ErrUnknownFieldsInAType = errors.New("unknown fields for the type")
 var ErrBadValueForAType = errors.New("bad value for the type")
 
+// fixme []string
 func (ch *Chotki) ObjectType(tid ID) (formula string, err error) {
 	formula, ok := ch.types[tid]
 	if ok {

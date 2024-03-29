@@ -331,7 +331,12 @@ var ErrBadRRecord = errors.New("bad ref record")
 var KeyLogLen = []byte("Mloglen")
 
 func (ch *Chotki) Close() error {
+	if ch.db == nil {
+		return nil
+	}
 	_ = ch.db.Close()
+	ch.db = nil
+	// todo
 	return nil
 }
 
