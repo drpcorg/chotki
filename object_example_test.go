@@ -1,9 +1,10 @@
-package main
+package chotki
 
 import (
-	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestORMExample(t *testing.T) {
@@ -13,9 +14,10 @@ func TestORMExample(t *testing.T) {
 	err := a.Create(0x1e, "test replica")
 	assert.Nil(t, err)
 	var tid, oid ID
-	tid, err = a.CreateType(ID0, "Sname", "Iscore")
+	tid, _ = a.CreateType(ID0, "Sname", "Iscore")
 	assert.Equal(t, "1e-1", tid.String())
-	oid, err = a.CreateObject(tid, "\"Ivan Petrov\"", "102")
+
+	oid, _ = a.CreateObject(tid, "\"Ivan Petrov\"", "102")
 	assert.Equal(t, "1e-2", oid.String())
 	//a.DumpAll()
 

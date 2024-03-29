@@ -1,9 +1,10 @@
-package main
+package chotki
 
 import (
-	"github.com/learn-decentralized-systems/toytlv"
 	"io"
 	"slices"
+
+	"github.com/learn-decentralized-systems/toytlv"
 )
 
 type Merger interface {

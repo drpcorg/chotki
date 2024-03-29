@@ -1,8 +1,9 @@
-package main
+package chotki
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCases(t *testing.T) {

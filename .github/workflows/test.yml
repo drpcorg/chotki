@@ -1,0 +1,40 @@
+name: Package tests
+
+on: [push]
+
+permissions:
+  contents: read      # allow read access to the content for analysis
+  pull-requests: read # allow read access to pull request
+  checks: write       # allow write access to checks to allow the action to annotate code in the PR
+
+jobs:
+  tests:
+    name: Go tests
+    strategy:
+      matrix:
+        go: ['1.21']
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "${{ matrix.go }}", cache: false }
+
+      - name: Build
+        run: go build -v ./...
+      - name: Test
+        run: go test -race -v ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.21", cache: false }
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: v1.57.2
+          skip-cache: true

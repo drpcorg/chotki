@@ -1,9 +1,10 @@
-package main
+package chotki
 
 import (
+	"testing"
+
 	"github.com/learn-decentralized-systems/toytlv"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func TestVMerge(t *testing.T) {

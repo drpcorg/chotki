@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ergochat/readline"
-	"github.com/learn-decentralized-systems/toyqueue"
-	"github.com/learn-decentralized-systems/toytlv"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/drpcorg/chotki"
+	"github.com/ergochat/readline"
+	"github.com/learn-decentralized-systems/toyqueue"
+	"github.com/learn-decentralized-systems/toytlv"
 )
 
 var completer = readline.NewPrefixCompleter(
@@ -30,10 +32,10 @@ func filterInput(r rune) (rune, bool) {
 	return r, true
 }
 
-func ShowObject(chotki *Chotki, id ID) error {
-	i := chotki.ObjectIterator(id)
+func ShowObject(conn *chotki.Chotki, id chotki.ID) error {
+	i := conn.ObjectIterator(id)
 	for i.Valid() {
-		id, rdt := OKeyIdRdt(i.Key())
+		id, rdt := chotki.OKeyIdRdt(i.Key())
 		_, _ = fmt.Fprintf(os.Stderr, "%c#%d\t\n", rdt, id.Off())
 	}
 	return nil
@@ -42,28 +44,27 @@ func ShowObject(chotki *Chotki, id ID) error {
 var ErrBadObjectJson = errors.New("bad JSON object serialization")
 var ErrUnsupportedType = errors.New("unsupported field type")
 
-func CreateObjectFromList(chotki *Chotki, list []interface{}) (id ID, err error) {
+func CreateObjectFromList(conn *chotki.Chotki, list []interface{}) (id chotki.ID, err error) {
 	packet := toyqueue.Records{}
 	// todo ref type json
 	// todo add id, ref
 	for _, f := range list {
 		var rdt byte
 		var body []byte
-		switch f.(type) {
+		switch t := f.(type) {
 		case int64:
 			rdt = 'C'
-			body = CState(f.(int64))
+			body = chotki.CState(t)
 		case float64:
 			rdt = 'N'
 		case string:
-			str := f.(string)
-			id := ParseBracketedID([]byte(str))
-			if id != BadId { // check for id-ness
+			id := chotki.ParseBracketedID([]byte(t))
+			if id != chotki.BadId { // check for id-ness
 				rdt = 'L'
-				body = LState(id, 0)
+				body = chotki.LState(id, 0)
 			} else {
 				rdt = 'S'
-				body = Stlv(str)
+				body = chotki.Stlv(t)
 			}
 		default:
 			err = ErrUnsupportedType
@@ -71,19 +72,19 @@ func CreateObjectFromList(chotki *Chotki, list []interface{}) (id ID, err error)
 		}
 		packet = append(packet, toytlv.Record(rdt, body))
 	}
-	return chotki.CommitPacket('O', ID0, packet)
+	return conn.CommitPacket('O', chotki.ID0, packet)
 }
 
 // ["{10-4f8-0}", +1, "string", 1.0, ...]
-func CreateObject(chotki *Chotki, jsn []byte) (id ID, err error) {
+func CreateObject(conn *chotki.Chotki, jsn []byte) (id chotki.ID, err error) {
 	var parsed interface{}
 	err = json.Unmarshal(jsn, &parsed)
 	if err != nil {
 		return
 	}
-	switch parsed.(type) {
-	case []interface{}:
-		id, err = CreateObjectFromList(chotki, parsed.([]interface{}))
+	switch t := parsed.(type) {
+	case []any:
+		id, err = CreateObjectFromList(conn, t)
 	default:
 		err = ErrBadObjectJson
 	}
@@ -108,7 +109,7 @@ func main() {
 	defer l.Close()
 	l.CaptureExitSignal()
 
-	re := Chotki{}
+	re := chotki.Chotki{}
 
 	if len(os.Args) > 1 {
 		rno := uint64(1)
@@ -161,8 +162,8 @@ func main() {
 			// subscribe
 		case "show", "list":
 			for _, arg := range args {
-				id := ParseIDString(arg)
-				if id == BadId {
+				id := chotki.ParseIDString(arg)
+				if id == chotki.BadId {
 					_, _ = fmt.Fprintf(os.Stderr, "bad id %s\n", arg)
 					break
 				}

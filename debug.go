@@ -1,10 +1,11 @@
-package main
+package chotki
 
 import (
 	hex2 "encoding/hex"
 	"fmt"
-	"github.com/cockroachdb/pebble"
 	"os"
+
+	"github.com/cockroachdb/pebble"
 )
 
 func ChotkiKVString(key, value []byte) string {

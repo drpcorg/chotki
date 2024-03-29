@@ -1,6 +1,8 @@
-package main
+package chotki
 
-import "github.com/learn-decentralized-systems/toytlv"
+import (
+	"github.com/learn-decentralized-systems/toytlv"
+)
 
 func ParsePacket(pack []byte) (lit byte, id, ref ID, body []byte, err error) {
 	lit, hlen, blen := toytlv.ProbeHeader(pack)

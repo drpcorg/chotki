@@ -1,10 +1,11 @@
-package main
+package chotki
 
 import (
-	"github.com/learn-decentralized-systems/toyqueue"
-	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
+
+	"github.com/learn-decentralized-systems/toyqueue"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestTypes(t *testing.T) {
@@ -16,7 +17,7 @@ func TestTypes(t *testing.T) {
 	var tid, oid ID
 	tid, err = a.CreateType(ID0, "SName", "IScore")
 	assert.Nil(t, err)
-	oid, err = a.CreateObject(tid, "\"Petrov\"", "42")
+	oid, _ = a.CreateObject(tid, "\"Petrov\"", "42")
 	assert.Equal(t, tid+ProInc, oid)
 
 	//a.DumpAll()

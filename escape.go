@@ -1,4 +1,4 @@
-package main
+package chotki
 
 // https://raw.githubusercontent.com/buger/jsonparser/master/escape.go
 

@@ -1,5 +1,9 @@
 # Fast distributed cache (CRDT based)
 
+[![godoc](http://img.shields.io/badge/godoc-reference-blue.svg?style=flat)](https://godoc.org/github.com/drpcorg/chotki)
+[![MIT License](http://img.shields.io/badge/license-MIT-red.svg?style=flat)](https://raw.githubusercontent.com/drpcorg/chotki/main/LICENSE)
+[![Build Status](https://github.com/drpcorg/chotki/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/drpcorg/chotki/actions/workflows/test.yml)
+
 <img align="right" width="30%" src="chotki.jpg">
 The mission of the system is to keep and update real-time statistics, such as
 quotas, counters, billing and suchlike. Update propagation time is expected to
@@ -21,3 +25,8 @@ newly joining and re-joining replicas. Overall, we take every shortcut to make
 the store lightweight and fast while focusing on our specific usecase
 (distributed counters, mainly).
 
+## Installation
+
+```bash
+go get -u github.com/drpcorg/chotki
+```
