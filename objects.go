@@ -1,10 +1,11 @@
 package chotki
 
 import (
+	"unicode/utf8"
+
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
 	"github.com/pkg/errors"
-	"unicode/utf8"
 )
 
 var ErrBadTypeDescription = errors.New("bad type description")

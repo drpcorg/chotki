@@ -3,6 +3,7 @@ package chotki
 import (
 	"bytes"
 	"fmt"
+
 	"github.com/learn-decentralized-systems/toytlv"
 )
 
@@ -124,7 +125,7 @@ func Idelta(tlv []byte, new_val int64) (tlv_delta []byte) {
 		rev = -rev
 	}
 	nv := ZipInt64(new_val)
-	if bytes.Compare(val, nv) != 0 {
+	if !bytes.Equal(val, nv) {
 		tlv_delta = IsfrTlv(rev+1, 0, nv)
 	}
 	return
@@ -204,7 +205,7 @@ func Sdelta(tlv []byte, new_val string) (tlv_delta []byte) {
 		rev = -rev
 	}
 	nv := []byte(new_val)
-	if bytes.Compare(val, nv) != 0 {
+	if !bytes.Equal(val, nv) {
 		tlv_delta = IsfrTlv(rev+1, 0, nv)
 	}
 	return
@@ -256,7 +257,7 @@ func Rdelta(tlv []byte, new_val ID) (tlv_delta []byte) {
 		rev = -rev
 	}
 	nv := new_val.ZipBytes()
-	if bytes.Compare(val, nv) != 0 {
+	if !bytes.Equal(val, nv) {
 		tlv_delta = IsfrTlv(rev+1, 0, nv)
 	}
 	return
@@ -310,7 +311,7 @@ func Fdelta(tlv []byte, new_val float64) (tlv_delta []byte) {
 		rev = -rev
 	}
 	nv := ZipFloat64(new_val)
-	if bytes.Compare(val, nv) != 0 {
+	if !bytes.Equal(val, nv) {
 		tlv_delta = IsfrTlv(rev+1, 0, nv)
 	}
 	return

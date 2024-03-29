@@ -24,14 +24,13 @@ func (ex *Example) Load(i *pebble.Iterator) (err error) {
 	if !i.Next() {
 		return nil
 	}
-	id, rdt := OKeyIdRdt(i.Key())
-	_ = rdt // fixme skip garbage
+	id, _ := OKeyIdRdt(i.Key())
 	if id.Off() == ExampleName {
 		ex.Name = Snative(i.Value())
 		if !i.Next() {
 			return
 		}
-		id, rdt = OKeyIdRdt(i.Key())
+		id, _ = OKeyIdRdt(i.Key())
 	}
 	// todo skip garbage
 	if id.Off() == ExampleScore {

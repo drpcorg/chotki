@@ -1,9 +1,10 @@
 package chotki
 
 import (
+	"testing"
+
 	"github.com/learn-decentralized-systems/toytlv"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func TestCounterMerge(t *testing.T) {

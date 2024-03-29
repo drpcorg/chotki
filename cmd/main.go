@@ -8,10 +8,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/drpcorg/chotki"
 	"github.com/ergochat/readline"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
-	"github.com/drpcorg/chotki"
 )
 
 var completer = readline.NewPrefixCompleter(

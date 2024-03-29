@@ -1,7 +1,10 @@
 package chotki
 
-import "github.com/learn-decentralized-systems/toytlv"
-import "errors"
+import (
+	"errors"
+
+	"github.com/learn-decentralized-systems/toytlv"
+)
 
 type Time struct {
 	rev int64

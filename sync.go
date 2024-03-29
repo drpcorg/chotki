@@ -3,6 +3,7 @@ package chotki
 import (
 	"bytes"
 	"errors"
+
 	"github.com/cockroachdb/pebble"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
@@ -170,7 +171,7 @@ type Baker struct {
 	sout, sin int
 	batch     *pebble.Batch
 	delta     toyqueue.RecordQueue
-	inq       toyqueue.Drainer
+	inq       toyqueue.Drainer //nolint:golint,unused
 	outq      toyqueue.RecordQueue
 }
 
@@ -263,9 +264,8 @@ func (b *Baker) Drain(recs toyqueue.Records) (err error) {
 	case SendNothing:
 		return toyqueue.ErrClosed
 	}
-	if err != nil {
-		// close things
-	}
+	// TODO: close things
+	// if err != nil { }
 	return
 }
 

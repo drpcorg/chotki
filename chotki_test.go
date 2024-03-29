@@ -1,10 +1,11 @@
 package chotki
 
 import (
-	"github.com/learn-decentralized-systems/toyqueue"
-	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
+
+	"github.com/learn-decentralized-systems/toyqueue"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestChotki_Debug(t *testing.T) {

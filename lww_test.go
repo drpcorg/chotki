@@ -1,9 +1,10 @@
 package chotki
 
 import (
+	"testing"
+
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func TestTLV(t *testing.T) {
