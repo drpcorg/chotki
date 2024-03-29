@@ -1,6 +1,8 @@
-package chotki
+package rdx
 
-import "github.com/learn-decentralized-systems/toytlv"
+import (
+	"github.com/learn-decentralized-systems/toytlv"
+)
 import "errors"
 
 type Time struct {

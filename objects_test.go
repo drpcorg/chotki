@@ -1,6 +1,7 @@
 package chotki
 
 import (
+	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/stretchr/testify/assert"
 	"os"
@@ -13,11 +14,11 @@ func TestTypes(t *testing.T) {
 	err := a.Create(0x1a, "test replica A")
 	assert.Nil(t, err)
 
-	var tid, oid ID
-	tid, err = a.CreateType(ID0, "SName", "IScore")
+	var tid, oid rdx.ID
+	tid, err = a.CreateType(rdx.ID0, "SName", "IScore")
 	assert.Nil(t, err)
 	oid, err = a.CreateObject(tid, "\"Petrov\"", "42")
-	assert.Equal(t, tid+ProInc, oid)
+	assert.Equal(t, tid+rdx.ProInc, oid)
 
 	//a.DumpAll()
 
@@ -42,10 +43,10 @@ func TestTypes(t *testing.T) {
 	var changes toyqueue.Records
 	changes, err = ex.Store(i2)
 	assert.Nil(t, err)
-	var eid ID
+	var eid rdx.ID
 	eid, err = a.CommitPacket('E', oid, changes)
 	assert.Nil(t, err)
-	assert.Equal(t, oid+ProInc, eid)
+	assert.Equal(t, oid+rdx.ProInc, eid)
 
 	ex2 := Example{}
 	i3 := a.ObjectIterator(oid)

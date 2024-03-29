@@ -1,4 +1,4 @@
-package chotki
+package rdx
 
 import (
 	"github.com/stretchr/testify/assert"

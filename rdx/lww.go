@@ -1,7 +1,8 @@
-package chotki
+package rdx
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"github.com/learn-decentralized-systems/toytlv"
 )
@@ -73,6 +74,8 @@ func IsfrDiff(tlv []byte, vvdiff VV) []byte {
 		return nil
 	}
 }
+
+var ErrBadPacket = errors.New("bad packet")
 
 func IsfrReSource(bare []byte, src uint64) (res []byte, err error) {
 	time, s, value := IsfrParse(bare)

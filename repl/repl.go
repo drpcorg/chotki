@@ -12,7 +12,7 @@ import (
 )
 
 type Node interface {
-	ID() chotki.ID
+	ID() rdx.ID
 	String() string
 	List() []string
 	Get(name string) Node
@@ -23,11 +23,11 @@ type Node interface {
 var ErrNotSupported = errors.New("operation not supported")
 
 type AliasNode struct {
-	Names map[string]chotki.ID
+	Names map[string]rdx.ID
 }
 
-func (a *AliasNode) ID() chotki.ID {
-	return chotki.ID0
+func (a *AliasNode) ID() rdx.ID {
+	return rdx.ID0
 }
 func (a *AliasNode) String() string {
 	return "-ALIASES-"
@@ -59,11 +59,11 @@ func (a *AliasNode) Set(val string) error {
 }
 
 type ObjectNode struct {
-	Id   chotki.ID
+	Id   rdx.ID
 	Host *chotki.Chotki
 }
 
-func (on *ObjectNode) ID() chotki.ID {
+func (on *ObjectNode) ID() rdx.ID {
 	return on.Id
 }
 func (on *ObjectNode) String() string {
@@ -87,7 +87,7 @@ func (on *ObjectNode) Set(val string) error {
 }
 
 type FNode struct {
-	Id   chotki.ID
+	Id   rdx.ID
 	Host *chotki.Chotki
 }
 
@@ -95,7 +95,7 @@ func (fn *FNode) findType() {
 	// db
 }
 
-func (fn *FNode) ID() chotki.ID {
+func (fn *FNode) ID() rdx.ID {
 	return fn.Id
 }
 func (fn *FNode) String() string {
@@ -116,7 +116,7 @@ func (fn *FNode) Set(val string) error {
 }
 
 type INode struct {
-	Id   chotki.ID
+	Id   rdx.ID
 	Host *chotki.Chotki
 }
 
@@ -124,7 +124,7 @@ func (fn *INode) findType() {
 	// db
 }
 
-func (fn *INode) ID() chotki.ID {
+func (fn *INode) ID() rdx.ID {
 	return fn.Id
 }
 func (fn *INode) String() string {
@@ -145,7 +145,7 @@ func (fn *INode) Set(val string) error {
 }
 
 type RNode struct {
-	Id   chotki.ID
+	Id   rdx.ID
 	Host *chotki.Chotki
 }
 
@@ -153,7 +153,7 @@ func (fn *RNode) findType() {
 	// db
 }
 
-func (fn *RNode) ID() chotki.ID {
+func (fn *RNode) ID() rdx.ID {
 	return fn.Id
 }
 func (fn *RNode) String() string {
@@ -174,7 +174,7 @@ func (fn *RNode) Set(val string) error {
 }
 
 type SNode struct {
-	Id   chotki.ID
+	Id   rdx.ID
 	Host *chotki.Chotki
 }
 
@@ -182,7 +182,7 @@ func (fn *SNode) findType() {
 	// db
 }
 
-func (fn *SNode) ID() chotki.ID {
+func (fn *SNode) ID() rdx.ID {
 	return fn.Id
 }
 func (fn *SNode) String() string {
@@ -203,7 +203,7 @@ func (fn *SNode) Set(val string) error {
 }
 
 type TNode struct {
-	Id   chotki.ID
+	Id   rdx.ID
 	Host *chotki.Chotki
 }
 
@@ -211,7 +211,7 @@ func (fn *TNode) findType() {
 	// db
 }
 
-func (fn *TNode) ID() chotki.ID {
+func (fn *TNode) ID() rdx.ID {
 	return fn.Id
 }
 func (fn *TNode) String() string {
@@ -238,9 +238,9 @@ type REPL struct {
 	Root Node
 }
 
-func (repl *REPL) Map(ctx chotki.ID, path string) (id chotki.ID, err error) {
+func (repl *REPL) Map(ctx rdx.ID, path string) (id rdx.ID, err error) {
 	// recur
-	return chotki.ID0, nil
+	return rdx.ID0, nil
 }
 
 func (repl *REPL) Name(path, name string) error {
@@ -317,14 +317,14 @@ func (repl *REPL) Close() error {
 	return nil
 }
 
-func (repl *REPL) REPL() (err error) {
+func (repl *REPL) REPL() (id rdx.ID, err error) {
 	var line string
 	line, err = repl.rl.Readline()
 	if err == readline.ErrInterrupt && len(line) != 0 {
-		return nil
+		return rdx.BadId, nil
 	}
 	if err != nil {
-		return err
+		return rdx.BadId, err
 	}
 
 	line = strings.TrimSpace(line)
@@ -333,18 +333,23 @@ func (repl *REPL) REPL() (err error) {
 		return
 	}
 	switch cmd {
-	case "listen":
-		fmt.Println("I am listening")
+	// replica open/close
 	case "create":
-		err = repl.CommandCreate(path, arg)
+		id, err = repl.CommandCreate(path, arg)
 	case "open":
-		err = repl.CommandOpen(path, arg)
+		id, err = repl.CommandOpen(path, arg)
 	case "close":
-		err = repl.CommandClose(path, arg)
+		id, err = repl.CommandClose(path, arg)
 	case "exit", "quit":
 		err = io.EOF
+	// ----- object handling -----
 	case "new":
-		err = repl.CommandNew(path, arg)
+		id, err = repl.CommandNew(path, arg)
+	case "type":
+		id, err = repl.CommandType(path, arg)
+	// ----- networking -----
+	case "listen":
+		fmt.Println("I am listening")
 	case "ping":
 		// args[1] is an object/field id (otherwise create)
 		// subscribe to evs
@@ -379,13 +384,16 @@ func main() {
 	repl := REPL{}
 
 	err := repl.Open()
+	var id rdx.ID
 
 	for err != io.EOF {
 		if err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "%s\n", err.Error())
 			err = nil
+		} else if id != rdx.ID0 {
+			_, _ = fmt.Fprintf(os.Stderr, "%s\n", id.String())
 		}
-		err = repl.REPL()
+		id, err = repl.REPL()
 	}
 
 	return

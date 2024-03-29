@@ -2,6 +2,7 @@ package chotki
 
 import (
 	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toytlv"
 )
 
@@ -27,7 +28,7 @@ func (ex *Example) Load(i *pebble.Iterator) (err error) {
 	id, rdt := OKeyIdRdt(i.Key())
 	_ = rdt // fixme skip garbage
 	if id.Off() == ExampleName {
-		ex.Name = Snative(i.Value())
+		ex.Name = rdx.Snative(i.Value())
 		if !i.Next() {
 			return
 		}
@@ -35,7 +36,7 @@ func (ex *Example) Load(i *pebble.Iterator) (err error) {
 	}
 	// todo skip garbage
 	if id.Off() == ExampleScore {
-		ex.Score = Inative(i.Value())
+		ex.Score = rdx.Inative(i.Value())
 		if !i.Next() {
 			return
 		}
@@ -49,9 +50,9 @@ func (x *Example) Store(i *pebble.Iterator) (changes [][]byte, err error) {
 	}
 	id, rdt := OKeyIdRdt(i.Key()) // fixme skip garbage
 	if id.Off() == ExampleName && rdt == 'S' {
-		delta := Sdelta(i.Value(), x.Name)
+		delta := rdx.Sdelta(i.Value(), x.Name)
 		if delta != nil {
-			changes = append(changes, toytlv.Record('F', ZipUint64(ExampleName)))
+			changes = append(changes, toytlv.Record('F', rdx.ZipUint64(ExampleName)))
 			changes = append(changes, toytlv.Record('S', delta))
 		}
 		if !i.Next() {
@@ -60,9 +61,9 @@ func (x *Example) Store(i *pebble.Iterator) (changes [][]byte, err error) {
 		id, rdt = OKeyIdRdt(i.Key()) // todo good iter
 	}
 	if id.Off() == ExampleScore && rdt == 'I' {
-		delta := Idelta(i.Value(), x.Score)
+		delta := rdx.Idelta(i.Value(), x.Score)
 		if delta != nil {
-			changes = append(changes, toytlv.Record('F', ZipUint64(ExampleScore)))
+			changes = append(changes, toytlv.Record('F', rdx.ZipUint64(ExampleScore)))
 			changes = append(changes, toytlv.Record('I', delta))
 		}
 		if !i.Next() {

@@ -1,6 +1,7 @@
 package chotki
 
 import (
+	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toytlv"
 	"io"
 	"slices"
@@ -12,7 +13,7 @@ type Merger interface {
 }
 
 type PebbleMergeAdaptor struct {
-	id   ID
+	id   rdx.ID
 	rdt  byte
 	old  bool
 	vals [][]byte
@@ -42,15 +43,15 @@ func (a *PebbleMergeAdaptor) Finish(includesBase bool) (res []byte, cl io.Closer
 	case 'C':
 		res = CMerge(inputs)
 	case 'I':
-		res = Imerge(inputs)
+		res = rdx.Imerge(inputs)
 	case 'S':
-		res = Smerge(inputs)
+		res = rdx.Smerge(inputs)
 	case 'R':
-		res = Rmerge(inputs)
+		res = rdx.Rmerge(inputs)
 	case 'F':
-		res = Fmerge(inputs)
+		res = rdx.Fmerge(inputs)
 	case 'V':
-		res = Vmerge(inputs)
+		res = rdx.Vmerge(inputs)
 	default:
 		res = NoMerge(inputs)
 	}

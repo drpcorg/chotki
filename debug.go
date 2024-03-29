@@ -4,6 +4,7 @@ import (
 	hex2 "encoding/hex"
 	"fmt"
 	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/rdx"
 	"os"
 )
 
@@ -18,16 +19,16 @@ func ChotkiKVString(key, value []byte) string {
 	line = append(line, '.', byte(rdt), ':', '\t')
 	switch rdt {
 	case 'A':
-		ref := IDFromZipBytes(value)
+		ref := rdx.IDFromZipBytes(value)
 		line = append(line, ref.String()...)
 	case 'I':
-		line = append(line, Istring(value)...)
+		line = append(line, rdx.Istring(value)...)
 	case 'S':
-		line = append(line, Sstring(value)...)
+		line = append(line, rdx.Sstring(value)...)
 	case 'R':
-		line = append(line, Rstring(value)...)
+		line = append(line, rdx.Rstring(value)...)
 	case 'F':
-		line = append(line, Fstring(value)...)
+		line = append(line, rdx.Fstring(value)...)
 	default:
 		hex := make([]byte, len(value)*2)
 		hex2.Encode(hex, value)
@@ -60,15 +61,15 @@ func (ch *Chotki) DumpVV() {
 		UpperBound: []byte{'W'},
 	}
 	i := ch.db.NewIter(&io)
-	for i.SeekGE(VKey(ID0)); i.Valid(); i.Next() {
-		id := IDFromBytes(i.Key()[1:])
-		vv := make(VV)
+	for i.SeekGE(VKey(rdx.ID0)); i.Valid(); i.Next() {
+		id := rdx.IDFromBytes(i.Key()[1:])
+		vv := make(rdx.VV)
 		_ = vv.PutTLV(i.Value())
 		fmt.Printf("%s -> \t%s\n", id.String(), vv.String())
 	}
 }
 
-func DumpVPacket(vvs map[ID]VV) {
+func DumpVPacket(vvs map[rdx.ID]rdx.VV) {
 	for id, vv := range vvs {
 		_, _ = fmt.Fprintf(os.Stderr, "%s -> %s\n", id.String(), vv.String())
 	}

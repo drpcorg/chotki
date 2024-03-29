@@ -1,6 +1,7 @@
 package chotki
 
 import (
+	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/stretchr/testify/assert"
 	"io"
@@ -9,14 +10,14 @@ import (
 )
 
 func TestChotki_Debug(t *testing.T) {
-	oid := IDFromSrcSeqOff(0x1e, 0x1ab, 0)
+	oid := rdx.IDFromSrcSeqOff(0x1e, 0x1ab, 0)
 	key := OKey(oid+1, 'I')
-	value := Itlv(-13)
+	value := rdx.Itlv(-13)
 	str := ChotkiKVString(key, value)
 	assert.Equal(t, "1e-1ab-1.I:\t-13", string(str))
 
 	skey := OKey(oid+2, 'S')
-	svalue := Stlv("funny\tstring\n")
+	svalue := rdx.Stlv("funny\tstring\n")
 	sstr := ChotkiKVString(skey, svalue)
 	assert.Equal(t, "1e-1ab-2.S:\t\"funny\\tstring\\n\"", string(sstr))
 }

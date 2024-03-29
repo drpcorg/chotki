@@ -1,4 +1,4 @@
-package chotki
+package rdx
 
 import (
 	"github.com/stretchr/testify/assert"
@@ -34,6 +34,6 @@ func TestParseID(t *testing.T) {
 func TestFieldNameType(t *testing.T) {
 	src := uint64(0x8e)
 	seq := uint64(0x82f0)
-	id := IDFromSrcSeqOff(src, seq, ExampleName)
+	id := IDFromSrcSeqOff(src, seq, 1)
 	assert.Equal(t, "8e-82f0-1", id.String())
 }

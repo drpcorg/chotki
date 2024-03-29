@@ -8,11 +8,18 @@ machine RDX;
 
 action b { mark[nest] = p; }
 action eint {     
+    // I
     rdx.RdxType = RdxInt; 
     rdx.Text = data[mark[nest] : p];
 }
+action estring {
+    // S
+    rdx.RdxType = RdxString; 
+    rdx.Text = data[mark[nest] : p];
+}
 
-action opush { 
+action opush {
+    // {
     n := rdx.Nested 
     n = append(n, RDX{Parent: rdx})
     rdx.Nested = n
@@ -21,11 +28,13 @@ action opush {
     nest++; 
 }
 action opop {
+    // }
     nest--;
     rdx = rdx.Parent;
 }
 
 action apush { 
+    // [
     n := rdx.Nested 
     n = append(n, RDX{Parent: rdx})
     rdx.Nested = n
@@ -34,11 +43,16 @@ action apush {
     nest++; 
 }
 action apop {
+    // ]
     nest--;
     rdx = rdx.Parent;
 }
 
 action comma {
+    // ,
+    if rdx.Parent==nil {
+        fbreak;
+    }
     n := rdx.Parent.Nested 
     n = append(n, RDX{Parent: rdx.Parent})
     rdx.Parent.Nested = n
@@ -46,6 +60,7 @@ action comma {
 }
 
 action colon {
+    // :
     n := rdx.Parent.Nested 
     n = append(n, RDX{Parent: rdx.Parent})
     rdx.Parent.Nested = n
@@ -62,7 +77,7 @@ asci = [_0-9a-zA-Z];
 
 INT = ( sign? dec+ ) >b %eint;
 FLOAT = sign? dec+ ("." dec+)? ([eE] sign? dec+);
-STRING = ["] char* ["]; 
+STRING = ( ["] char* ["] ) >b %estring; 
 REF = hex+ ( "-" hex+ ( "-" hex+ ) )?;
 NULL = "null";
 FIRST = INT | FLOAT | STRING | REF | NULL;
@@ -72,8 +87,8 @@ NAME = [_a-zA-Z] asci+;
 OOPEN = "{" @opush;
 OCLOSE = "}" %opop;
 
-AOPEN = "[";
-ACLOSE = "]";
+AOPEN = "[" @apush;
+ACLOSE = "]" %apop;
 
 COMMA = "," @comma;
 COLON = ":" @colon;

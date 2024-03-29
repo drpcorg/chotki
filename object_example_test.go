@@ -1,6 +1,7 @@
 package chotki
 
 import (
+	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/stretchr/testify/assert"
 	"io"
@@ -14,8 +15,8 @@ func TestORMExample(t *testing.T) {
 	var a, b Chotki
 	err := a.Create(0x1e, "test replica")
 	assert.Nil(t, err)
-	var tid, oid ID
-	tid, err = a.CreateType(ID0, "Sname", "Iscore")
+	var tid, oid rdx.ID
+	tid, err = a.CreateType(rdx.ID0, "Sname", "Iscore")
 	assert.Equal(t, "1e-1", tid.String())
 	oid, err = a.CreateObject(tid, "\"Ivan Petrov\"", "102")
 	assert.Equal(t, "1e-2", oid.String())
@@ -28,7 +29,7 @@ func TestORMExample(t *testing.T) {
 	//a.DumpAll()
 
 	var exa Example
-	ita := a.ObjectIterator(ParseIDString("1e-2"))
+	ita := a.ObjectIterator(rdx.ParseIDString("1e-2"))
 	assert.NotNil(t, ita)
 	err = exa.Load(ita)
 	assert.Nil(t, err)
@@ -50,7 +51,7 @@ func TestORMExample(t *testing.T) {
 
 	// fixme wait something
 	var exb Example
-	itb := b.ObjectIterator(ParseIDString("1e-2"))
+	itb := b.ObjectIterator(rdx.ParseIDString("1e-2"))
 	assert.NotNil(t, itb)
 	err = exb.Load(itb)
 	assert.Nil(t, err)

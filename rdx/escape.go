@@ -1,4 +1,4 @@
-package chotki
+package rdx
 
 // https://raw.githubusercontent.com/buger/jsonparser/master/escape.go
 
