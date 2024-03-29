@@ -20,6 +20,9 @@ linters:
     - gochecksumtype
 issues:
   exclude-rules:
+    - path: '(.+)\.ragel\.go'
+      linters:
+        - ineffassign
     - linters:
         - staticcheck
       text: "SA1019:"

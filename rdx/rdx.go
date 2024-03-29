@@ -101,3 +101,6 @@ func (rdx *RDX) Feed() (recs toyqueue.Records, err error) {
 	}
 	return
 }
+
+//go:generate ragel-go -o cmd.ragel.go cmd.rl
+//go:generate ragel-go -o rdx.ragel.go rdx.rl

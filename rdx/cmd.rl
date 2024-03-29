@@ -7,7 +7,7 @@ import (
 %%{
 
 machine REPL;
-include RDX "rdx_parser.rl";
+include RDX "rdx.rl";
 
 write data;
 
