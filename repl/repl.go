@@ -91,10 +91,6 @@ type FNode struct {
 	Host *chotki.Chotki
 }
 
-func (fn *FNode) findType() {
-	// db
-}
-
 func (fn *FNode) ID() rdx.ID {
 	return fn.Id
 }
@@ -118,10 +114,6 @@ func (fn *FNode) Set(val string) error {
 type INode struct {
 	Id   rdx.ID
 	Host *chotki.Chotki
-}
-
-func (fn *INode) findType() {
-	// db
 }
 
 func (fn *INode) ID() rdx.ID {
@@ -149,10 +141,6 @@ type RNode struct {
 	Host *chotki.Chotki
 }
 
-func (fn *RNode) findType() {
-	// db
-}
-
 func (fn *RNode) ID() rdx.ID {
 	return fn.Id
 }
@@ -178,10 +166,6 @@ type SNode struct {
 	Host *chotki.Chotki
 }
 
-func (fn *SNode) findType() {
-	// db
-}
-
 func (fn *SNode) ID() rdx.ID {
 	return fn.Id
 }
@@ -205,10 +189,6 @@ func (fn *SNode) Set(val string) error {
 type TNode struct {
 	Id   rdx.ID
 	Host *chotki.Chotki
-}
-
-func (fn *TNode) findType() {
-	// db
 }
 
 func (fn *TNode) ID() rdx.ID {
@@ -396,5 +376,4 @@ func main() {
 		id, err = repl.REPL()
 	}
 
-	return
 }
