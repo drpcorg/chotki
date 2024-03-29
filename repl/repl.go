@@ -233,7 +233,7 @@ func (fn *TNode) Set(val string) error {
 
 // REPL per se.
 type REPL struct {
-	Host *chotki.Chotki
+	Host chotki.Chotki
 	rl   *readline.Instance
 	Root Node
 }
@@ -335,6 +335,12 @@ func (repl *REPL) REPL() (err error) {
 	switch cmd {
 	case "listen":
 		fmt.Println("I am listening")
+	case "create":
+		err = repl.CommandCreate(path, arg)
+	case "open":
+		err = repl.CommandOpen(path, arg)
+	case "close":
+		err = repl.CommandClose(path, arg)
 	case "exit", "quit":
 		err = io.EOF
 	case "new":
@@ -355,21 +361,20 @@ func (repl *REPL) REPL() (err error) {
 
 func main() {
 
-	re := chotki.Chotki{}
-
-	if len(os.Args) > 1 {
-		rno := uint64(1)
-		_, err := fmt.Sscanf(os.Args[1], "%d", &rno)
-		if err != nil {
-			_, _ = fmt.Fprintln(os.Stderr, "Usage: Chotki 123")
-			os.Exit(-2)
-		}
-		err = re.Open(rno)
-		if err != nil {
-			_, _ = fmt.Fprintln(os.Stderr, err.Error())
-			os.Exit(-1)
-		}
-	}
+	/*
+		if len(os.Args) > 1 {
+			rno := uint64(1)
+			_, err := fmt.Sscanf(os.Args[1], "%d", &rno)
+			if err != nil {
+				_, _ = fmt.Fprintln(os.Stderr, "Usage: Chotki 123")
+				os.Exit(-2)
+			}
+			err = re.Open(rno)
+			if err != nil {
+				_, _ = fmt.Fprintln(os.Stderr, err.Error())
+				os.Exit(-1)
+			}
+		}*/
 
 	repl := REPL{}
 

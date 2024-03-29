@@ -24,10 +24,10 @@ action path {
     rdx = &RDX{}
 }
 
-PATH = token ("." %dot token)* ; 
+PATH = token ([\.\/] %dot token)* ; 
 ws = space;
 
-command = "new" | "quit" | "exit";
+command = [a-z]+;
 
 main :=
     ws*

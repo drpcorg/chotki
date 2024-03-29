@@ -327,12 +327,13 @@ var ErrBadOPacket = errors.New("bad O packet")
 var ErrSrcUnknown = errors.New("source unknown")
 var ErrSyncUnknown = errors.New("sync session unknown")
 var ErrBadRRecord = errors.New("bad ref record")
+var ErrClosed = errors.New("no replica open")
 
 var KeyLogLen = []byte("Mloglen")
 
 func (ch *Chotki) Close() error {
 	if ch.db == nil {
-		return nil
+		return ErrClosed
 	}
 	_ = ch.db.Close()
 	ch.db = nil
