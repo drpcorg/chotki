@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/ergochat/readline"
@@ -11,211 +12,12 @@ import (
 	"strings"
 )
 
-type Node interface {
-	ID() rdx.ID
-	String() string
-	List() []string
-	Get(name string) Node
-	Put(loc string, node Node) error
-	Set(val string) error
-}
-
-var ErrNotSupported = errors.New("operation not supported")
-
-type AliasNode struct {
-	Names map[string]rdx.ID
-}
-
-func (a *AliasNode) ID() rdx.ID {
-	return rdx.ID0
-}
-func (a *AliasNode) String() string {
-	return "-ALIASES-"
-}
-func (a *AliasNode) List() (ret []string) {
-	for name := range a.Names {
-		ret = append(ret, name)
-	}
-	return
-}
-func (a *AliasNode) Get(name string) Node {
-	id, ok := a.Names[name]
-	if !ok {
-		return nil
-	} else if id.Off() != 0 {
-		// see type
-		return nil // &FieldNode{Id: id}
-	} else {
-		return &ObjectNode{Id: id}
-	}
-
-}
-func (a *AliasNode) Put(loc string, node Node) error {
-	a.Names[loc] = node.ID()
-	return nil
-}
-func (a *AliasNode) Set(val string) error {
-	return ErrNotSupported
-}
-
-type ObjectNode struct {
-	Id   rdx.ID
-	Host *chotki.Chotki
-}
-
-func (on *ObjectNode) ID() rdx.ID {
-	return on.Id
-}
-func (on *ObjectNode) String() string {
-	// todo find type, scan
-	return "-obj-"
-}
-func (on *ObjectNode) List() []string {
-	// todo find type, scan
-	return nil
-}
-func (on *ObjectNode) Get(name string) Node {
-	// todo find f in type decl
-	return nil
-}
-func (on *ObjectNode) Put(loc string, node Node) error {
-	// todo find f in type decl
-	return nil
-}
-func (on *ObjectNode) Set(val string) error {
-	return chotki.ErrNotImplemented // {key="value"}
-}
-
-type FNode struct {
-	Id   rdx.ID
-	Host *chotki.Chotki
-}
-
-func (fn *FNode) ID() rdx.ID {
-	return fn.Id
-}
-func (fn *FNode) String() string {
-	// get
-	return ""
-}
-func (fn *FNode) List() []string {
-	return []string{}
-}
-func (fn *FNode) Get(name string) Node {
-	return nil // todo off etc
-}
-func (fn *FNode) Put(loc string, node Node) error {
-	return chotki.ErrNotImplemented
-}
-func (fn *FNode) Set(val string) error {
-	return chotki.ErrNotImplemented
-}
-
-type INode struct {
-	Id   rdx.ID
-	Host *chotki.Chotki
-}
-
-func (fn *INode) ID() rdx.ID {
-	return fn.Id
-}
-func (fn *INode) String() string {
-	// get
-	return ""
-}
-func (fn *INode) List() []string {
-	return []string{}
-}
-func (fn *INode) Get(name string) Node {
-	return nil // todo off etc
-}
-func (fn *INode) Put(loc string, node Node) error {
-	return chotki.ErrNotImplemented
-}
-func (fn *INode) Set(val string) error {
-	return chotki.ErrNotImplemented
-}
-
-type RNode struct {
-	Id   rdx.ID
-	Host *chotki.Chotki
-}
-
-func (fn *RNode) ID() rdx.ID {
-	return fn.Id
-}
-func (fn *RNode) String() string {
-	// get
-	return ""
-}
-func (fn *RNode) List() []string {
-	return []string{}
-}
-func (fn *RNode) Get(name string) Node {
-	return nil // todo off etc
-}
-func (fn *RNode) Put(loc string, node Node) error {
-	return chotki.ErrNotImplemented
-}
-func (fn *RNode) Set(val string) error {
-	return chotki.ErrNotImplemented
-}
-
-type SNode struct {
-	Id   rdx.ID
-	Host *chotki.Chotki
-}
-
-func (fn *SNode) ID() rdx.ID {
-	return fn.Id
-}
-func (fn *SNode) String() string {
-	// get
-	return ""
-}
-func (fn *SNode) List() []string {
-	return []string{}
-}
-func (fn *SNode) Get(name string) Node {
-	return nil // todo off etc
-}
-func (fn *SNode) Put(loc string, node Node) error {
-	return chotki.ErrNotImplemented
-}
-func (fn *SNode) Set(val string) error {
-	return chotki.ErrNotImplemented
-}
-
-type TNode struct {
-	Id   rdx.ID
-	Host *chotki.Chotki
-}
-
-func (fn *TNode) ID() rdx.ID {
-	return fn.Id
-}
-func (fn *TNode) String() string {
-	// get
-	return ""
-}
-func (fn *TNode) List() []string {
-	return []string{}
-}
-func (fn *TNode) Get(name string) Node {
-	return nil // todo off etc
-}
-func (fn *TNode) Put(loc string, node Node) error {
-	return chotki.ErrNotImplemented
-}
-func (fn *TNode) Set(val string) error {
-	return chotki.ErrNotImplemented
-}
-
 // REPL per se.
 type REPL struct {
 	Host chotki.Chotki
 	rl   *readline.Instance
 	Root Node
+	snap pebble.Reader
 }
 
 func (repl *REPL) Map(ctx rdx.ID, path string) (id rdx.ID, err error) {
@@ -241,6 +43,20 @@ func (repl *REPL) Put(path, node string) error {
 
 func (repl *REPL) List(path string) error {
 	return nil
+}
+
+var ErrBadPath = errors.New("bad path")
+
+func (repl *REPL) NodeByPath(path *rdx.RDX) (node Node) {
+	if path == nil || path.RdxType != rdx.RdxPath {
+		return nil
+	}
+	node = &ReplicaNode{repl: repl}
+	for i := 0; node != nil && i < len(path.Nested); i++ {
+		normalized := path.Nested[i].String()
+		node = node.Get(normalized)
+	}
+	return
 }
 
 var completer = readline.NewPrefixCompleter(
@@ -312,6 +128,13 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 	if err != nil {
 		return
 	}
+	if repl.snap != nil {
+		_ = repl.snap.Close()
+		repl.snap = nil
+	}
+	if repl.Host.Last() != rdx.ID0 {
+		repl.snap = repl.Host.Snapshot()
+	}
 	switch cmd {
 	// replica open/close
 	case "create":
@@ -321,15 +144,27 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 	case "close":
 		id, err = repl.CommandClose(path, arg)
 	case "exit", "quit":
-		err = io.EOF
+		if repl.Host.Last() != rdx.ID0 {
+			id, err = repl.CommandClose(path, arg)
+		}
+		if err == nil {
+			err = io.EOF
+		}
 	// ----- object handling -----
 	case "new":
 		id, err = repl.CommandNew(path, arg)
 	case "type":
 		id, err = repl.CommandType(path, arg)
+	case "ls", "show", "list":
+		id, err = repl.CommandList(path, arg)
+	case "cat":
+		id, err = repl.CommandCat(path, arg)
 	// ----- networking -----
 	case "listen":
 		fmt.Println("I am listening")
+	// ----- debug -----
+	case "dump":
+		id, err = repl.CommandDump(path, arg)
 	case "ping":
 		// args[1] is an object/field id (otherwise create)
 		// subscribe to evs
@@ -337,7 +172,6 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 	case "pong":
 		// args[1] is an object/field
 		// subscribe
-	case "show", "list":
 	default:
 		_, _ = fmt.Fprintf(os.Stderr, "command unknown: %s\n", cmd)
 	}

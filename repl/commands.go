@@ -45,6 +45,27 @@ func (repl *REPL) CommandOpen(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error
 	return
 }
 
+var HelpDump = errors.New("dump (obj|objects|vv|all)?")
+
+func (repl *REPL) CommandDump(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
+	if path != nil && path.RdxType == rdx.RdxPath && len(path.Nested) > 0 && path.Nested[0].RdxType == rdx.RdxName {
+		name := path.Nested[0].String()
+		switch name {
+		case "obj", "objects":
+			repl.Host.DumpObjects()
+		case "vv":
+			repl.Host.DumpVV()
+		case "all":
+			repl.Host.DumpAll()
+		default:
+			return rdx.BadId, HelpDump
+		}
+	} else {
+		repl.Host.DumpAll()
+	}
+	return
+}
+
 func (repl *REPL) CommandClose(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
 	err = repl.Host.Close()
 	if err == nil {
@@ -78,4 +99,27 @@ func (repl *REPL) CommandType(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error
 func (repl *REPL) CommandNew(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
 	fmt.Printf("new %s %s\n", path.String(), arg.String())
 	return rdx.BadId, nil
+}
+
+func (repl *REPL) CommandList(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
+	node := repl.NodeByPath(path)
+	id = node.ID()
+	list := node.List()
+	for _, key := range list {
+		val := node.Get(key)
+		str := ""
+		if val != nil {
+			str = val.String()
+		}
+		fmt.Printf("%s:\t%s\n", key, str)
+	}
+	return
+}
+
+func (repl *REPL) CommandCat(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
+	node := repl.NodeByPath(path)
+	id = node.ID()
+	val := node.String()
+	fmt.Printf("%s:\t%s\n", id.String(), val)
+	return
 }

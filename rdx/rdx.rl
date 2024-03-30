@@ -12,9 +12,20 @@ action eint {
     rdx.RdxType = RdxInt; 
     rdx.Text = data[mark[nest] : p];
 }
+action eref {     
+    // R
+    if rdx.RdxType != RdxInt {
+        rdx.RdxType = RdxRef; 
+    }
+    rdx.Text = data[mark[nest] : p];
+}
 action estring {
     // S
     rdx.RdxType = RdxString; 
+    rdx.Text = data[mark[nest] : p];
+}
+action name {
+    rdx.RdxType = RdxName; 
     rdx.Text = data[mark[nest] : p];
 }
 
@@ -78,11 +89,11 @@ asci = [_0-9a-zA-Z];
 INT = ( sign? dec+ ) >b %eint;
 FLOAT = sign? dec+ ("." dec+)? ([eE] sign? dec+);
 STRING = ( ["] char* ["] ) >b %estring; 
-REF = hex+ ( "-" hex+ ( "-" hex+ ) )?;
+REF = ( hex+ "-" hex+ ( "-" hex+ )? ) >b %eref;
 NULL = "null";
 FIRST = INT | FLOAT | STRING | REF | NULL;
 
-NAME = [_a-zA-Z] asci+;
+NAME = ( [_a-zA-Z] asci+ ) >b %name;
 
 OOPEN = "{" @opush;
 OCLOSE = "}" %opop;

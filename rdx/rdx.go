@@ -87,6 +87,15 @@ func (rdx *RDX) Feed() (recs toyqueue.Records, err error) {
 		recs = append(recs, RdxSep[RdxOClose:RdxOClose+1])
 	case RdxSet:
 	case RdxArray:
+		recs = append(recs, RdxSep[RdxAOpen:RdxAOpen+1])
+		for i := 0; i < len(rdx.Nested); i++ {
+			val, _ := rdx.Nested[i].Feed()
+			recs = append(recs, val...)
+			if i+1 < len(rdx.Nested) {
+				recs = append(recs, RdxSep[RdxComma:RdxComma+1])
+			}
+		}
+		recs = append(recs, RdxSep[RdxAClose:RdxAClose+1])
 	case RdxName:
 		recs = append(recs, rdx.Text)
 	case RdxObject:

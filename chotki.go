@@ -44,7 +44,7 @@ type Chotki struct {
 
 	opts Options
 
-	types map[rdx.ID]string
+	types map[rdx.ID][]string
 }
 
 var ErrCausalityBroken = errors.New("order fail: refs an unknown op")
@@ -85,8 +85,8 @@ func VKeyId(key []byte) rdx.ID {
 }
 
 // ToyKV convention key, lit O, then O00000-00000000-000 id
-func (ch *Chotki) Source() uint64 {
-	return ch.src
+func (cho *Chotki) Source() uint64 {
+	return cho.src
 }
 
 func ReplicaDirName(rno uint64) string {
@@ -115,7 +115,7 @@ func merger(key, value []byte) (pebble.ValueMerger, error) {
 }
 
 // Create a replica. orig=0 for read-only replicas.
-func (ch *Chotki) Create(orig uint64, name string) (err error) {
+func (cho *Chotki) Create(orig uint64, name string) (err error) {
 	opts := pebble.Options{
 		ErrorIfExists:    true,
 		ErrorIfNotExists: false,
@@ -123,9 +123,9 @@ func (ch *Chotki) Create(orig uint64, name string) (err error) {
 			Name:  "CRDT",
 			Merge: merger,
 		}}
-	ch.opts.SetDefaults() // todo param
+	cho.opts.SetDefaults() // todo param
 	path := ReplicaDirName(orig)
-	ch.db, err = pebble.Open(path, &opts)
+	cho.db, err = pebble.Open(path, &opts)
 	if err != nil {
 		return
 	}
@@ -139,62 +139,62 @@ func (ch *Chotki) Create(orig uint64, name string) (err error) {
 		),
 	)
 	init := append(Log0, rec0)
-	err = ch.Drain(init)
+	err = cho.Drain(init)
 	if err != nil {
 		return
 	}
-	_ = ch.Close()
-	return ch.Open(orig)
+	_ = cho.Close()
+	return cho.Open(orig)
 }
 
 // Open a replica. orig=0 for read-only replicas.
-func (ch *Chotki) Open(orig uint64) (err error) {
-	ch.src = orig
+func (cho *Chotki) Open(orig uint64) (err error) {
+	cho.src = orig
 	opts := pebble.Options{
 		ErrorIfNotExists: true,
 		Merger: &pebble.Merger{
 			Name:  "CRDT",
 			Merge: merger,
 		}}
-	ch.opts.SetDefaults() // todo param
+	cho.opts.SetDefaults() // todo param
 	path := ReplicaDirName(orig)
-	ch.db, err = pebble.Open(path, &opts)
+	cho.db, err = pebble.Open(path, &opts)
 	if err != nil {
 		return
 	}
-	ch.dir = path
+	cho.dir = path
 	if err != nil {
-		_ = ch.db.Close()
+		_ = cho.db.Close()
 		return err
 	}
-	ch.types = make(map[rdx.ID]string)
-	ch.syncs = make(map[rdx.ID]*pebble.Batch)
+	cho.types = make(map[rdx.ID][]string)
+	cho.syncs = make(map[rdx.ID]*pebble.Batch)
 	var vv rdx.VV
-	vv, err = ch.VersionVector()
+	vv, err = cho.VersionVector()
 	if err != nil {
 		return
 	}
-	ch.last = vv.GetID(ch.src)
-	// Host.last = Host.heads.GetID(orig) todo root VV
-	//Host.inq.Limit = 8192
-	/*Host.fan.Feeder = &Host.oqueue
+	cho.last = vv.GetID(cho.src)
+	// repl.last = repl.heads.GetID(orig) todo root VV
+	//repl.inq.Limit = 8192
+	/*repl.fan.Feeder = &repl.oqueue
 	 */
 	return
 }
 
-func (ch *Chotki) Feed() (toyqueue.Records, error) {
-	// fixme multi if Host.fan.
-	return ch.outq.Feed()
+func (cho *Chotki) Feed() (toyqueue.Records, error) {
+	// fixme multi if repl.fan.
+	return cho.outq.Feed()
 }
 
-func (ch *Chotki) OpenTCP(tcp *toytlv.TCPDepot) {
+func (cho *Chotki) OpenTCP(tcp *toytlv.TCPDepot) {
 	tcp.Open(func(conn net.Conn) toyqueue.FeedDrainCloser {
 		// fixme snapshot etc
-		return &Syncer{Host: ch}
+		return &Syncer{Host: cho}
 	})
 	// ...
 	io := pebble.IterOptions{}
-	i := ch.db.NewIter(&io)
+	i := cho.db.NewIter(&io)
 	for i.SeekGE([]byte{'L'}); i.Valid() && i.Key()[0] == 'L'; i.Next() {
 		address := string(i.Key()[1:])
 		err := tcp.Listen(address)
@@ -212,22 +212,22 @@ func (ch *Chotki) OpenTCP(tcp *toytlv.TCPDepot) {
 	_ = i.Close()
 }
 
-func (ch *Chotki) AddPacketHose(hose toyqueue.DrainCloser) error {
+func (cho *Chotki) AddPacketHose(hose toyqueue.DrainCloser) error {
 	// todo open?
-	ch.fan.AddDrain(hose)
+	cho.fan.AddDrain(hose)
 	return nil
 }
 
-func (ch *Chotki) RemovePacketHose(hose toyqueue.DrainCloser) error {
-	// todo return Host.fan.RemoveDrain(hose)
+func (cho *Chotki) RemovePacketHose(hose toyqueue.DrainCloser) error {
+	// todo return repl.fan.RemoveDrain(hose)
 	return nil
 }
 
-func (ch *Chotki) warn(format string, a ...any) {
+func (cho *Chotki) warn(format string, a ...any) {
 	_, _ = fmt.Fprintf(os.Stderr, format, a...)
 }
 
-func (ch *Chotki) Drain(recs toyqueue.Records) (err error) {
+func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 	rest := recs
 	apply := toyqueue.Records{}
 
@@ -236,15 +236,15 @@ func (ch *Chotki) Drain(recs toyqueue.Records) (err error) {
 		rest = rest[1:]
 		lit, id, ref, body, err := ParsePacket(packet)
 		if err != nil {
-			ch.warn("bad packet: %s", err.Error())
+			cho.warn("bad packet: %s", err.Error())
 			continue
 		}
 		apply = append(apply, packet) //nolint:staticcheck
-		if id.Src() == ch.src && id > ch.last {
+		if id.Src() == cho.src && id > cho.last {
 			if id.Off() != 0 {
 				return rdx.ErrBadPacket
 			}
-			ch.last = id
+			cho.last = id
 		}
 		yv := false
 		pb := pebble.Batch{}
@@ -253,57 +253,57 @@ func (ch *Chotki) Drain(recs toyqueue.Records) (err error) {
 			if ref != rdx.ID0 {
 				return ErrBadLPacket
 			}
-			err = ch.ApplyLOT(id, ref, body, &pb)
+			err = cho.ApplyLOT('L', id, ref, body, &pb)
 		case 'O': // create object
 			if ref == rdx.ID0 {
 				return ErrBadLPacket
 			}
-			err = ch.ApplyLOT(id, ref, body, &pb)
+			err = cho.ApplyLOT('O', id, ref, body, &pb)
 		case 'T':
-			err = ch.ApplyLOT(id, ref, body, &pb)
+			err = cho.ApplyLOT('T', id, ref, body, &pb)
 		case 'E':
 			if ref == rdx.ID0 {
 				return ErrBadLPacket
 			}
-			err = ch.ApplyE(id, ref, body, &pb)
+			err = cho.ApplyE(id, ref, body, &pb)
 		case 'Y':
-			d, ok := ch.syncs[ref]
+			d, ok := cho.syncs[ref]
 			if !ok {
-				d = ch.db.NewBatch()
-				ch.syncs[id] = d
+				d = cho.db.NewBatch()
+				cho.syncs[id] = d
 			}
-			err = ch.ApplyY(id, ref, body, d)
+			err = cho.ApplyY(id, ref, body, d)
 			yv = true
 		case 'V':
-			d, ok := ch.syncs[ref]
+			d, ok := cho.syncs[ref]
 			if !ok {
 				return ErrSyncUnknown
 			}
-			err = ch.ApplyV(id, ref, body, d)
+			err = cho.ApplyV(id, ref, body, d)
 			if err == nil {
-				err = ch.db.Apply(d, &WriteOptions)
-				delete(ch.syncs, ref)
+				err = cho.db.Apply(d, &WriteOptions)
+				delete(cho.syncs, ref)
 			}
 			yv = true
 		default:
 			_, _ = fmt.Fprintf(os.Stderr, "unsupported packet %c skipped\n", lit)
 		}
 		if !yv && err == nil {
-			_ = ch.db.Apply(&pb, &WriteOptions)
+			_ = cho.db.Apply(&pb, &WriteOptions)
 		}
 	}
 	if err != nil { // fixme separate packets
 		return
 	}
 
-	// todo err = Host.oqueue.Drain(recs) // nonblocking
+	// todo err = repl.oqueue.Drain(recs) // nonblocking
 
 	return
 }
 
-func (ch *Chotki) VersionVector() (vv rdx.VV, err error) {
+func (cho *Chotki) VersionVector() (vv rdx.VV, err error) {
 	key0 := VKey(rdx.ID0)
-	val, clo, err := ch.db.Get(key0)
+	val, clo, err := cho.db.Get(key0)
 	if err == nil {
 		vv = make(rdx.VV)
 		err = vv.PutTLV(val)
@@ -332,17 +332,22 @@ var ErrClosed = errors.New("no replica open")
 
 var KeyLogLen = []byte("Mloglen")
 
-func (ch *Chotki) Last() rdx.ID {
-	return ch.last
+func (cho *Chotki) Last() rdx.ID {
+	return cho.last
 }
 
-func (ch *Chotki) Close() error {
-	if ch.db == nil {
+func (cho *Chotki) Snapshot() pebble.Reader {
+	return cho.db.NewSnapshot()
+}
+
+func (cho *Chotki) Close() error {
+	if cho.db == nil {
 		return ErrClosed
 	}
-	_ = ch.db.Close()
-	ch.db = nil
+	_ = cho.db.Close()
+	cho.db = nil
 	// todo
+	cho.last = rdx.ID0
 	return nil
 }
 
@@ -354,34 +359,55 @@ func Join(records ...[]byte) (ret []byte) {
 }
 
 // Here new packets are timestamped and queued for save
-func (ch *Chotki) CommitPacket(lit byte, ref rdx.ID, body toyqueue.Records) (id rdx.ID, err error) {
-	ch.idlock.Lock()
-	id = (ch.last & ^rdx.OffMask) + rdx.ProInc
+func (cho *Chotki) CommitPacket(lit byte, ref rdx.ID, body toyqueue.Records) (id rdx.ID, err error) {
+	cho.idlock.Lock()
+	id = (cho.last & ^rdx.OffMask) + rdx.ProInc
 	i := toytlv.Record('I', id.ZipBytes())
 	r := toytlv.Record('R', ref.ZipBytes())
 	packet := toytlv.Record(lit, i, r, Join(body...))
-	err = ch.Drain(toyqueue.Records{packet})
-	ch.idlock.Unlock()
+	err = cho.Drain(toyqueue.Records{packet})
+	cho.idlock.Unlock()
 	return
 }
 
-func (ch *Chotki) ObjectKeyRange(oid rdx.ID) (fro, til []byte) {
+func (cho *Chotki) ObjectKeyRange(oid rdx.ID) (fro, til []byte) {
 	oid = oid & ^rdx.OffMask
 	return OKey(oid, 0), OKey(oid+rdx.ProInc, 0xff)
 }
 
 // returns nil for "not found"
-func (ch *Chotki) ObjectIterator(oid rdx.ID) *pebble.Iterator {
-	fro, til := ch.ObjectKeyRange(oid)
+func (cho *Chotki) ObjectIterator(oid rdx.ID) *pebble.Iterator {
+	fro, til := cho.ObjectKeyRange(oid)
 	io := pebble.IterOptions{
 		LowerBound: fro,
 		UpperBound: til,
 	}
-	ret := ch.db.NewIter(&io)
+	ret := cho.db.NewIter(&io)
 	if ret.SeekGE(fro) {
 		return ret
 	} else {
 		_ = ret.Close()
 		return nil
 	}
+}
+
+func (cho *Chotki) GetFieldTLV(id rdx.ID) (rdt byte, tlv []byte) {
+	return GetFieldTLV(cho.db, id)
+}
+
+func GetFieldTLV(reader pebble.Reader, id rdx.ID) (rdt byte, tlv []byte) {
+	key := OKey(id, 'A')
+	it := reader.NewIter(&pebble.IterOptions{
+		LowerBound: []byte{'O'},
+		UpperBound: []byte{'P'},
+	})
+	if it.SeekGE(key) {
+		fact, r := OKeyIdRdt(it.Key())
+		if fact == id {
+			tlv = it.Value()
+			rdt = r
+		}
+	}
+	_ = it.Close()
+	return
 }

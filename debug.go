@@ -25,7 +25,7 @@ func ChotkiKVString(key, value []byte) string {
 		line = append(line, rdx.Istring(value)...)
 	case 'S':
 		line = append(line, rdx.Sstring(value)...)
-	case 'R':
+	case 'R', 'T':
 		line = append(line, rdx.Rstring(value)...)
 	case 'F':
 		line = append(line, rdx.Fstring(value)...)
@@ -37,30 +37,30 @@ func ChotkiKVString(key, value []byte) string {
 	return string(line)
 }
 
-func (ch *Chotki) DumpAll() {
+func (cho *Chotki) DumpAll() {
 	_, _ = fmt.Fprintf(os.Stderr, "=====OBJECTS=====\n")
-	ch.DumpObjects()
+	cho.DumpObjects()
 	_, _ = fmt.Fprintf(os.Stderr, "=====VVS=====\n")
-	ch.DumpVV()
+	cho.DumpVV()
 }
 
-func (ch *Chotki) DumpObjects() {
+func (cho *Chotki) DumpObjects() {
 	io := pebble.IterOptions{
 		LowerBound: []byte{'O'},
 		UpperBound: []byte{'P'},
 	}
-	i := ch.db.NewIter(&io)
+	i := cho.db.NewIter(&io)
 	for i.SeekGE([]byte{'O'}); i.Valid(); i.Next() {
 		_, _ = fmt.Fprintln(os.Stderr, ChotkiKVString(i.Key(), i.Value()))
 	}
 }
 
-func (ch *Chotki) DumpVV() {
+func (cho *Chotki) DumpVV() {
 	io := pebble.IterOptions{
 		LowerBound: []byte{'V'},
 		UpperBound: []byte{'W'},
 	}
-	i := ch.db.NewIter(&io)
+	i := cho.db.NewIter(&io)
 	for i.SeekGE(VKey(rdx.ID0)); i.Valid(); i.Next() {
 		id := rdx.IDFromBytes(i.Key()[1:])
 		vv := make(rdx.VV)

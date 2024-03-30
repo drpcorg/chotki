@@ -25,43 +25,41 @@ var ErrUnknownFieldsInAType = errors.New("unknown fields for the type")
 var ErrBadValueForAType = errors.New("bad value for the type")
 
 // fixme []string
-func (ch *Chotki) ObjectType(tid rdx.ID) (formula string, err error) {
-	formula, ok := ch.types[tid]
+func (cho *Chotki) ObjectType(tid rdx.ID) (formula []string, err error) {
+	formula, ok := cho.types[tid]
 	if ok {
 		return
 	}
-	f := []byte{}
-	i := ch.ObjectIterator(tid)
+	i := cho.ObjectIterator(tid)
 	if i == nil {
-		return "", ErrTypeUnknown
+		return nil, ErrTypeUnknown
 	}
 	for ; i.Valid(); i.Next() {
-		if len(i.Value()) > 0 {
-			f = append(f, i.Value()[0])
+		if len(i.Value()) > 0 { // fixme
+			formula = append(formula, rdx.Snative(i.Value()))
 		}
 	}
-	formula = string(f)
-	ch.lock.Lock()
-	ch.types[tid] = formula
-	ch.lock.Unlock()
+	cho.lock.Lock()
+	cho.types[tid] = formula
+	cho.lock.Unlock()
 	return
 }
 
-func (ch *Chotki) CreateType(parent rdx.ID, fields ...string) (id rdx.ID, err error) {
+func (cho *Chotki) CreateType(parent rdx.ID, fields ...string) (id rdx.ID, err error) {
 	var fspecs toyqueue.Records
-	fspecs = append(fspecs, toytlv.Record('A', parent.ZipBytes()))
+	//fspecs = append(fspecs, toytlv.Record('A', parent.ZipBytes()))
 	for _, field := range fields {
 		if len(field) < 2 || field[0] < 'A' || field[0] > 'Z' || !utf8.ValidString(field) || hasUnsafeChars(field) {
 			return rdx.BadId, ErrBadTypeDescription
 		}
-		fspecs = append(fspecs, toytlv.Record('A', []byte(field)))
+		fspecs = append(fspecs, toytlv.Record('S', rdx.Stlv(field)))
 	}
-	return ch.CommitPacket('T', rdx.ID0, fspecs)
+	return cho.CommitPacket('T', parent, fspecs)
 }
 
-func (ch *Chotki) CreateObject(tid rdx.ID, fields ...string) (id rdx.ID, err error) {
-	var formula string
-	formula, err = ch.ObjectType(tid)
+func (cho *Chotki) CreateObject(tid rdx.ID, fields ...string) (id rdx.ID, err error) {
+	var formula []string
+	formula, err = cho.ObjectType(tid)
 	if err != nil {
 		return
 	}
@@ -71,7 +69,8 @@ func (ch *Chotki) CreateObject(tid rdx.ID, fields ...string) (id rdx.ID, err err
 	var packet toyqueue.Records
 	for i := 0; i < len(fields); i++ {
 		var tlv []byte
-		switch formula[i] {
+		rdt := formula[i][0]
+		switch rdt {
 		case 'I':
 			tlv = rdx.Iparse(fields[i])
 		case 'S':
@@ -84,13 +83,13 @@ func (ch *Chotki) CreateObject(tid rdx.ID, fields ...string) (id rdx.ID, err err
 		if tlv == nil {
 			return rdx.BadId, ErrBadValueForAType
 		}
-		packet = append(packet, toytlv.Record(formula[i], tlv))
+		packet = append(packet, toytlv.Record(rdt, tlv))
 	}
-	return ch.CommitPacket('O', tid, packet)
+	return cho.CommitPacket('O', tid, packet)
 }
 
-func (ch *Chotki) GetObject(oid rdx.ID) (tid rdx.ID, fields []string, err error) {
-	i := ch.ObjectIterator(oid)
+func (cho *Chotki) GetObject(oid rdx.ID) (tid rdx.ID, fields []string, err error) {
+	i := cho.ObjectIterator(oid)
 	if i == nil || !i.Valid() {
 		return rdx.BadId, nil, ErrUnknownObject
 	}

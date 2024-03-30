@@ -8,7 +8,7 @@ import (
 	"github.com/learn-decentralized-systems/toytlv"
 )
 
-func (ch *Chotki) UpdateVTree(id, ref rdx.ID, pb *pebble.Batch) (err error) {
+func (cho *Chotki) UpdateVTree(id, ref rdx.ID, pb *pebble.Batch) (err error) {
 	v := toytlv.Record('V', id.ZipBytes())
 	err = pb.Merge(VKey(ref), v, &WriteOptions)
 	if err == nil {
@@ -17,7 +17,7 @@ func (ch *Chotki) UpdateVTree(id, ref rdx.ID, pb *pebble.Batch) (err error) {
 	return
 }
 
-func (ch *Chotki) ApplyY(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
+func (cho *Chotki) ApplyY(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
 	// see Chotki.SyncPeer()
 	rest := body
 	var rdt byte
@@ -32,7 +32,7 @@ func (ch *Chotki) ApplyY(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err 
 	return
 }
 
-func (ch *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
+func (cho *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
 	rest := body
 	for len(rest) > 0 {
 		var rec, idb []byte
@@ -49,9 +49,9 @@ func (ch *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err 
 	return
 }
 
-func (ch *Chotki) ApplyLOT(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
+func (cho *Chotki) ApplyLOT(lot byte, id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
 	err = batch.Merge(
-		OKey(id, 'A'),
+		OKey(id, lot),
 		ref.ZipBytes(),
 		&WriteOptions)
 	rest := body
@@ -83,14 +83,14 @@ func (ch *Chotki) ApplyLOT(id, ref rdx.ID, body []byte, batch *pebble.Batch) (er
 		rest = rest[hlen+blen:]
 	}
 	if err == nil {
-		err = ch.UpdateVTree(fid, id, batch)
+		err = cho.UpdateVTree(fid, id, batch)
 	}
 	return
 }
 
 var ErrOffsetOpId = errors.New("op id is offset")
 
-func (ch *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch) (err error) {
+func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch) (err error) {
 	if id.Off() != 0 || r.Off() != 0 {
 		return ErrOffsetOpId
 	}
@@ -122,7 +122,7 @@ func (ch *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch) (err er
 			&WriteOptions)
 	}
 	if err == nil {
-		err = ch.UpdateVTree(id, r, batch)
+		err = cho.UpdateVTree(id, r, batch)
 	}
 	return
 }
