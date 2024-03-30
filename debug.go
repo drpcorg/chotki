@@ -18,7 +18,7 @@ func ChotkiKVString(key, value []byte) string {
 	line = append(line, id.String()...)
 	line = append(line, '.', byte(rdt), ':', '\t')
 	switch rdt {
-	case 'A':
+	case 'L', 'O', 'A': // FIXME T
 		ref := rdx.IDFromZipBytes(value)
 		line = append(line, ref.String()...)
 	case 'I':

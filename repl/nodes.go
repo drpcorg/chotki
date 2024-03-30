@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
+	"github.com/learn-decentralized-systems/toyqueue"
 )
 
 type Node interface {
@@ -40,7 +41,7 @@ func (ren *ReplicaNode) List() []string {
 	return nil
 }
 func (ren *ReplicaNode) Get(name string) Node {
-	id := rdx.ParseIDString(name)
+	id := rdx.IDFromString(name)
 	if id == rdx.BadId {
 		return nil
 	}
@@ -132,7 +133,7 @@ func (tn *TypeNode) String() string {
 	return tn.Parent.String()
 }
 func (tn *TypeNode) List() (fields []string) {
-	formula, _ := tn.repl.Host.ObjectType(tn.Id)
+	formula, _ := tn.repl.Host.TypeFields(tn.Id)
 	for _, f := range formula {
 		fields = append(fields, f[1:])
 	}
@@ -140,7 +141,7 @@ func (tn *TypeNode) List() (fields []string) {
 }
 
 func (tn *TypeNode) Get(name string) Node {
-	formula, _ := tn.repl.Host.ObjectType(tn.Id)
+	formula, _ := tn.repl.Host.TypeFields(tn.Id)
 	for n, fn := range formula {
 		if fn[1:] != name {
 			continue
@@ -161,9 +162,29 @@ func (tn *TypeNode) Set(val string) error {
 }
 
 type ObjectNode struct {
-	Id   rdx.ID
-	Type rdx.ID
-	repl *REPL
+	Id     rdx.ID
+	Type   rdx.ID
+	repl   *REPL
+	fields []string
+	values toyqueue.Records
+}
+
+func (on *ObjectNode) loadFields() bool {
+	if on.fields != nil {
+		return true
+	}
+	var err error
+	on.fields, err = on.repl.Host.TypeFields(on.Type)
+	return err == nil
+}
+
+func (on *ObjectNode) loadValues() bool {
+	if on.values != nil {
+		return true
+	}
+	var err error
+	on.Type, on.values, err = on.repl.Host.ObjectFields(on.Id)
+	return err == nil
 }
 
 func (on *ObjectNode) ID() rdx.ID {
@@ -172,19 +193,43 @@ func (on *ObjectNode) ID() rdx.ID {
 func (on *ObjectNode) String() string {
 	return on.Type.String()
 }
-func (on *ObjectNode) List() []string {
-	// todo find type, scan
-	formula, _ := on.repl.Host.ObjectType(on.Type)
-	/*it := on.repl.Host.ObjectIterator(on.Id)
-	for it != nil && it.Next() {
+func (on *ObjectNode) List() (list []string) {
+	if !on.loadFields() {
+		return nil
+	}
+	for _, f := range on.fields {
+		if len(f) == 0 {
+			break // bad type
+		}
+		list = append(list, f[1:])
+	}
+	return
+}
 
-	}*/
-	return formula
+func FieldNode(repl *REPL, fid rdx.ID, rdt byte, tlv []byte) Node {
+	switch rdt {
+	case 'F':
+	case 'I':
+	case 'R':
+	case 'S':
+		return &SNode{repl: repl, Id: fid, tlv: tlv}
+	case 'T':
+	default:
+		return nil
+	}
+	return nil
 }
 
 func (on *ObjectNode) Get(name string) Node {
-	// todo find f in type decl
-	return nil
+	if !on.loadFields() || !on.loadValues() {
+		return nil
+	} // TODO OType
+	off := chotki.FieldOffset(on.fields, name)
+	if off == 0 || int(off) > len(on.fields) || int(off) > len(on.values) {
+		return nil
+	}
+	rdt := on.fields[off-1][0]
+	return FieldNode(on.repl, on.Id.ToOff(off), rdt, on.values[off-1])
 }
 func (on *ObjectNode) Put(loc string, node Node) error {
 	// todo find f in type decl
@@ -300,25 +345,25 @@ func (fn *RNode) Set(val string) error {
 type SNode struct {
 	Id   rdx.ID
 	repl *REPL
+	tlv  []byte
 }
 
-func (fn *SNode) ID() rdx.ID {
-	return fn.Id
+func (sn *SNode) ID() rdx.ID {
+	return sn.Id
 }
-func (fn *SNode) String() string {
-	// get
-	return ""
+func (sn *SNode) String() string {
+	return rdx.Sstring(sn.tlv)
 }
-func (fn *SNode) List() []string {
+func (sn *SNode) List() []string {
 	return []string{}
 }
-func (fn *SNode) Get(name string) Node {
+func (sn *SNode) Get(name string) Node {
 	return nil // todo off etc
 }
-func (fn *SNode) Put(loc string, node Node) error {
+func (sn *SNode) Put(loc string, node Node) error {
 	return chotki.ErrNotImplemented
 }
-func (fn *SNode) Set(val string) error {
+func (sn *SNode) Set(val string) error {
 	return chotki.ErrNotImplemented
 }
 

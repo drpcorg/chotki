@@ -202,7 +202,7 @@ func main() {
 
 	for err != io.EOF {
 		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "%s\n", err.Error())
+			_, _ = fmt.Fprintf(os.Stdout, "%s\n", err.Error())
 			err = nil
 		} else if id != rdx.ID0 {
 			_, _ = fmt.Fprintf(os.Stderr, "%s\n", id.String())

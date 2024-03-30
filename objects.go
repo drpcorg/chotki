@@ -1,6 +1,7 @@
 package chotki
 
 import (
+	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
@@ -21,12 +22,11 @@ func hasUnsafeChars(text string) bool {
 
 var ErrUnknownObject = errors.New("unknown object")
 var ErrTypeUnknown = errors.New("unknown object type")
-var ErrUnknownFieldsInAType = errors.New("unknown fields for the type")
+var ErrUnknownFieldInAType = errors.New("unknown field for the type")
 var ErrBadValueForAType = errors.New("bad value for the type")
 
-// fixme []string
-func (cho *Chotki) ObjectType(tid rdx.ID) (formula []string, err error) {
-	formula, ok := cho.types[tid]
+func (cho *Chotki) TypeFields(tid rdx.ID) (fields []string, err error) {
+	fields, ok := cho.types[tid]
 	if ok {
 		return
 	}
@@ -34,14 +34,63 @@ func (cho *Chotki) ObjectType(tid rdx.ID) (formula []string, err error) {
 	if i == nil {
 		return nil, ErrTypeUnknown
 	}
-	for ; i.Valid(); i.Next() {
-		if len(i.Value()) > 0 { // fixme
-			formula = append(formula, rdx.Snative(i.Value()))
-		}
+	for i.Next() { // skip the parent
+		fields = append(fields, rdx.Snative(i.Value()))
 	}
 	cho.lock.Lock()
-	cho.types[tid] = formula
+	cho.types[tid] = fields
 	cho.lock.Unlock()
+	return
+}
+
+func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, tlv toyqueue.Records, err error) {
+	it := cho.ObjectIterator(oid)
+	if it == nil {
+		return rdx.BadId, nil, ErrUnknownObject
+	}
+	tid = rdx.IDFromZipBytes(it.Value())
+	for it.Next() { // todo check offset/rdt
+		cp := make([]byte, len(it.Value()))
+		copy(cp, it.Value())
+		tlv = append(tlv, cp)
+	}
+	_ = it.Close()
+	return
+}
+
+func FieldOffset(fields []string, name string) rdx.ID {
+	for i := 0; i < len(fields); i++ {
+		fn := fields[i]
+		if len(fn) > 0 && fn[1:] == name {
+			return rdx.ID(i + 1)
+		}
+	}
+	return 0
+}
+
+// returns 0 if no such field found
+func (cho *Chotki) FindFieldOffset(oid rdx.ID, name string) (off rdx.ID) {
+	fields, err := cho.TypeFields(oid)
+	if err != nil {
+		return 0
+	}
+	return FieldOffset(fields, name)
+}
+
+func (cho *Chotki) ObjectField(oid rdx.ID, off rdx.ID) (rdt byte, tlv []byte, err error) {
+	it := cho.db.NewIter(&pebble.IterOptions{})
+	fid := (oid &^ rdx.OffMask) + off
+	key := OKey(fid, 0)
+	if !it.SeekGE(key) {
+		return 0, nil, pebble.ErrNotFound
+	}
+	fidfact := rdx.ID0
+	fidfact, rdt = OKeyIdRdt(it.Key())
+	if fidfact != fid {
+		return 0, nil, pebble.ErrNotFound
+	}
+	tlv = it.Value()
+	_ = it.Close()
 	return
 }
 
@@ -59,12 +108,12 @@ func (cho *Chotki) CreateType(parent rdx.ID, fields ...string) (id rdx.ID, err e
 
 func (cho *Chotki) CreateObject(tid rdx.ID, fields ...string) (id rdx.ID, err error) {
 	var formula []string
-	formula, err = cho.ObjectType(tid)
+	formula, err = cho.TypeFields(tid)
 	if err != nil {
 		return
 	}
 	if len(fields) > len(formula) {
-		return rdx.BadId, ErrUnknownFieldsInAType
+		return rdx.BadId, ErrUnknownFieldInAType
 	}
 	var packet toyqueue.Records
 	for i := 0; i < len(fields); i++ {

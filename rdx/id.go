@@ -77,8 +77,8 @@ func (id ID) Off() uint16 {
 	return uint16(id & OffMask)
 }
 
-func (id ID) ToOff(newoff uint16) ID {
-	return (id & ^OffMask) | ID(newoff)
+func (id ID) ToOff(newoff ID) ID {
+	return (id & ^OffMask) | (newoff & OffMask)
 }
 
 // Src is the replica id. That is normally a small number.
@@ -197,18 +197,19 @@ func UnHex(hex []byte) (num uint64) {
 	return
 }
 
-func ParseIDString(id string) ID {
-	return IDFromString([]byte(id))
-}
-
-func ParseBracketedID(bid []byte) ID {
+func IDFromBracketedString(bid []byte) ID {
 	if len(bid) < 7 || bid[0] != '{' || bid[len(bid)-1] != '}' {
 		return BadId
 	}
-	return IDFromString(bid[1 : len(bid)-1])
+	return IDFromText(bid[1 : len(bid)-1])
 }
 
-func IDFromString(idstr []byte) (parsed ID) {
+func IDFromString(idstr string) (parsed ID) {
+	parsed, _ = readIDFromString([]byte(idstr))
+	return
+}
+
+func IDFromText(idstr []byte) (parsed ID) {
 	parsed, _ = readIDFromString(idstr)
 	return
 }

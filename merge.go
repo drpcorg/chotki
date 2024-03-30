@@ -38,7 +38,7 @@ func (a *PebbleMergeAdaptor) Finish(includesBase bool) (res []byte, cl io.Closer
 		return nil, nil, nil
 	}
 	switch a.rdt {
-	case 'A': // object's ref is immutable
+	case 'L', 'O', 'T', 'A': // object's ref is immutable
 		res = Amerge(inputs)
 	case 'C':
 		res = CMerge(inputs)

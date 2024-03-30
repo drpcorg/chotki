@@ -96,9 +96,22 @@ func (repl *REPL) CommandType(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error
 	return
 }
 
+var ErrBadArgs = errors.New("bad arguments")
+
 func (repl *REPL) CommandNew(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
-	fmt.Printf("new %s %s\n", path.String(), arg.String())
-	return rdx.BadId, nil
+	tid := rdx.ID0
+	if path != nil && path.RdxType == rdx.RdxPath && len(path.Nested) > 0 && path.Nested[0].RdxType == rdx.RdxRef {
+		tid = rdx.IDFromText(path.Nested[0].Text)
+	}
+	if arg == nil || arg.RdxType != rdx.RdxArray {
+		return rdx.BadId, ErrBadArgs
+	}
+	fields := []string{}
+	for _, a := range arg.Nested {
+		fields = append(fields, string(a.Text))
+	}
+	id, err = repl.Host.CreateObject(tid, fields...)
+	return
 }
 
 func (repl *REPL) CommandList(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {

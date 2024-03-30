@@ -31,7 +31,7 @@ func TestORMExample(t *testing.T) {
 	//a.DumpAll()
 
 	var exa Example
-	ita := a.ObjectIterator(rdx.ParseIDString("1e-2"))
+	ita := a.ObjectIterator(rdx.IDFromString("1e-2"))
 	assert.NotNil(t, ita)
 	err = exa.Load(ita)
 	assert.Nil(t, err)
@@ -53,7 +53,7 @@ func TestORMExample(t *testing.T) {
 
 	// fixme wait something
 	var exb Example
-	itb := b.ObjectIterator(rdx.ParseIDString("1e-2"))
+	itb := b.ObjectIterator(rdx.IDFromString("1e-2"))
 	assert.NotNil(t, itb)
 	err = exb.Load(itb)
 	assert.Nil(t, err)

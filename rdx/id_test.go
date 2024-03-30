@@ -7,7 +7,7 @@ import (
 )
 
 func TestCases(t *testing.T) {
-	off := ParseIDString("0ff")
+	off := IDFromString("0ff")
 	assert.Equal(t, uint64(off), uint64(0xff))
 
 	zip := ID(1).ZipBytes()
@@ -22,12 +22,12 @@ func TestParseID(t *testing.T) {
 		"fffff-ffffffff-ffa",
 	}
 	for _, str := range ids {
-		id := ParseIDString(str)
+		id := IDFromString(str)
 		assert.NotEqual(t, BadId, id)
 		str2 := id.String()
 		assert.Equal(t, str, str2)
 		fullstr := string(id.Hex583())
-		id2 := ParseIDString(fullstr)
+		id2 := IDFromString(fullstr)
 		assert.Equal(t, id, id2)
 	}
 }

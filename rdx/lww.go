@@ -233,7 +233,7 @@ func Rstring(tlv []byte) (txt string) {
 
 // parse a text form into a TLV value
 func Rparse(txt string) (tlv []byte) {
-	id := IDFromString([]byte(txt))
+	id := IDFromString(txt)
 	return Rtlv(id)
 }
 
