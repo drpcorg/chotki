@@ -112,6 +112,12 @@ func DiffFIRST(tlv []byte, vvdiff VV) []byte {
 
 var ErrBadPacket = errors.New("bad packet")
 
+func SetTimeFIRST(bare []byte, t Time) (res []byte) {
+	_, _, value := ParseFIRST(bare)
+	res = TlvFIRST(t.rev, t.src, value)
+	return
+}
+
 func SetSourceFIRST(bare []byte, src uint64) (res []byte, err error) {
 	time, s, value := ParseFIRST(bare)
 	if value == nil {
@@ -245,14 +251,18 @@ func Sstring(tlv []byte) (txt string) {
 	return string(dst)
 }
 
-// parse a text form into a TLV value; nil on error
-func Sparse(txt string) (tlv []byte) {
+func Sparset(txt string, t Time) (tlv []byte) {
 	if len(txt) < 2 || txt[0] != '"' || txt[len(txt)-1] != '"' {
 		return nil
 	}
 	unq := txt[1 : len(txt)-1]
 	unesc, _ := Unescape([]byte(unq), nil)
-	return TlvFIRST(0, 0, unesc)
+	return TlvFIRST(t.rev, t.src, unesc)
+}
+
+// parse a text form into a TLV value; nil on error
+func Sparse(txt string) (tlv []byte) {
+	return Sparset(txt, Time{0, 0})
 }
 
 // convert native golang value into a TLV form

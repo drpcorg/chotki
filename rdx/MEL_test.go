@@ -37,3 +37,14 @@ func TestMmerge(t *testing.T) {
 	str12d := Mstring(tlv12d)
 	assert.Equal(t, "{1:2,3:4,7:8}", str12d)
 }
+
+func TestLmerge(t *testing.T) {
+	tlv1 := Lparse("[1, 2, 3,  5]")
+	assert.Equal(t, "[1,2,3,5]", Lstring(tlv1))
+	patch1 := toytlv.Record('B',
+		toytlv.TinyRecord('T', ZipIntUint64Pair(3, 0)),
+		Itlve(5, 0, 4),
+	)
+	tlv2 := Lmerge(toyqueue.Records{tlv1, patch1})
+	assert.Equal(t, "[1,2,3,4,5]", Lstring(tlv2))
+}
