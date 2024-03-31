@@ -65,6 +65,12 @@ action comma {
         fbreak;
     }
     n := rdx.Parent.Nested 
+    if len(n)==1 && rdx.Parent.RdxType==RdxMap {
+        rdx.Parent.RdxType = RdxSet
+    }
+    if 1==(len(n)&1) && rdx.Parent.RdxType==RdxMap {
+        fbreak;
+    }
     n = append(n, RDX{Parent: rdx.Parent})
     rdx.Parent.Nested = n
     rdx = &n[len(n)-1]

@@ -44,16 +44,9 @@ func TestNmerge(t *testing.T) {
 
 }
 
-func Itlv3(rev int64, src uint64, inc int64) []byte {
-	return toytlv.Record('I',
-		toytlv.TinyRecord('T', ZipIntUint64Pair(rev, src)),
-		ZipInt64(inc),
-	)
-}
-
 func TestZtlv(t *testing.T) {
 	fact := Ztlv(123)
-	correct := Itlv3(0, 0, 123)
+	correct := Itlve(0, 0, 123)
 	assert.Equal(t, correct, fact)
 	str := Zstring(fact)
 	assert.Equal(t, "123", str)
@@ -64,25 +57,25 @@ func TestZtlv(t *testing.T) {
 
 func TestZmerge(t *testing.T) {
 	one := toytlv.Concat(
-		Itlv3(1, 1, 1),
-		Itlv3(2, 2, 2),
-		Itlv3(3, 3, 3),
+		Itlve(1, 1, 1),
+		Itlve(2, 2, 2),
+		Itlve(3, 3, 3),
 	)
 	assert.Equal(t, int64(6), Znative(one))
 	two := toytlv.Concat(
-		Itlv3(3, 2, 3),
-		Itlv3(3, 3, 3),
-		Itlv3(4, 4, 4),
+		Itlve(3, 2, 3),
+		Itlve(3, 3, 3),
+		Itlve(4, 4, 4),
 	)
 	assert.Equal(t, int64(10), Znative(two))
 
 	three := Zmerge([][]byte{one, two})
 
 	correct := toytlv.Concat(
-		Itlv3(1, 1, 1),
-		Itlv3(3, 2, 3),
-		Itlv3(3, 3, 3),
-		Itlv3(4, 4, 4),
+		Itlve(1, 1, 1),
+		Itlve(3, 2, 3),
+		Itlve(3, 3, 3),
+		Itlve(4, 4, 4),
 	)
 	assert.Equal(t, int64(11), Znative(correct))
 

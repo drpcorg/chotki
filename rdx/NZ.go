@@ -145,7 +145,7 @@ func Znative(tlv []byte) (sum int64) {
 func Zmerge(tlvs [][]byte) (merged []byte) {
 	ih := ItHeap[*ZIterator]{}
 	for _, tlv := range tlvs {
-		ih.Push(&ZIterator{tlv: tlv})
+		ih.Push(&ZIterator{FIRSTIterator{tlv: tlv}})
 	}
 	for ih.Len() > 0 {
 		merged = append(merged, ih.Next()...)
@@ -172,31 +172,13 @@ func Zdiff(tlv []byte, vvdiff VV) []byte {
 }
 
 type ZIterator struct {
-	one []byte
-	tlv []byte
-	src uint64
-	rev int64
-	inc int64
-}
-
-func (a *ZIterator) Next() bool {
-	if len(a.tlv) == 0 {
-		return false
-	}
-	_, hlen, blen := toytlv.ProbeHeader(a.tlv)
-	rlen := hlen + blen
-	var val []byte
-	a.rev, a.src, val = FirstParse(a.tlv[hlen:rlen])
-	a.inc = UnzipInt64(val)
-	a.one = a.tlv[:rlen]
-	a.tlv = a.tlv[rlen:]
-	return true
+	FIRSTIterator
 }
 
 func (a *ZIterator) Merge(b SortedIterator) int {
 	bb := b.(*ZIterator)
 	if a.src == bb.src {
-		if a.rev < bb.rev { // todo rev < 0
+		if a.revz < bb.revz {
 			return MergeB
 		} else {
 			return MergeA
@@ -206,8 +188,4 @@ func (a *ZIterator) Merge(b SortedIterator) int {
 	} else {
 		return MergeBA
 	}
-}
-
-func (a *ZIterator) Value() []byte {
-	return a.one
 }

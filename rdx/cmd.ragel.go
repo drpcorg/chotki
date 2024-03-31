@@ -201,6 +201,17 @@ func ParseREPL(data []byte) (cmd string, path *RDX, rdx *RDX, err error) {
 
 						}
 						n := rdx.Parent.Nested
+						if len(n) == 1 && rdx.Parent.RdxType == RdxMap {
+							rdx.Parent.RdxType = RdxSet
+						}
+						if 1 == (len(n)&1) && rdx.Parent.RdxType == RdxMap {
+							{
+								p += 1
+								goto _out
+
+							}
+
+						}
 						n = append(n, RDX{Parent: rdx.Parent})
 						rdx.Parent.Nested = n
 						rdx = &n[len(n)-1]

@@ -17,6 +17,7 @@ func TestRDX_Parse(t *testing.T) {
 		"[ 1, 2, 3]":                 "[1,2,3]",
 		" [ \"string here\", 1 ,2 ]": "[\"string here\",1,2]",
 		"{1f8-a364: 3 }":             "{1f8-a364:3}",
+		"{1f8-a364, 3,4, \"five\" }": "{1f8-a364,3,4,\"five\"}",
 	}
 	for in, out := range cases {
 		rdx, err := ParseRDX([]byte(in))

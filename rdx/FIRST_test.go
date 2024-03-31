@@ -9,13 +9,13 @@ import (
 
 func TestTLV(t *testing.T) {
 	body := []byte("test")
-	tlv := FirstTlv(234, 123, body)
-	time, src, val := FirstParse(tlv)
+	tlv := TlvFIRST(234, 123, body)
+	time, src, val := ParseFIRST(tlv)
 	assert.Equal(t, 234, int(time))
 	assert.Equal(t, 123, int(src))
 	assert.Equal(t, body, val)
 
-	doc := FirstTlv(4, 5, ZipInt64(-11))
+	doc := TlvFIRST(4, 5, ZipInt64(-11))
 	assert.Equal(t, []byte{0x32, 0x08, 0x05, 0x15}, doc)
 }
 
@@ -84,12 +84,12 @@ func TestIMerge(t *testing.T) {
 }
 
 func TestLWWTie(t *testing.T) {
-	a := FirstTlv(4, 8, ZipInt64(1))
-	b := FirstTlv(4, 7, ZipInt64(2))
-	c := FirstTlv(4, 5, ZipInt64(2))
+	a := TlvFIRST(4, 8, ZipInt64(1))
+	b := TlvFIRST(4, 7, ZipInt64(2))
+	c := TlvFIRST(4, 5, ZipInt64(2))
 	d := Imerge(toyqueue.Records{a, b, c})
 	assert.Equal(t, int64(2), Inative(d))
-	rev, src, _ := FirstParse(d)
+	rev, src, _ := ParseFIRST(d)
 	assert.Equal(t, int64(4), rev)
 	assert.Equal(t, uint64(7), src)
 }
