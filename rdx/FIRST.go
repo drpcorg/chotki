@@ -11,7 +11,7 @@ import (
 // Common LWW functions
 
 // for bad format, value==nil (an empty value is an empty slice)
-func IsfrParse(bulk []byte) (rev int64, src uint64, value []byte) {
+func FirstParse(bulk []byte) (rev int64, src uint64, value []byte) {
 	lit, hlen, blen := toytlv.ProbeHeader(bulk)
 	if lit != 'T' && lit != '0' || hlen+blen > len(bulk) {
 		return
@@ -22,7 +22,7 @@ func IsfrParse(bulk []byte) (rev int64, src uint64, value []byte) {
 	return
 }
 
-func IsfrTlv(rev int64, src uint64, value []byte) (bulk []byte) {
+func FirstTlv(rev int64, src uint64, value []byte) (bulk []byte) {
 	time := ZipIntUint64Pair(rev, src)
 	bulk = make([]byte, 0, len(time)+len(value)+2)
 	bulk = toytlv.AppendTiny(bulk, 'T', time)
@@ -30,7 +30,7 @@ func IsfrTlv(rev int64, src uint64, value []byte) (bulk []byte) {
 	return
 }
 
-func IsfrMerge(tlvs [][]byte) (tlv []byte) {
+func FirstMerge(tlvs [][]byte) (tlv []byte) {
 	var winrec []byte
 	var winrev int64
 	var winsrc uint64
@@ -66,8 +66,8 @@ func IsfrMerge(tlvs [][]byte) (tlv []byte) {
 	return winrec
 }
 
-func IsfrDiff(tlv []byte, vvdiff VV) []byte {
-	_, src, _ := IsfrParse(tlv)
+func FirstDiff(tlv []byte, vvdiff VV) []byte {
+	_, src, _ := FirstParse(tlv)
 	_, ok := vvdiff[src]
 	if ok {
 		return tlv
@@ -78,13 +78,13 @@ func IsfrDiff(tlv []byte, vvdiff VV) []byte {
 
 var ErrBadPacket = errors.New("bad packet")
 
-func IsfrReSource(bare []byte, src uint64) (res []byte, err error) {
-	time, s, value := IsfrParse(bare)
+func FirstSetSource(bare []byte, src uint64) (res []byte, err error) {
+	time, s, value := FirstParse(bare)
 	if value == nil {
 		return nil, ErrBadPacket
 	}
 	if s != src { // ensure correct attribution
-		res = IsfrTlv(time, src, value)
+		res = FirstTlv(time, src, value)
 	} else {
 		res = bare
 	}
@@ -107,41 +107,41 @@ func Iparse(txt string) (tlv []byte) {
 
 // convert native golang value into a TLV form
 func Itlv(i int64) (tlv []byte) {
-	return IsfrTlv(0, 0, ZipInt64(i))
+	return FirstTlv(0, 0, ZipInt64(i))
 }
 
 // convert a TLV value to a native golang value
 func Inative(tlv []byte) int64 {
-	_, _, val := IsfrParse(tlv)
+	_, _, val := FirstParse(tlv)
 	return UnzipInt64(val)
 }
 
 // merge TLV values
 func Imerge(tlvs [][]byte) (tlv []byte) {
-	return IsfrMerge(tlvs)
+	return FirstMerge(tlvs)
 }
 
 // produce an op that turns the old value into the new one
 func Idelta(tlv []byte, new_val int64) (tlv_delta []byte) {
-	rev, _, val := IsfrParse(tlv)
+	rev, _, val := FirstParse(tlv)
 	if rev < 0 {
 		rev = -rev
 	}
 	nv := ZipInt64(new_val)
 	if !bytes.Equal(val, nv) {
-		tlv_delta = IsfrTlv(rev+1, 0, nv)
+		tlv_delta = FirstTlv(rev+1, 0, nv)
 	}
 	return
 }
 
 // checks a TLV value for validity (format violations)
 func Ivalid(tlv []byte) bool {
-	_, src, val := IsfrParse(tlv)
+	_, src, val := FirstParse(tlv)
 	return val != nil && len(val) <= 8 && src <= MaxSrc
 }
 
 func Idiff(tlv []byte, vvdiff VV) []byte {
-	return IsfrDiff(tlv, vvdiff)
+	return FirstDiff(tlv, vvdiff)
 }
 
 // S is a last-write-wins UTF-8 string
@@ -151,7 +151,7 @@ const hex = "0123456789abcdef"
 // produce a text form (for REPL mostly)
 func Sstring(tlv []byte) (txt string) {
 	dst := make([]byte, 0, len(tlv)*2)
-	_, _, val := IsfrParse(tlv)
+	_, _, val := FirstParse(tlv)
 	dst = append(dst, '"')
 	for _, b := range val {
 		switch b {
@@ -182,46 +182,46 @@ func Sparse(txt string) (tlv []byte) {
 	}
 	unq := txt[1 : len(txt)-1]
 	unesc, _ := Unescape([]byte(unq), nil)
-	return IsfrTlv(0, 0, unesc)
+	return FirstTlv(0, 0, unesc)
 }
 
 // convert native golang value into a TLV form
 func Stlv(s string) (tlv []byte) {
-	return IsfrTlv(0, 0, []byte(s))
+	return FirstTlv(0, 0, []byte(s))
 }
 
 // convert a TLV value to a native golang value
 func Snative(tlv []byte) string {
-	_, _, val := IsfrParse(tlv)
+	_, _, val := FirstParse(tlv)
 	return string(val)
 }
 
 // merge TLV values
 func Smerge(tlvs [][]byte) (tlv []byte) {
-	return IsfrMerge(tlvs)
+	return FirstMerge(tlvs)
 }
 
 // produce an op that turns the old value into the new one
 func Sdelta(tlv []byte, new_val string) (tlv_delta []byte) {
-	rev, _, val := IsfrParse(tlv)
+	rev, _, val := FirstParse(tlv)
 	if rev < 0 {
 		rev = -rev
 	}
 	nv := []byte(new_val)
 	if !bytes.Equal(val, nv) {
-		tlv_delta = IsfrTlv(rev+1, 0, nv)
+		tlv_delta = FirstTlv(rev+1, 0, nv)
 	}
 	return
 }
 
 // checks a TLV value for validity (format violations)
 func Svalid(tlv []byte) bool {
-	_, src, val := IsfrParse(tlv)
+	_, src, val := FirstParse(tlv)
 	return val != nil && src <= MaxSrc
 }
 
 func Sdiff(tlv []byte, vvdiff VV) []byte {
-	return IsfrDiff(tlv, vvdiff)
+	return FirstDiff(tlv, vvdiff)
 }
 
 // R is a last-write-wins ID
@@ -239,42 +239,42 @@ func Rparse(txt string) (tlv []byte) {
 
 // convert native golang value into a TLV form
 func Rtlv(i ID) (tlv []byte) {
-	return IsfrTlv(0, 0, i.ZipBytes())
+	return FirstTlv(0, 0, i.ZipBytes())
 }
 
 // convert a TLV value to a native golang value
 func Rnative(tlv []byte) ID {
-	_, _, val := IsfrParse(tlv)
+	_, _, val := FirstParse(tlv)
 	return IDFromZipBytes(val)
 }
 
 // merge TLV values
 func Rmerge(tlvs [][]byte) (tlv []byte) {
-	return IsfrMerge(tlvs)
+	return FirstMerge(tlvs)
 }
 
 // produce an op that turns the old value into the new one
 func Rdelta(tlv []byte, new_val ID) (tlv_delta []byte) {
-	rev, _, val := IsfrParse(tlv)
+	rev, _, val := FirstParse(tlv)
 	if rev < 0 {
 		rev = -rev
 	}
 	nv := new_val.ZipBytes()
 	if !bytes.Equal(val, nv) {
-		tlv_delta = IsfrTlv(rev+1, 0, nv)
+		tlv_delta = FirstTlv(rev+1, 0, nv)
 	}
 	return
 }
 
 // checks a TLV value for validity (format violations)
 func Rvalid(tlv []byte) bool {
-	_, src, val := IsfrParse(tlv)
+	_, src, val := FirstParse(tlv)
 	return val != nil && src <= MaxSrc
 	// todo correct sizes
 }
 
 func Rdiff(tlv []byte, vvdiff VV) []byte {
-	return IsfrDiff(tlv, vvdiff)
+	return FirstDiff(tlv, vvdiff)
 }
 
 // F is a last-write-wins float64
@@ -293,39 +293,39 @@ func Fparse(txt string) (tlv []byte) {
 
 // convert native golang value into a TLV form
 func Ftlv(i float64) (tlv []byte) {
-	return IsfrTlv(0, 0, ZipFloat64(i))
+	return FirstTlv(0, 0, ZipFloat64(i))
 }
 
 // convert a TLV value to a native golang value
 func Fnative(tlv []byte) float64 {
-	_, _, val := IsfrParse(tlv)
+	_, _, val := FirstParse(tlv)
 	return UnzipFloat64(val)
 }
 
 // merge TLV values
 func Fmerge(tlvs [][]byte) (tlv []byte) {
-	return IsfrMerge(tlvs)
+	return FirstMerge(tlvs)
 }
 
 // produce an op that turns the old value into the new one
 func Fdelta(tlv []byte, new_val float64) (tlv_delta []byte) {
-	rev, _, val := IsfrParse(tlv)
+	rev, _, val := FirstParse(tlv)
 	if rev < 0 {
 		rev = -rev
 	}
 	nv := ZipFloat64(new_val)
 	if !bytes.Equal(val, nv) {
-		tlv_delta = IsfrTlv(rev+1, 0, nv)
+		tlv_delta = FirstTlv(rev+1, 0, nv)
 	}
 	return
 }
 
 // checks a TLV value for validity (format violations)
 func Fvalid(tlv []byte) bool {
-	_, src, val := IsfrParse(tlv)
+	_, src, val := FirstParse(tlv)
 	return val != nil && src <= MaxSrc && len(val) <= 8
 }
 
 func Fdiff(tlv []byte, vvdiff VV) []byte {
-	return IsfrDiff(tlv, vvdiff)
+	return FirstDiff(tlv, vvdiff)
 }

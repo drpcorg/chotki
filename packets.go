@@ -67,7 +67,7 @@ func (cho *Chotki) ApplyLOT(lot byte, id, ref rdx.ID, body []byte, batch *pebble
 		fkey := OKey(fid, lit)
 		switch lit {
 		case 'I', 'S', 'F', 'R':
-			rebar, err = rdx.IsfrReSource(bare, id.Src())
+			rebar, err = rdx.FirstSetSource(bare, id.Src())
 		case 'M', 'E', 'L':
 			rebar, err = rdx.MelReSource(bare, id.Src())
 		default:
@@ -106,7 +106,7 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch) (err e
 		lit, bare, rest = toytlv.TakeAny(rest)
 		switch lit {
 		case 'I', 'S', 'F', 'R':
-			rebar, err = rdx.IsfrReSource(bare, id.Src())
+			rebar, err = rdx.FirstSetSource(bare, id.Src())
 		case 'M', 'E', 'L':
 			rebar, err = rdx.MelReSource(bare, id.Src())
 		default:

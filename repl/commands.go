@@ -114,6 +114,14 @@ func (repl *REPL) CommandNew(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error)
 	return
 }
 
+// N counters:
+// - tlv heap
+// - merge oper
+// - N* fns
+// - N node (list: contribs)
+// - try set 3-3.Score.3 5
+// - fixme LOT rdt T (COLA)
+
 func (repl *REPL) CommandList(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
 	node := repl.NodeByPath(path)
 	id = node.ID()

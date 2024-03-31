@@ -9,7 +9,6 @@ const (
 
 type SortedIterator interface {
 	Next() bool
-	Valid() bool
 	Merge(b SortedIterator) int
 	Value() []byte
 }
@@ -21,6 +20,13 @@ func (ih *ItHeap[T]) Len() int {
 }
 
 func (ih *ItHeap[T]) Push(x T) {
+	if !x.Next() {
+		return
+	}
+	ih.push(x)
+}
+
+func (ih *ItHeap[T]) push(x T) {
 	(*ih) = append(*ih, x)
 	ih.up(ih.Len() - 1)
 }
@@ -31,11 +37,11 @@ func (ih *ItHeap[T]) Next() (next []byte) {
 	for ih.Len() > 0 && x.Merge((*ih)[0]) == MergeA {
 		y := ih.Pop()
 		if y.Next() {
-			ih.Push(y)
+			ih.push(y)
 		}
 	}
 	if x.Next() {
-		ih.Push(x)
+		ih.push(x)
 	}
 	return
 }
@@ -71,7 +77,7 @@ func (ih *ItHeap[T]) Remove(i int) T {
 
 // Fix re-establishes the heap ordering after the element at index i has changed its value.
 // Changing the value of the element at index i and then calling Fix is equivalent to,
-// but less expensive than, calling Remove(h, i) followed by a Push of the new value.
+// but less expensive than, calling Remove(h, i) followed by a push of the new value.
 // The complexity is O(log n) where n = h.Len().
 func (ih ItHeap[T]) Fix(i int) {
 	if !ih.down(i, ih.Len()) {
