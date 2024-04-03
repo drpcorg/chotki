@@ -12,15 +12,20 @@ func ParsePacket(pack []byte) (lit byte, id, ref rdx.ID, body []byte, err error)
 		return
 	}
 	body = pack[hlen : hlen+blen]
-	if lit != 'Y' && lit != 'V' {
-		i, ihlen, iblen := toytlv.ProbeHeader(body)
-		if i != 'I' {
+	i, ihlen, iblen := toytlv.ProbeHeader(body)
+	if lit != 'D' && lit != 'V' && lit != 'H' {
+		if i != 'I' && i != '0' {
 			err = rdx.ErrBadPacket
 			return
 		}
-		id = rdx.IDFromZipBytes(body[ihlen : ihlen+iblen])
-		body = body[ihlen+iblen:]
+	} else {
+		if i != 'T' && i != '0' {
+			err = rdx.ErrBadPacket
+			return
+		}
 	}
+	id = rdx.IDFromZipBytes(body[ihlen : ihlen+iblen])
+	body = body[ihlen+iblen:]
 	r, rhlen, rblen := toytlv.ProbeHeader(body)
 	if r == 'R' {
 		ref = rdx.IDFromZipBytes(body[rhlen : rhlen+rblen])

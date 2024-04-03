@@ -189,8 +189,7 @@ func (cho *Chotki) Feed() (toyqueue.Records, error) {
 
 func (cho *Chotki) OpenTCP(tcp *toytlv.TCPDepot) {
 	tcp.Open(func(conn net.Conn) toyqueue.FeedDrainCloser {
-		// fixme snapshot etc
-		return &Syncer{Host: cho}
+		return &Syncer{Host: cho, Name: conn.RemoteAddr().String()}
 	})
 	// ...
 	io := pebble.IterOptions{}
@@ -234,10 +233,10 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 	for len(rest) > 0 && err == nil { // parse the packets
 		packet := rest[0]
 		rest = rest[1:]
-		lit, id, ref, body, err := ParsePacket(packet)
-		if err != nil {
-			cho.warn("bad packet: %s", err.Error())
-			continue
+		lit, id, ref, body, parse_err := ParsePacket(packet)
+		if parse_err != nil {
+			cho.warn("bad packet: %s", parse_err.Error())
+			return parse_err
 		}
 		apply = append(apply, packet) //nolint:staticcheck
 		if id.Src() == cho.src && id > cho.last {
@@ -246,7 +245,7 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 			}
 			cho.last = id
 		}
-		yv := false
+		yvh := false
 		pb := pebble.Batch{}
 		switch lit {
 		case 'L': // create replica log
@@ -266,29 +265,36 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 				return ErrBadLPacket
 			}
 			err = cho.ApplyE(id, ref, body, &pb)
-		case 'Y':
-			d, ok := cho.syncs[ref]
+		case 'H':
+			fmt.Printf("H sync session %s\n", id.String())
+			d := cho.db.NewBatch()
+			cho.syncs[id] = d
+		case 'D':
+			fmt.Printf("Y sync session %s\n", id.String())
+			d, ok := cho.syncs[id]
 			if !ok {
-				d = cho.db.NewBatch()
-				cho.syncs[id] = d
+				return ErrSyncUnknown
 			}
 			err = cho.ApplyY(id, ref, body, d)
-			yv = true
+			yvh = true
 		case 'V':
-			d, ok := cho.syncs[ref]
+			fmt.Printf("V sync session %s\n", id.String())
+			d, ok := cho.syncs[id]
 			if !ok {
 				return ErrSyncUnknown
 			}
 			err = cho.ApplyV(id, ref, body, d)
 			if err == nil {
 				err = cho.db.Apply(d, &WriteOptions)
-				delete(cho.syncs, ref)
+				delete(cho.syncs, id)
 			}
-			yv = true
+			yvh = true
+		case 'B': // bye dear
+			delete(cho.syncs, id)
 		default:
-			_, _ = fmt.Fprintf(os.Stderr, "unsupported packet %c skipped\n", lit)
+			return fmt.Errorf("unsupported packet type %c", lit)
 		}
-		if !yv && err == nil {
+		if !yvh && err == nil {
 			_ = cho.db.Apply(&pb, &WriteOptions)
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/ergochat/readline"
+	"github.com/learn-decentralized-systems/toytlv"
 	"io"
 	"os"
 	"strings"
@@ -15,6 +16,7 @@ import (
 // REPL per se.
 type REPL struct {
 	Host chotki.Chotki
+	tcp  *toytlv.TCPDepot
 	rl   *readline.Instance
 	Root Node
 	snap pebble.Reader
@@ -124,6 +126,9 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 	}
 
 	line = strings.TrimSpace(line)
+	if len(line) == 0 {
+		return rdx.ID0, nil
+	}
 	cmd, path, arg, err := rdx.ParseREPL([]byte(line))
 	if err != nil {
 		return
@@ -161,7 +166,9 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 		id, err = repl.CommandCat(path, arg)
 	// ----- networking -----
 	case "listen":
-		fmt.Println("I am listening")
+		id, err = repl.CommandListen(path, arg)
+	case "connect":
+		id, err = repl.CommandConnect(path, arg)
 	// ----- debug -----
 	case "dump":
 		id, err = repl.CommandDump(path, arg)

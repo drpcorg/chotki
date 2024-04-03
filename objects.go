@@ -120,14 +120,14 @@ func (cho *Chotki) CreateObject(tid rdx.ID, fields ...string) (id rdx.ID, err er
 		var tlv []byte
 		rdt := formula[i][0]
 		switch rdt {
-		case 'I':
-			tlv = rdx.Iparse(fields[i])
-		case 'S':
-			tlv = rdx.Sparse(fields[i])
 		case 'F':
 			tlv = rdx.Fparse(fields[i])
+		case 'I':
+			tlv = rdx.Iparse(fields[i])
 		case 'R':
 			tlv = rdx.Rparse(fields[i])
+		case 'S':
+			tlv = rdx.Sparse(fields[i])
 		}
 		if tlv == nil {
 			return rdx.BadId, ErrBadValueForAType

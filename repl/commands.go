@@ -3,7 +3,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
+	"github.com/learn-decentralized-systems/toyqueue"
+	"github.com/learn-decentralized-systems/toytlv"
+	"net"
 )
 
 var HelpCreate = errors.New("create zone/1 {Name:\"Name\",Description:\"long text\"}")
@@ -67,6 +71,10 @@ func (repl *REPL) CommandDump(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error
 }
 
 func (repl *REPL) CommandClose(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
+	if repl.tcp != nil {
+		repl.tcp.Close()
+		repl.tcp = nil
+	}
 	err = repl.Host.Close()
 	if err == nil {
 		id = repl.Host.Last()
@@ -142,5 +150,57 @@ func (repl *REPL) CommandCat(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error)
 	id = node.ID()
 	val := node.String()
 	fmt.Printf("%s:\t%s\n", id.String(), val)
+	return
+}
+
+var HelpAddress = errors.New("address syntax: 11.22.33.44 1234, host.com, etc")
+
+func (repl *REPL) ParseAddress(path *rdx.RDX, arg *rdx.RDX) (addr string, err error) {
+	if repl.Host.Last() == rdx.ID0 {
+		return "", chotki.ErrClosed
+	}
+	addr = "0.0.0.0"
+	if path != nil {
+		addr = string(path.Text)
+	}
+	if arg == nil {
+		addr += ":1234"
+	} else if arg.RdxType == rdx.RdxInt {
+		addr += ":" + string(arg.Text)
+	} else {
+		return "", HelpAddress
+	}
+	if repl.tcp == nil {
+		repl.tcp = &toytlv.TCPDepot{}
+		repl.tcp.Open(func(conn net.Conn) toyqueue.FeedDrainCloser {
+			return &chotki.Syncer{
+				Host: &repl.Host,
+				Mode: chotki.SyncRW,
+				Name: conn.RemoteAddr().String(),
+			}
+		})
+	}
+	return
+}
+
+var HelpListen = errors.New("listen 11.22.33.44 1234")
+
+func (repl *REPL) CommandListen(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
+	addr := ""
+	addr, err = repl.ParseAddress(path, arg)
+	if err == nil {
+		err = repl.tcp.Listen(addr)
+	}
+	return
+}
+
+var HelpConnect = errors.New("connect 11.22.33.44 1234")
+
+func (repl *REPL) CommandConnect(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
+	addr := ""
+	addr, err = repl.ParseAddress(path, arg)
+	if err == nil {
+		err = repl.tcp.Connect(addr)
+	}
 	return
 }

@@ -2,13 +2,13 @@ package chotki
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
 	"io"
 	"sync"
-	"time"
 )
 
 const SyncBlockBits = 28
@@ -17,19 +17,23 @@ const SyncBlockMask = (rdx.ID(1) << SyncBlockBits) - 1
 const SyncOutQueueLimit = 1 << 20
 
 type Syncer struct {
-	Host   *Chotki
-	Mode   uint64
-	peert  rdx.ID
-	snap   *pebble.Snapshot
-	ostate int
-	istate int
-	oqueue toyqueue.RecordQueue
-	myvv   rdx.VV
-	peervv rdx.VV
-	lock   sync.Mutex
-	vvit   *pebble.Iterator
-	ffit   *pebble.Iterator
-	vpack  []byte
+	Host       *Chotki
+	Mode       uint64
+	Name       string
+	peert      rdx.ID
+	snap       *pebble.Snapshot
+	snaplast   rdx.ID
+	feedState  int
+	drainState int
+	oqueue     toyqueue.RecordQueue
+	myvv       rdx.VV
+	peervv     rdx.VV
+	lock       sync.Mutex
+	cond       sync.Cond
+	vvit       *pebble.Iterator
+	ffit       *pebble.Iterator
+	vpack      []byte
+	reason     error
 }
 
 const (
@@ -42,12 +46,20 @@ const (
 )
 
 const (
-	SendVV = iota
-	SendDelta
-	SendCurrent
+	SendHandshake = iota
+	SendDiff
+	SendLive
 	SendEOF
-	SendNothing
+	SendNone
 )
+
+var SendStates = []string{
+	"SendHandshake",
+	"SendDiff",
+	"SendLive",
+	"SendEOF",
+	"SendNone",
+}
 
 func (sync *Syncer) Close() error {
 	sync.lock.Lock()
@@ -56,44 +68,62 @@ func (sync *Syncer) Close() error {
 		return toyqueue.ErrClosed
 	}
 	_ = sync.Host.RemovePacketHose(&sync.oqueue)
-	if sync.snap != nil {
-		_ = sync.snap.Close()
-		sync.snap = nil
-	}
-	sync.ostate = SendNothing
+	sync.SetFeedState(SendNone) //fixme
 	sync.lock.Unlock()
 	return nil
 }
 
 func (sync *Syncer) Feed() (recs toyqueue.Records, err error) {
-	switch sync.ostate {
-	case SendVV:
-		sync.ostate++
+	switch sync.feedState {
+	case SendHandshake:
 		recs, err = sync.FeedHandshake()
-	case SendDelta:
-		for sync.istate == SendVV && sync.Host != nil {
-			time.Sleep(time.Millisecond)
-		}
+		sync.SetFeedState(SendDiff)
+	case SendDiff:
+		sync.WaitDrainState(SendDiff)
 		recs, err = sync.FeedBlockDiff()
 		if err == io.EOF {
 			recs2, _ := sync.FeedDiffVV()
 			recs = append(recs, recs2...)
 			if (sync.Mode & SyncLive) != 0 {
-				sync.ostate++
+				sync.SetFeedState(SendLive)
 			} else {
-				sync.ostate = SendEOF
+				sync.SetFeedState(SendEOF)
 			}
+			_ = sync.snap.Close()
+			sync.snap = nil
 			err = nil
 		}
-	case SendCurrent:
-		recs, err = sync.FeedUpdates()
+	case SendLive:
+		recs, err = sync.oqueue.Feed()
+		if err == toyqueue.ErrClosed {
+			sync.SetFeedState(SendEOF)
+			err = nil
+		}
 	case SendEOF:
-		_ = sync.oqueue.Close()
-		sync.ostate++
+		reason := []byte("closing")
+		if sync.reason != nil {
+			reason = []byte(sync.reason.Error())
+		}
+		recs = toyqueue.Records{toytlv.Record('B',
+			toytlv.TinyRecord('T', sync.snaplast.ZipBytes()),
+			reason,
+		)}
+		if sync.snap != nil {
+			_ = sync.snap.Close()
+			sync.snap = nil
+		}
+		sync.SetFeedState(SendNone)
+	case SendNone:
+		sync.WaitDrainState(SendNone) // fixme time limit
 		err = io.EOF
-	case SendNothing:
-		err = toyqueue.ErrClosed
 	}
+	return
+}
+
+func (sync *Syncer) EndGracefully(reason error) (err error) {
+	_ = sync.Host.RemovePacketHose(&sync.oqueue)
+	_ = sync.oqueue.Close()
+	sync.reason = reason
 	return
 }
 
@@ -125,17 +155,18 @@ func (sync *Syncer) FeedHandshake() (vv toyqueue.Records, err error) {
 	if err != nil {
 		return nil, err
 	}
+	sync.snaplast = sync.myvv.GetID(sync.Host.src)
 
 	sync.vpack = make([]byte, 0, 4096)
 	_, sync.vpack = toytlv.OpenHeader(sync.vpack, 'V') // 5
+	sync.vpack = append(sync.vpack, toytlv.Record('T', sync.snaplast.ZipBytes())...)
 	v := toytlv.Record('V',
-		toytlv.Record('R', rdx.ID0.ZipBytes()),
 		sync.vvit.Value()) // todo use the one in handshake
 	sync.vpack = append(sync.vpack, v...)
 
 	// handshake: H(T{pro,src} M(mode) V(V{p,s}+))
 	hs := toytlv.Record('H',
-		toytlv.TinyRecord('T', sync.Host.last.ZipBytes()),
+		toytlv.TinyRecord('T', sync.snaplast.ZipBytes()),
 		toytlv.TinyRecord('M', rdx.ZipUint64(sync.Mode)),
 		toytlv.Record('V', sync.vvit.Value()),
 	)
@@ -168,7 +199,8 @@ func (sync *Syncer) FeedBlockDiff() (diff toyqueue.Records, err error) {
 	block := VKeyId(sync.vvit.Key()).ZeroOff()
 	key := OKey(block, 0)
 	sync.ffit.SeekGE(key)
-	bmark, parcel := toytlv.OpenHeader(nil, 'Y')
+	bmark, parcel := toytlv.OpenHeader(nil, 'D')
+	parcel = append(parcel, toytlv.Record('T', sync.snaplast.ZipBytes())...)
 	parcel = append(parcel, toytlv.Record('R', block.ZipBytes())...)
 	till := block + SyncBlockMask + 1
 	for ; sync.ffit.Valid(); sync.ffit.Next() {
@@ -217,34 +249,85 @@ func (sync *Syncer) FeedDiffVV() (vv toyqueue.Records, err error) {
 	return
 }
 
-func (sync *Syncer) FeedUpdates() (vv toyqueue.Records, err error) {
-	return sync.oqueue.Feed()
+func (sync *Syncer) SetFeedState(state int) {
+	fmt.Printf("%s feed state %s\n", sync.Name, SendStates[state])
+	sync.feedState = state
+}
+
+func (sync *Syncer) SetDrainState(state int) {
+	fmt.Printf("%s drain state %s\n", sync.Name, SendStates[state])
+	sync.lock.Lock()
+	sync.drainState = state
+	if sync.cond.L == nil {
+		sync.cond.L = &sync.lock
+	}
+	sync.cond.Broadcast()
+	sync.lock.Unlock()
+}
+
+func (sync *Syncer) WaitDrainState(state int) (ds int) {
+	sync.lock.Lock()
+	for sync.drainState < state {
+		if sync.cond.L == nil {
+			sync.cond.L = &sync.lock
+		}
+		sync.cond.Wait()
+	}
+	ds = sync.drainState
+	sync.lock.Unlock()
+	return
+}
+
+func LastLit(recs toyqueue.Records) byte {
+	if len(recs) == 0 {
+		return 0
+	}
+	return toytlv.Lit(recs[len(recs)-1])
 }
 
 func (sync *Syncer) Drain(recs toyqueue.Records) (err error) {
-	switch sync.istate {
-	case SendVV:
+	if len(recs) == 0 {
+		return nil
+	}
+	switch sync.drainState {
+	case SendHandshake:
 		if len(recs) == 0 {
 			return ErrBadHPacket
 		}
 		err = sync.DrainHandshake(recs[0:1])
+		if err == nil {
+			err = sync.Host.Drain(recs[0:1])
+		}
+		if err != nil {
+			return
+		}
 		recs = recs[1:]
-		sync.istate++
+		sync.SetDrainState(SendDiff)
 		if len(recs) == 0 {
 			break
 		}
 		fallthrough
-	case SendDelta:
+	case SendDiff:
+		lit := LastLit(recs)
+		if lit != 'D' && lit != 'V' {
+			if lit == 'B' {
+				sync.SetDrainState(SendNone)
+			} else {
+				sync.SetDrainState(SendLive)
+			}
+		}
 		err = sync.Host.Drain(recs)
-	case SendCurrent:
+	case SendLive:
+		lit := LastLit(recs)
+		if lit == 'B' {
+			sync.SetDrainState(SendNone)
+		}
 		err = sync.Host.Drain(recs)
-	case SendEOF:
-		return toyqueue.ErrClosed
-	case SendNothing:
-		return toyqueue.ErrClosed
+	default:
+		return ErrClosed
 	}
 	if err != nil { // todo send the error msg
-		sync.istate = SendEOF
+		sync.drainState = SendEOF
 	}
 	return
 }
