@@ -37,17 +37,17 @@ type KVMerger interface {
 }
 
 func TestChotki_Sync(t *testing.T) {
-	_ = os.RemoveAll("cho1c")
-	_ = os.RemoveAll("cho1d")
+	_ = os.RemoveAll("choa")
+	_ = os.RemoveAll("chob")
 	var a, b Chotki
-	err := a.Create(0x1c, "test replica A")
+	err := a.Create(0xa, "test replica A")
 	assert.Nil(t, err)
 	//a.DumpAll()
-	err = b.Create(0x1d, "test replica B")
+	err = b.Create(0xb, "test replica B")
 	assert.Nil(t, err)
 
-	synca := Syncer{Host: &a, Mode: SyncRW}
-	syncb := Syncer{Host: &b, Mode: SyncRW}
+	synca := Syncer{Host: &a, Mode: SyncRW, Name: "a"}
+	syncb := Syncer{Host: &b, Mode: SyncRW, Name: "b"}
 	err = toyqueue.Relay(&syncb, &synca)
 	assert.Nil(t, err)
 	err = toyqueue.Pump(&synca, &syncb)
@@ -55,10 +55,12 @@ func TestChotki_Sync(t *testing.T) {
 
 	bvv, err := b.VersionVector()
 	assert.Nil(t, err)
-	assert.Equal(t, "1,1c-0-1,1d-0-1", bvv.String())
+	assert.Equal(t, "1,a-0-1,b-0-1", bvv.String())
+
+	b.DumpAll()
 
 	_ = a.Close()
 	_ = b.Close()
-	_ = os.RemoveAll("cho1c")
-	_ = os.RemoveAll("cho1d")
+	_ = os.RemoveAll("choa")
+	_ = os.RemoveAll("chob")
 }

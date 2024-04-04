@@ -9,6 +9,7 @@ import (
 	"github.com/learn-decentralized-systems/toytlv"
 	"io"
 	"sync"
+	"time"
 )
 
 const SyncBlockBits = 28
@@ -114,7 +115,11 @@ func (sync *Syncer) Feed() (recs toyqueue.Records, err error) {
 		}
 		sync.SetFeedState(SendNone)
 	case SendNone:
-		sync.WaitDrainState(SendNone) // fixme time limit
+		timer := time.AfterFunc(time.Second, func() {
+			sync.SetDrainState(SendNone)
+		})
+		sync.WaitDrainState(SendNone)
+		timer.Stop()
 		err = io.EOF
 	}
 	return
@@ -160,9 +165,6 @@ func (sync *Syncer) FeedHandshake() (vv toyqueue.Records, err error) {
 	sync.vpack = make([]byte, 0, 4096)
 	_, sync.vpack = toytlv.OpenHeader(sync.vpack, 'V') // 5
 	sync.vpack = append(sync.vpack, toytlv.Record('T', sync.snaplast.ZipBytes())...)
-	v := toytlv.Record('V',
-		sync.vvit.Value()) // todo use the one in handshake
-	sync.vpack = append(sync.vpack, v...)
 
 	// handshake: H(T{pro,src} M(mode) V(V{p,s}+))
 	hs := toytlv.Record('H',
@@ -322,35 +324,41 @@ func (sync *Syncer) Drain(recs toyqueue.Records) (err error) {
 	return
 }
 
-func (sync *Syncer) DrainHandshake(recs toyqueue.Records) (err error) {
+func ParseHandshake(body []byte) (mode int, vv rdx.VV, err error) {
 	// handshake: H(T{pro,src} M(mode) V(V{p,s}+) ...)
-	var hsbody, nothing, tbody, mbody, vbody, rest []byte
-	hsbody, nothing = toytlv.Take('H', recs[0])
-	if len(hsbody) == 0 || len(nothing) > 0 {
-		return ErrBadHPacket
-	}
-	tbody, rest = toytlv.Take('T', hsbody)
-	if tbody == nil {
-		return ErrBadHPacket
-	}
-	sync.peert = rdx.IDFromZipBytes(tbody)
+	var mbody, vbody []byte
+	rest := body
+	err = ErrBadHPacket
 	mbody, rest = toytlv.Take('M', rest)
 	if mbody == nil {
-		return ErrBadHPacket
+		return
 	}
 	peermode := rdx.UnzipUint64(mbody)
 	_ = peermode // todo
 	vbody, rest = toytlv.Take('V', rest)
 	if vbody == nil {
+		return
+	}
+	vv = make(rdx.VV)
+	e := vv.PutTLV(vbody)
+	if e != nil {
+		err = e
+		return
+	}
+	err = nil
+	return
+}
+
+func (sync *Syncer) DrainHandshake(recs toyqueue.Records) (err error) {
+	lit, id, _, body, err := ParsePacket(recs[0])
+	if lit != 'H' {
 		return ErrBadHPacket
 	}
-	sync.peervv = make(rdx.VV)
-	err = sync.peervv.PutTLV(vbody)
-	if err != nil {
-		return ErrBadHPacket
-	}
-	_ = rest // todo
-	return nil
+	mode := 0
+	sync.peert = id
+	mode, sync.peervv, err = ParseHandshake(body)
+	_ = mode
+	return
 }
 
 func ParseVPack(vpack []byte) (vvs map[rdx.ID]rdx.VV, err error) {

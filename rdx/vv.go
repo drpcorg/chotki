@@ -198,8 +198,7 @@ func Vdelta(tlv []byte, new_val VV) (tlv_delta []byte) {
 }
 
 func Vvalid(tlv []byte) bool {
-	vv := make(VV)
-	return vv.PutTLV(tlv) == nil
+	return VValid(tlv)
 }
 
 func Vdiff(tlv []byte, vvdiff VV) (diff_tlv []byte) {

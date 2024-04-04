@@ -269,6 +269,7 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 			fmt.Printf("H sync session %s\n", id.String())
 			d := cho.db.NewBatch()
 			cho.syncs[id] = d
+			err = cho.ApplyH(id, ref, body, d)
 		case 'D':
 			fmt.Printf("D sync session %s\n", id.String())
 			d, ok := cho.syncs[id]

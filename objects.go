@@ -84,7 +84,7 @@ func (cho *Chotki) ObjectField(oid rdx.ID, off rdx.ID) (rdt byte, tlv []byte, er
 	if !it.SeekGE(key) {
 		return 0, nil, pebble.ErrNotFound
 	}
-	fidfact := rdx.ID0
+	var fidfact rdx.ID
 	fidfact, rdt = OKeyIdRdt(it.Key())
 	if fidfact != fid {
 		return 0, nil, pebble.ErrNotFound
