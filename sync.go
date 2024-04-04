@@ -335,7 +335,7 @@ func ParseHandshake(body []byte) (mode int, vv rdx.VV, err error) {
 	}
 	peermode := rdx.UnzipUint64(mbody)
 	_ = peermode // todo
-	vbody, rest = toytlv.Take('V', rest)
+	vbody, _ = toytlv.Take('V', rest)
 	if vbody == nil {
 		return
 	}
@@ -350,8 +350,8 @@ func ParseHandshake(body []byte) (mode int, vv rdx.VV, err error) {
 }
 
 func (sync *Syncer) DrainHandshake(recs toyqueue.Records) (err error) {
-	lit, id, _, body, err := ParsePacket(recs[0])
-	if lit != 'H' {
+	lit, id, _, body, e := ParsePacket(recs[0])
+	if lit != 'H' || e != nil {
 		return ErrBadHPacket
 	}
 	mode := 0

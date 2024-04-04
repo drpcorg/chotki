@@ -35,7 +35,7 @@ func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 func (cho *Chotki) ApplyH(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
 	_, rest := toytlv.Take('M', body)
 	var vbody []byte
-	vbody, rest = toytlv.Take('V', rest)
+	vbody, _ = toytlv.Take('V', rest)
 	err = batch.Merge(VKey(rdx.ID0), vbody, &WriteOptions)
 	return
 }
