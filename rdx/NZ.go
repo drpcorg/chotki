@@ -65,7 +65,7 @@ func Nvalid(tlv []byte) bool {
 }
 
 func Ndiff(tlv []byte, vvdiff VV) []byte {
-	return nil //fixme
+	return tlv //fixme
 }
 
 type NIterator struct {

@@ -2,7 +2,6 @@ package chotki
 
 import (
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/learn-decentralized-systems/toytlv"
 	"io"
 	"slices"
 )
@@ -37,35 +36,6 @@ func (a *PebbleMergeAdaptor) Finish(includesBase bool) (res []byte, cl io.Closer
 	if len(inputs) == 0 {
 		return nil, nil, nil
 	}
-	switch a.rdt {
-	case 'L', 'O', 'T', 'A': // object's ref is immutable
-		res = Amerge(inputs)
-	case 'C':
-		res = CMerge(inputs)
-	case 'I':
-		res = rdx.Imerge(inputs)
-	case 'S':
-		res = rdx.Smerge(inputs)
-	case 'R':
-		res = rdx.Rmerge(inputs)
-	case 'F':
-		res = rdx.Fmerge(inputs)
-	case 'V':
-		res = rdx.Vmerge(inputs)
-	default:
-		res = NoMerge(inputs)
-	}
+	res = rdx.Xmerge(a.rdt, inputs)
 	return res, nil, nil
-}
-
-func Amerge(inputs [][]byte) []byte {
-	return inputs[0]
-}
-
-func NoMerge(inputs [][]byte) []byte {
-	ret := make([]byte, 0, toytlv.TotalLen(inputs))
-	for _, input := range inputs {
-		ret = append(ret, input...)
-	}
-	return ret
 }

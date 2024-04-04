@@ -94,7 +94,7 @@ func (cho *Chotki) ObjectField(oid rdx.ID, off rdx.ID) (rdt byte, tlv []byte, er
 	return
 }
 
-func (cho *Chotki) CreateType(parent rdx.ID, fields ...string) (id rdx.ID, err error) {
+func (cho *Chotki) NewClass(parent rdx.ID, fields ...string) (id rdx.ID, err error) {
 	var fspecs toyqueue.Records
 	//fspecs = append(fspecs, toytlv.Record('A', parent.ZipBytes()))
 	for _, field := range fields {
@@ -103,10 +103,10 @@ func (cho *Chotki) CreateType(parent rdx.ID, fields ...string) (id rdx.ID, err e
 		}
 		fspecs = append(fspecs, toytlv.Record('S', rdx.Stlv(field)))
 	}
-	return cho.CommitPacket('T', parent, fspecs)
+	return cho.CommitPacket('C', parent, fspecs)
 }
 
-func (cho *Chotki) CreateObject(tid rdx.ID, fields ...string) (id rdx.ID, err error) {
+func (cho *Chotki) NewObject(tid rdx.ID, fields ...string) (id rdx.ID, err error) {
 	var formula []string
 	formula, err = cho.TypeFields(tid)
 	if err != nil {
@@ -117,18 +117,8 @@ func (cho *Chotki) CreateObject(tid rdx.ID, fields ...string) (id rdx.ID, err er
 	}
 	var packet toyqueue.Records
 	for i := 0; i < len(fields); i++ {
-		var tlv []byte
 		rdt := formula[i][0]
-		switch rdt {
-		case 'F':
-			tlv = rdx.Fparse(fields[i])
-		case 'I':
-			tlv = rdx.Iparse(fields[i])
-		case 'R':
-			tlv = rdx.Rparse(fields[i])
-		case 'S':
-			tlv = rdx.Sparse(fields[i])
-		}
+		tlv := rdx.Xparse(rdt, fields[i])
 		if tlv == nil {
 			return rdx.BadId, ErrBadValueForAType
 		}

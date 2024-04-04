@@ -15,9 +15,9 @@ func TestTypes(t *testing.T) {
 	assert.Nil(t, err)
 
 	var tid, oid rdx.ID
-	tid, err = a.CreateType(rdx.ID0, "SName", "IScore")
+	tid, err = a.NewClass(rdx.ID0, "SName", "IScore")
 	assert.Nil(t, err)
-	oid, err = a.CreateObject(tid, "\"Petrov\"", "42")
+	oid, err = a.NewObject(tid, "\"Petrov\"", "42")
 	assert.Nil(t, err)
 	assert.Equal(t, tid+rdx.ProInc, oid)
 

@@ -9,7 +9,7 @@ func TestChotki_ParseEvent(t *testing.T) {
 	var repl Chotki
 	err := repl.Open(123)
 	assert.Nil(t, err)
-	so := repl.CreateObject()
+	so := repl.NewObject()
 	assert.Equal(t, 0, so.Sum())
 	so.Add(1)
 	assert.Equal(t, 1, so.Sum())

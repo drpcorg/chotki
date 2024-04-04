@@ -17,7 +17,7 @@ func (cho *Chotki) UpdateVTree(id, ref rdx.ID, pb *pebble.Batch) (err error) {
 	return
 }
 
-func (cho *Chotki) ApplyY(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
+func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
 	// see Chotki.SyncPeer()
 	rest := body
 	var rdt byte
@@ -49,7 +49,7 @@ func (cho *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 	return
 }
 
-func (cho *Chotki) ApplyLOT(lot byte, id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
+func (cho *Chotki) ApplyCOLA(lot byte, id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
 	err = batch.Merge(
 		OKey(id, lot),
 		ref.ZipBytes(),

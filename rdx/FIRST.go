@@ -409,3 +409,50 @@ func Fvalid(tlv []byte) bool {
 func Fdiff(tlv []byte, vvdiff VV) []byte {
 	return DiffFIRST(tlv, vvdiff)
 }
+
+// I is a last-write-wins int64
+
+// produce a text form (for REPL mostly)
+func Tstring(tlv []byte) (txt string) {
+	return "null"
+}
+
+// parse a text form into a TLV value
+func Tparse(txt string) (tlv []byte) {
+	if txt != "null" {
+		return nil
+	}
+	return Ttlv()
+}
+
+// convert native golang value into a TLV form
+func Ttlv() (tlv []byte) {
+	return TlvFIRST(0, 0, nil)
+}
+
+// Enveloped I TLV
+func Ttlve(rev int64, src uint64) []byte {
+	return toytlv.Record('T',
+		toytlv.TinyRecord('T', ZipIntUint64Pair(rev, src)),
+	)
+}
+
+// merge TLV values
+func Tmerge(tlvs [][]byte) (tlv []byte) {
+	return MergeFIRST(tlvs)
+}
+
+// produce an op that turns the old value into the new one
+func Tdelta(tlv []byte) (tlv_delta []byte) {
+	return nil
+}
+
+// checks a TLV value for validity (format violations)
+func Tvalid(tlv []byte) bool {
+	_, src, val := ParseFIRST(tlv)
+	return val != nil && len(val) == 0 && src <= MaxSrc
+}
+
+func Tdiff(tlv []byte, vvdiff VV) []byte {
+	return DiffFIRST(tlv, vvdiff)
+}

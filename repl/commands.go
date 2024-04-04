@@ -16,14 +16,13 @@ func (repl *REPL) CommandCreate(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err err
 	if path == nil || len(path.Nested) == 0 {
 		return rdx.BadId, HelpCreate
 	}
-	var src uint64
 	last := path.Nested[len(path.Nested)-1]
-	if last.RdxType != rdx.RdxInt {
+	if last.RdxType != rdx.RdxRef {
 		return rdx.BadId, HelpCreate
 	}
-	_, _ = fmt.Sscanf(string(last.String()), "%d", &src)
+	src0 := rdx.IDFromText(last.Text)
 	name := "name TODO"
-	err = repl.Host.Create(src, name)
+	err = repl.Host.Create(src0.Src(), name)
 	if err == nil {
 		id = repl.Host.Last()
 	}
@@ -36,13 +35,12 @@ func (repl *REPL) CommandOpen(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error
 	if path == nil || len(path.Nested) == 0 {
 		return rdx.BadId, HelpOpen
 	}
-	var src uint64
 	last := path.Nested[len(path.Nested)-1]
-	if last.RdxType != rdx.RdxInt {
+	if last.RdxType != rdx.RdxRef {
 		return rdx.BadId, HelpOpen
 	}
-	_, _ = fmt.Sscanf(string(last.String()), "%d", &src)
-	err = repl.Host.Open(src)
+	src0 := rdx.IDFromText(last.Text)
+	err = repl.Host.Open(src0.Src())
 	if err == nil {
 		id = repl.Host.Last()
 	}
@@ -84,7 +82,7 @@ func (repl *REPL) CommandClose(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err erro
 
 var HelpType = errors.New("type Parent [\"SName\", \"IAge\"]")
 
-func (repl *REPL) CommandType(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
+func (repl *REPL) CommandClass(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
 	if path == nil || len(path.Nested) == 0 || arg == nil || len(arg.Nested) == 0 {
 		return rdx.BadId, HelpType
 	}
@@ -100,7 +98,7 @@ func (repl *REPL) CommandType(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error
 		}
 		fields = append(fields, form)
 	}
-	id, err = repl.Host.CreateType(rdx.ID0, fields...)
+	id, err = repl.Host.NewClass(rdx.ID0, fields...)
 	return
 }
 
@@ -118,7 +116,7 @@ func (repl *REPL) CommandNew(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error)
 	for _, a := range arg.Nested {
 		fields = append(fields, string(a.Text))
 	}
-	id, err = repl.Host.CreateObject(tid, fields...)
+	id, err = repl.Host.NewObject(tid, fields...)
 	return
 }
 

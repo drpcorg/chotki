@@ -47,7 +47,7 @@ func CreateObjectFromList(chotki *chotki.Chotki, list []interface{}) (id chotki.
 }
 
 // ["{10-4f8-0}", +1, "string", 1.0, ...]
-func CreateObject(chotki *chotki.Chotki, jsn []byte) (id chotki.ID, err error) {
+func NewObject(chotki *chotki.Chotki, jsn []byte) (id chotki.ID, err error) {
 	var parsed interface{}
 	err = json.Unmarshal(jsn, &parsed)
 	if err != nil {

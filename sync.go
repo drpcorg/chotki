@@ -214,17 +214,7 @@ func (sync *Syncer) FeedBlockDiff() (diff toyqueue.Records, err error) {
 			parcel = append(parcel, toytlv.Record(rdt, sync.ffit.Value())...)
 			continue
 		}
-		var diff []byte
-		switch rdt {
-		case 'A':
-			diff = nil
-		case 'I':
-			diff = rdx.Idiff(sync.ffit.Value(), sendvv)
-		case 'S':
-			diff = rdx.Sdiff(sync.ffit.Value(), sendvv)
-		default:
-			diff = sync.ffit.Value()
-		}
+		diff := rdx.Xdiff(rdt, sync.ffit.Value(), sendvv)
 		if len(diff) != 0 {
 			parcel = append(parcel, toytlv.Record('F', rdx.ZipUint64(uint64(id-block)))...)
 			parcel = append(parcel, toytlv.Record(rdt, diff)...)

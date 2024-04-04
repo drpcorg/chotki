@@ -1,7 +1,6 @@
 package chotki
 
 import (
-	hex2 "encoding/hex"
 	"fmt"
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
@@ -17,23 +16,7 @@ func ChotkiKVString(key, value []byte) string {
 	id, rdt := OKeyIdRdt(key)
 	line = append(line, id.String()...)
 	line = append(line, '.', byte(rdt), ':', '\t')
-	switch rdt {
-	case 'L', 'O', 'A': // FIXME T
-		ref := rdx.IDFromZipBytes(value)
-		line = append(line, ref.String()...)
-	case 'I':
-		line = append(line, rdx.Istring(value)...)
-	case 'S':
-		line = append(line, rdx.Sstring(value)...)
-	case 'R', 'T':
-		line = append(line, rdx.Rstring(value)...)
-	case 'F':
-		line = append(line, rdx.Fstring(value)...)
-	default:
-		hex := make([]byte, len(value)*2)
-		hex2.Encode(hex, value)
-		line = append(line, hex...)
-	}
+	line = append(line, rdx.Xstring(rdt, value)...)
 	return string(line)
 }
 

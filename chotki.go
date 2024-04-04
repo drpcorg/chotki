@@ -248,18 +248,18 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 		yvh := false
 		pb := pebble.Batch{}
 		switch lit {
+		case 'C':
+			err = cho.ApplyCOLA('C', id, ref, body, &pb)
 		case 'L': // create replica log
 			if ref != rdx.ID0 {
 				return ErrBadLPacket
 			}
-			err = cho.ApplyLOT('L', id, ref, body, &pb)
+			err = cho.ApplyCOLA('L', id, ref, body, &pb)
 		case 'O': // create object
 			if ref == rdx.ID0 {
 				return ErrBadLPacket
 			}
-			err = cho.ApplyLOT('O', id, ref, body, &pb)
-		case 'T':
-			err = cho.ApplyLOT('T', id, ref, body, &pb)
+			err = cho.ApplyCOLA('O', id, ref, body, &pb)
 		case 'E':
 			if ref == rdx.ID0 {
 				return ErrBadLPacket
@@ -270,12 +270,12 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 			d := cho.db.NewBatch()
 			cho.syncs[id] = d
 		case 'D':
-			fmt.Printf("Y sync session %s\n", id.String())
+			fmt.Printf("D sync session %s\n", id.String())
 			d, ok := cho.syncs[id]
 			if !ok {
 				return ErrSyncUnknown
 			}
-			err = cho.ApplyY(id, ref, body, d)
+			err = cho.ApplyD(id, ref, body, d)
 			yvh = true
 		case 'V':
 			fmt.Printf("V sync session %s\n", id.String())
