@@ -1,6 +1,6 @@
 package rdx
 
-//import "fmt";
+import "fmt"
 
 var __RDX_actions = []int8{0, 1, 0, 1, 1, 1, 2, 1, 3, 1, 4, 1, 5, 1, 6, 1, 7, 1, 8, 1, 9, 1, 10, 2, 1, 5, 2, 1, 7, 2, 1, 9, 2, 1, 10, 2, 2, 5, 2, 2, 7, 2, 2, 9, 2, 2, 10, 2, 3, 5, 2, 3, 7, 2, 3, 9, 2, 3, 10, 2, 4, 5, 2, 4, 7, 2, 4, 9, 2, 4, 10, 2, 6, 0, 2, 6, 5, 2, 6, 7, 2, 6, 9, 2, 6, 10, 2, 8, 0, 2, 8, 5, 2, 8, 7, 2, 8, 9, 2, 8, 10, 0}
 var __RDX_key_offsets = []int16{0, 0, 23, 30, 32, 34, 38, 42, 44, 50, 56, 68, 75, 82, 90, 99, 105, 111, 117, 123, 146, 169, 178, 201, 215, 226, 249, 268, 284, 299, 322, 343, 359, 0}
@@ -167,8 +167,29 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 
 				case 6:
 					{
+						if rdx.Parent == nil {
+							cs = _RDX_error
+							{
+								p += 1
+								goto _out
+
+							}
+
+						}
 						nest--
 						rdx = rdx.Parent
+						if rdx.RdxType != RdxSet && rdx.RdxType != RdxMap && rdx.RdxType != RdxObject {
+							cs = _RDX_error
+							{
+								p += 1
+								goto _out
+
+							}
+
+						}
+						if len(rdx.Nested) == 1 {
+							rdx.RdxType = RdxSet
+						}
 					}
 
 				case 7:
@@ -183,13 +204,32 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 
 				case 8:
 					{
+						if rdx.Parent == nil {
+							cs = _RDX_error
+							{
+								p += 1
+								goto _out
+
+							}
+
+						}
 						nest--
 						rdx = rdx.Parent
+						if rdx.RdxType != RdxArray {
+							cs = _RDX_error
+							{
+								p += 1
+								goto _out
+
+							}
+
+						}
 					}
 
 				case 9:
 					{
 						if rdx.Parent == nil {
+							cs = _RDX_error
 							{
 								p += 1
 								goto _out
@@ -198,16 +238,18 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 
 						}
 						n := rdx.Parent.Nested
-						if len(n) == 1 && rdx.Parent.RdxType == RdxMap {
-							rdx.Parent.RdxType = RdxSet
-						}
-						if 1 == (len(n)&1) && rdx.Parent.RdxType == RdxMap {
-							{
-								p += 1
-								goto _out
+						if rdx.Parent.RdxType == RdxMap {
+							if len(n) == 1 {
+								rdx.Parent.RdxType = RdxSet
+							} else if (len(n) & 1) == 1 {
+								cs = _RDX_error
+								{
+									p += 1
+									goto _out
+
+								}
 
 							}
-
 						}
 						n = append(n, RDX{Parent: rdx.Parent})
 						rdx.Parent.Nested = n
@@ -216,7 +258,54 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 
 				case 10:
 					{
+						if rdx.Parent == nil {
+							cs = _RDX_error
+							{
+								p += 1
+								goto _out
+
+							}
+
+						}
 						n := rdx.Parent.Nested
+						if rdx.Parent.RdxType == RdxMap {
+							if (len(n) & 1) == 0 {
+								cs = _RDX_error
+								{
+									p += 1
+									goto _out
+
+								}
+
+							}
+						} else if rdx.Parent.RdxType == RdxObject {
+							if (len(n) & 1) == 0 {
+								cs = _RDX_error
+								{
+									p += 1
+									goto _out
+
+								}
+
+							}
+							if rdx.RdxType != RdxName {
+								cs = _RDX_error
+								{
+									p += 1
+									goto _out
+
+								}
+
+							}
+						} else {
+							cs = _RDX_error
+							{
+								p += 1
+								goto _out
+
+							}
+
+						}
 						n = append(n, RDX{Parent: rdx.Parent})
 						rdx.Parent.Nested = n
 						rdx = &n[len(n)-1]
@@ -250,7 +339,7 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 
 	}
 	if cs < _RDX_first_final {
-		err = ErrBadRdx
+		err = fmt.Errorf("RDX parsing failed at pos %d", p)
 	}
 
 	return

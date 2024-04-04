@@ -170,8 +170,29 @@ func ParseREPL(data []byte) (cmd string, path *RDX, rdx *RDX, err error) {
 
 				case 6:
 					{
+						if rdx.Parent == nil {
+							cs = _RDX_error
+							{
+								p += 1
+								goto _out
+
+							}
+
+						}
 						nest--
 						rdx = rdx.Parent
+						if rdx.RdxType != RdxSet && rdx.RdxType != RdxMap && rdx.RdxType != RdxObject {
+							cs = _RDX_error
+							{
+								p += 1
+								goto _out
+
+							}
+
+						}
+						if len(rdx.Nested) == 1 {
+							rdx.RdxType = RdxSet
+						}
 					}
 
 				case 7:
@@ -186,13 +207,32 @@ func ParseREPL(data []byte) (cmd string, path *RDX, rdx *RDX, err error) {
 
 				case 8:
 					{
+						if rdx.Parent == nil {
+							cs = _RDX_error
+							{
+								p += 1
+								goto _out
+
+							}
+
+						}
 						nest--
 						rdx = rdx.Parent
+						if rdx.RdxType != RdxArray {
+							cs = _RDX_error
+							{
+								p += 1
+								goto _out
+
+							}
+
+						}
 					}
 
 				case 9:
 					{
 						if rdx.Parent == nil {
+							cs = _RDX_error
 							{
 								p += 1
 								goto _out
@@ -201,16 +241,18 @@ func ParseREPL(data []byte) (cmd string, path *RDX, rdx *RDX, err error) {
 
 						}
 						n := rdx.Parent.Nested
-						if len(n) == 1 && rdx.Parent.RdxType == RdxMap {
-							rdx.Parent.RdxType = RdxSet
-						}
-						if 1 == (len(n)&1) && rdx.Parent.RdxType == RdxMap {
-							{
-								p += 1
-								goto _out
+						if rdx.Parent.RdxType == RdxMap {
+							if len(n) == 1 {
+								rdx.Parent.RdxType = RdxSet
+							} else if (len(n) & 1) == 1 {
+								cs = _RDX_error
+								{
+									p += 1
+									goto _out
+
+								}
 
 							}
-
 						}
 						n = append(n, RDX{Parent: rdx.Parent})
 						rdx.Parent.Nested = n
@@ -219,7 +261,54 @@ func ParseREPL(data []byte) (cmd string, path *RDX, rdx *RDX, err error) {
 
 				case 10:
 					{
+						if rdx.Parent == nil {
+							cs = _RDX_error
+							{
+								p += 1
+								goto _out
+
+							}
+
+						}
 						n := rdx.Parent.Nested
+						if rdx.Parent.RdxType == RdxMap {
+							if (len(n) & 1) == 0 {
+								cs = _RDX_error
+								{
+									p += 1
+									goto _out
+
+								}
+
+							}
+						} else if rdx.Parent.RdxType == RdxObject {
+							if (len(n) & 1) == 0 {
+								cs = _RDX_error
+								{
+									p += 1
+									goto _out
+
+								}
+
+							}
+							if rdx.RdxType != RdxName {
+								cs = _RDX_error
+								{
+									p += 1
+									goto _out
+
+								}
+
+							}
+						} else {
+							cs = _RDX_error
+							{
+								p += 1
+								goto _out
+
+							}
+
+						}
 						n = append(n, RDX{Parent: rdx.Parent})
 						rdx.Parent.Nested = n
 						rdx = &n[len(n)-1]

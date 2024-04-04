@@ -18,11 +18,25 @@ func TestRDX_Parse(t *testing.T) {
 		" [ \"long string here\", 1 ,2 ]": "[\"long string here\",1,2]",
 		"{1f8-a364: 3 }":                  "{1f8-a364:3}",
 		"{1f8-a364, 3,4, \"five\" }":      "{1f8-a364,3,4,\"five\"}",
+		"{  { {1  } }}":                   "{{{1}}}",
 	}
 	for in, out := range cases {
 		rdx, err := ParseRDX([]byte(in))
-		assert.Nil(t, err)
+		assert.Nilf(t, err, "input [%s]", in)
 		assert.Equal(t, out, rdx.String())
+	}
+}
+
+func TestRDX_Error(t *testing.T) {
+	cases := []string{
+		"}",
+		"[b0b-0}",
+		"{1]",
+		"{{{1}}}}",
+	}
+	for n, in := range cases {
+		_, err := ParseRDX([]byte(in))
+		assert.NotNilf(t, err, "case %d: %s", n, in)
 	}
 }
 

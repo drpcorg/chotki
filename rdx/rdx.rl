@@ -1,6 +1,6 @@
 package rdx 
 
-//import "fmt";
+import "fmt";
 
 %%{
 
@@ -40,8 +40,19 @@ action opush {
 }
 action opop {
     // }
+    if rdx.Parent==nil {
+        cs = _RDX_error;
+        fbreak;
+    }
     nest--;
     rdx = rdx.Parent;
+    if rdx.RdxType != RdxSet && rdx.RdxType!=RdxMap && rdx.RdxType!=RdxObject {
+        cs = _RDX_error;
+        fbreak;
+    }
+    if len(rdx.Nested)==1 {
+        rdx.RdxType = RdxSet
+    }
 }
 
 action apush { 
@@ -55,21 +66,32 @@ action apush {
 }
 action apop {
     // ]
+    if rdx.Parent==nil {
+        cs = _RDX_error;
+        fbreak;
+    }
     nest--;
     rdx = rdx.Parent;
+    if rdx.RdxType != RdxArray {
+        cs = _RDX_error;
+        fbreak;
+    }
 }
 
 action comma {
     // ,
     if rdx.Parent==nil {
+        cs = _RDX_error;
         fbreak;
     }
     n := rdx.Parent.Nested 
-    if len(n)==1 && rdx.Parent.RdxType==RdxMap {
-        rdx.Parent.RdxType = RdxSet
-    }
-    if 1==(len(n)&1) && rdx.Parent.RdxType==RdxMap {
-        fbreak;
+    if rdx.Parent.RdxType==RdxMap {
+        if len(n)==1 {
+            rdx.Parent.RdxType = RdxSet
+        } else if (len(n)&1)==1 {
+            cs = _RDX_error;
+            fbreak;
+        }
     }
     n = append(n, RDX{Parent: rdx.Parent})
     rdx.Parent.Nested = n
@@ -78,7 +100,29 @@ action comma {
 
 action colon {
     // :
+    if rdx.Parent==nil {
+        cs = _RDX_error;
+        fbreak;
+    }
     n := rdx.Parent.Nested 
+    if rdx.Parent.RdxType==RdxMap { 
+        if (len(n)&1)==0 {
+            cs = _RDX_error;
+            fbreak;
+        }
+    } else if rdx.Parent.RdxType==RdxObject {
+        if (len(n)&1)==0 {
+            cs = _RDX_error;
+            fbreak;
+        }
+        if rdx.RdxType != RdxName {
+            cs = _RDX_error;
+            fbreak;
+        }
+    } else {
+        cs = _RDX_error;
+        fbreak;
+    }
     n = append(n, RDX{Parent: rdx.Parent})
     rdx.Parent.Nested = n
     rdx = &n[len(n)-1]
@@ -129,7 +173,6 @@ main := RDX;
 
 }%%
 
-
 func ParseRDX(data []byte) (rdx *RDX, err error) {
 
     var mark [RdxMaxNesting]int
@@ -141,7 +184,7 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 %%write exec;
 
     if cs < _RDX_first_final {
-        err = ErrBadRdx
+        err = fmt.Errorf("RDX parsing failed at pos %d", p)
     }
 
     return
