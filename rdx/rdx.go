@@ -6,15 +6,19 @@ import (
 )
 
 const (
-	RdxNone = iota
-	RdxFloat
-	RdxInt
-	RdxRef
-	RdxString
-	RdxTomb
-	RdxMap
-	RdxSet
-	RdxArray
+	None = iota
+	Float
+	Integer
+	Reference
+	String
+	Tomb
+	NCounter
+	NInc
+	ZCounter
+	ZInc
+	Map
+	ESet
+	LArray
 	RdxName
 	RdxObject
 	RdxPath
@@ -61,18 +65,20 @@ func (rdx *RDX) String() string {
 
 func (rdx *RDX) Feed() (recs toyqueue.Records, err error) {
 	switch rdx.RdxType {
-	case RdxNone:
-	case RdxFloat:
+	case None:
+	case Float:
 		recs = append(recs, rdx.Text)
-	case RdxInt:
+	case Integer:
 		recs = append(recs, rdx.Text)
-	case RdxRef:
+	case Reference:
 		recs = append(recs, rdx.Text)
-	case RdxString:
+	case String:
 		recs = append(recs, rdx.Text)
-	case RdxTomb:
+	case Tomb:
 		recs = append(recs, rdx.Text)
-	case RdxMap:
+	case NCounter, NInc, ZCounter, ZInc:
+		recs = append(recs, rdx.Text)
+	case Map:
 		recs = append(recs, RdxSep[RdxOOpen:RdxOOpen+1])
 		for i := 0; i+1 < len(rdx.Nested); i += 2 {
 			key, _ := rdx.Nested[i].Feed()
@@ -85,7 +91,7 @@ func (rdx *RDX) Feed() (recs toyqueue.Records, err error) {
 			}
 		}
 		recs = append(recs, RdxSep[RdxOClose:RdxOClose+1])
-	case RdxSet:
+	case ESet:
 		recs = append(recs, RdxSep[RdxOOpen:RdxOOpen+1])
 		for i := 0; i < len(rdx.Nested); i++ {
 			val, _ := rdx.Nested[i].Feed()
@@ -95,7 +101,7 @@ func (rdx *RDX) Feed() (recs toyqueue.Records, err error) {
 			}
 		}
 		recs = append(recs, RdxSep[RdxOClose:RdxOClose+1])
-	case RdxArray:
+	case LArray:
 		recs = append(recs, RdxSep[RdxAOpen:RdxAOpen+1])
 		for i := 0; i < len(rdx.Nested); i++ {
 			val, _ := rdx.Nested[i].Feed()

@@ -7,25 +7,45 @@ import "fmt";
 machine RDX;
 
 action b { mark[nest] = p; }
+action f {
+    rdx.RdxType = Float; 
+    rdx.Text = data[mark[nest] : p];
+}
 action eint {     
     // I
-    rdx.RdxType = RdxInt; 
+    rdx.RdxType = Integer; 
     rdx.Text = data[mark[nest] : p];
 }
 action eref {     
     // R
-    if rdx.RdxType != RdxInt {
-        rdx.RdxType = RdxRef; 
+    if rdx.RdxType != Integer {
+        rdx.RdxType = Reference; 
     }
     rdx.Text = data[mark[nest] : p];
 }
 action estring {
     // S
-    rdx.RdxType = RdxString; 
+    rdx.RdxType = String; 
     rdx.Text = data[mark[nest] : p];
 }
 action name {
     rdx.RdxType = RdxName; 
+    rdx.Text = data[mark[nest] : p];
+}
+action n {
+    rdx.RdxType = NCounter;
+    rdx.Text = data[mark[nest] : p];
+}
+action dn {
+    rdx.RdxType = NInc;
+    rdx.Text = data[mark[nest] : p];
+}
+action z {
+    rdx.RdxType = ZCounter;
+    rdx.Text = data[mark[nest] : p];
+}
+action dz {
+    rdx.RdxType = ZInc;
     rdx.Text = data[mark[nest] : p];
 }
 
@@ -34,7 +54,7 @@ action opush {
     n := rdx.Nested 
     n = append(n, RDX{Parent: rdx})
     rdx.Nested = n
-    rdx.RdxType = RdxMap;
+    rdx.RdxType = Map;
     rdx = &n[len(n)-1]
     nest++; 
 }
@@ -46,12 +66,18 @@ action opop {
     }
     nest--;
     rdx = rdx.Parent;
-    if rdx.RdxType != RdxSet && rdx.RdxType!=RdxMap && rdx.RdxType!=RdxObject {
+    if rdx.RdxType != ESet && rdx.RdxType!=Map && rdx.RdxType!=RdxObject {
         cs = _RDX_error;
         fbreak;
     }
     if len(rdx.Nested)==1 {
-        rdx.RdxType = RdxSet
+        rdx.RdxType = ESet
+    }
+    if rdx.RdxType == Map {
+        if (len(rdx.Nested)&1)==1 {
+            cs = _RDX_error;
+            fbreak;
+        }
     }
 }
 
@@ -60,7 +86,7 @@ action apush {
     n := rdx.Nested 
     n = append(n, RDX{Parent: rdx})
     rdx.Nested = n
-    rdx.RdxType = RdxArray;
+    rdx.RdxType = LArray;
     rdx = &n[len(n)-1]
     nest++; 
 }
@@ -72,7 +98,7 @@ action apop {
     }
     nest--;
     rdx = rdx.Parent;
-    if rdx.RdxType != RdxArray {
+    if rdx.RdxType != LArray {
         cs = _RDX_error;
         fbreak;
     }
@@ -85,9 +111,9 @@ action comma {
         fbreak;
     }
     n := rdx.Parent.Nested 
-    if rdx.Parent.RdxType==RdxMap {
+    if rdx.Parent.RdxType==Map {
         if len(n)==1 {
-            rdx.Parent.RdxType = RdxSet
+            rdx.Parent.RdxType = ESet
         } else if (len(n)&1)==1 {
             cs = _RDX_error;
             fbreak;
@@ -105,7 +131,7 @@ action colon {
         fbreak;
     }
     n := rdx.Parent.Nested 
-    if rdx.Parent.RdxType==RdxMap { 
+    if rdx.Parent.RdxType==Map { 
         if (len(n)&1)==0 {
             cs = _RDX_error;
             fbreak;
@@ -129,21 +155,26 @@ action colon {
 }
 
 hex = [0-9a-fA-F];
-sign = [\-+];
 dec = [0-9];
 uni = "\\u" hex hex hex hex;
 esc = "\\" ["\/\\bfnrt];
 char = [^0x00..0x19"\\] | uni | esc;
 asci = [_0-9a-zA-Z];
 
-INT = ( sign? dec+ ) >b %eint;
-FLOAT = sign? dec+ ("." dec+)? ([eE] sign? dec+);
+INT = ( "+"? dec+ ) >b %eint;
+FLOAT = ( "+"? dec+ ("." dec+)? ([eE] [\-+]? dec+) ) >b %f;
 STRING = ( ["] char* ["] ) >b %estring; 
 REF = ( hex+ "-" hex+ ( "-" hex+ )? ) >b %eref;
 NULL = "null";
 FIRST = INT | FLOAT | STRING | REF | NULL;
 
 NAME = ( [_a-zA-Z] asci+ ) >b %name;
+
+NCOUNT = ( "(" dec+ ")" ) >b %n;
+NINC = ( "+" dec+ ) >b %dn;
+ZCOUNT = ( "(" [\-+] dec+ ")" ) >b %z;
+ZINC = ( ("++"|"--") dec+ ) >b %dz;
+COUNT = NCOUNT | NINC | ZCOUNT | ZINC;
 
 OOPEN = "{" @opush;
 OCLOSE = "}" %opop;
@@ -157,7 +188,7 @@ COLON = ":" @colon;
 PUNCT = OOPEN | OCLOSE | AOPEN | ACLOSE | COMMA | COLON;
 
 sep = PUNCT | space;
-token = FIRST | NAME;
+token = FIRST | NAME | COUNT;
 
 RDX = sep* token ( sep+ token )*  sep*;
 
@@ -183,7 +214,7 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 %%write init;
 %%write exec;
 
-    if cs < _RDX_first_final {
+    if nest != 0 || cs < _RDX_first_final {
         err = fmt.Errorf("RDX parsing failed at pos %d", p)
     }
 

@@ -19,6 +19,11 @@ func TestRDX_Parse(t *testing.T) {
 		"{1f8-a364: 3 }":                  "{1f8-a364:3}",
 		"{1f8-a364, 3,4, \"five\" }":      "{1f8-a364,3,4,\"five\"}",
 		"{  { {1  } }}":                   "{{{1}}}",
+		" (4)":                            "(4)",
+		"(-0) ":                           "(-0)",
+		" +1 ":                            "+1",
+		" --5 ":                           "--5",
+		" ++25 ":                          "++25",
 	}
 	for in, out := range cases {
 		rdx, err := ParseRDX([]byte(in))
@@ -29,10 +34,14 @@ func TestRDX_Parse(t *testing.T) {
 
 func TestRDX_Error(t *testing.T) {
 	cases := []string{
+		"{",
 		"}",
 		"[b0b-0}",
 		"{1]",
 		"{{{1}}}}",
+		"{1:2, 3}",
+		"(1 1)",
+		"(--2)",
 	}
 	for n, in := range cases {
 		_, err := ParseRDX([]byte(in))
@@ -51,7 +60,7 @@ func TestRDX_String(t *testing.T) {
 		rdx, err := ParseRDX([]byte(in))
 		assert.Nil(t, err)
 		assert.NotNil(t, rdx)
-		assert.Equal(t, RdxString, rdx.RdxType)
+		assert.Equal(t, String, rdx.RdxType)
 		tlv := Sparse(string(rdx.Text))
 		unesc := Snative(tlv)
 		assert.Equal(t, out, unesc)

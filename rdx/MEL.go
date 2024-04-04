@@ -113,7 +113,7 @@ func appendFirstTlvString(tlv []byte, lit byte, bare []byte) []byte {
 // parse a text form into a TLV value
 func Eparse(txt string) (tlv []byte) {
 	rdx, err := ParseRDX([]byte(txt))
-	if err != nil || rdx == nil || rdx.RdxType != RdxSet {
+	if err != nil || rdx == nil || rdx.RdxType != ESet {
 		return nil
 	}
 	for i := 0; i < len(rdx.Nested); i++ {
@@ -125,15 +125,15 @@ func Eparse(txt string) (tlv []byte) {
 
 func appendParsedFirstTlv(tlv []byte, n *RDX) []byte {
 	switch n.RdxType {
-	case RdxFloat:
+	case Float:
 		return append(tlv, toytlv.Record('F', Fparse(string(n.Text)))...)
-	case RdxInt:
+	case Integer:
 		return append(tlv, toytlv.Record('I', Iparse(string(n.Text)))...)
-	case RdxRef:
+	case Reference:
 		return append(tlv, toytlv.Record('R', Rparse(string(n.Text)))...)
-	case RdxString:
+	case String:
 		return append(tlv, toytlv.Record('S', Sparse(string(n.Text)))...)
-	case RdxTomb:
+	case Tomb:
 		//ret = append(ret, Tstring(it.val)...) fixme
 		return tlv
 	default:
@@ -222,7 +222,7 @@ func Mstring(tlv []byte) (txt string) {
 // parse a text form into a TLV value
 func Mparse(txt string) (tlv []byte) {
 	rdx, err := ParseRDX([]byte(txt))
-	if err != nil || rdx == nil || rdx.RdxType != RdxMap {
+	if err != nil || rdx == nil || rdx.RdxType != Map {
 		return nil
 	}
 	for i := 0; i < len(rdx.Nested); i++ {
@@ -338,7 +338,7 @@ func Lparse(txt string) (tlv []byte) {
 	bm, tlv = toytlv.OpenHeader(tlv, 'B')
 	tlv = append(tlv, '0')
 	rdx, err := ParseRDX([]byte(txt))
-	if err != nil || rdx == nil || rdx.RdxType != RdxArray {
+	if err != nil || rdx == nil || rdx.RdxType != LArray {
 		return nil
 	}
 	for i := 0; i < len(rdx.Nested); i++ {
@@ -353,19 +353,19 @@ func appendParsedFirstTlvt(tlv []byte, n *RDX, t Time) []byte {
 	var untimed []byte
 	var rdt byte
 	switch n.RdxType {
-	case RdxFloat:
+	case Float:
 		rdt = 'F'
 		untimed = Fparse(string(n.Text))
-	case RdxInt:
+	case Integer:
 		rdt = 'I'
 		untimed = Iparse(string(n.Text))
-	case RdxRef:
+	case Reference:
 		rdt = 'R'
 		untimed = Rparse(string(n.Text))
-	case RdxString:
+	case String:
 		rdt = 'S'
 		untimed = Sparse(string(n.Text))
-	case RdxTomb:
+	case Tomb:
 		//ret = append(ret, Tstring(it.val)...) fixme
 		return nil // todo
 	default:

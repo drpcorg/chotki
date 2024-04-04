@@ -17,7 +17,7 @@ func (repl *REPL) CommandCreate(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err err
 		return rdx.BadId, HelpCreate
 	}
 	last := path.Nested[len(path.Nested)-1]
-	if last.RdxType != rdx.RdxRef {
+	if last.RdxType != rdx.Reference {
 		return rdx.BadId, HelpCreate
 	}
 	src0 := rdx.IDFromText(last.Text)
@@ -36,7 +36,7 @@ func (repl *REPL) CommandOpen(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error
 		return rdx.BadId, HelpOpen
 	}
 	last := path.Nested[len(path.Nested)-1]
-	if last.RdxType != rdx.RdxRef {
+	if last.RdxType != rdx.Reference {
 		return rdx.BadId, HelpOpen
 	}
 	src0 := rdx.IDFromText(last.Text)
@@ -88,7 +88,7 @@ func (repl *REPL) CommandClass(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err erro
 	}
 	var fields []string
 	for _, f := range arg.Nested {
-		if f.RdxType != rdx.RdxString {
+		if f.RdxType != rdx.String {
 			return rdx.BadId, HelpType
 		}
 		tlv := rdx.Sparse(f.String())
@@ -106,10 +106,10 @@ var ErrBadArgs = errors.New("bad arguments")
 
 func (repl *REPL) CommandNew(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
 	tid := rdx.ID0
-	if path != nil && path.RdxType == rdx.RdxPath && len(path.Nested) > 0 && path.Nested[0].RdxType == rdx.RdxRef {
+	if path != nil && path.RdxType == rdx.RdxPath && len(path.Nested) > 0 && path.Nested[0].RdxType == rdx.Reference {
 		tid = rdx.IDFromText(path.Nested[0].Text)
 	}
-	if arg == nil || arg.RdxType != rdx.RdxArray {
+	if arg == nil || arg.RdxType != rdx.LArray {
 		return rdx.BadId, ErrBadArgs
 	}
 	fields := []string{}
@@ -163,7 +163,7 @@ func (repl *REPL) ParseAddress(path *rdx.RDX, arg *rdx.RDX) (addr string, err er
 	}
 	if arg == nil {
 		addr += ":1234"
-	} else if arg.RdxType == rdx.RdxInt {
+	} else if arg.RdxType == rdx.Integer {
 		addr += ":" + string(arg.Text)
 	} else {
 		return "", HelpAddress
