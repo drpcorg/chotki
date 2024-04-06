@@ -16,7 +16,10 @@ func TestORMExample(t *testing.T) {
 	err := a.Create(0x1e, "test replica")
 	assert.Nil(t, err)
 	var tid, oid rdx.ID
-	tid, err = a.NewClass(rdx.ID0, "Sname", "Iscore")
+	tid, err = a.NewClass(rdx.ID0,
+		Field{Name: "Name", RdxType: rdx.String},
+		Field{Name: "Score", RdxType: rdx.Integer},
+	)
 	assert.Nil(t, err)
 	assert.Equal(t, "1e-1", tid.String())
 

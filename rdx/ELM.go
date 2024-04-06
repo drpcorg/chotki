@@ -79,7 +79,7 @@ func MelReSource(isfr []byte, src uint64) (ret []byte, err error) {
 // produce a text form (for REPL mostly)
 func Estring(tlv []byte) (txt string) {
 	var ret = []byte{'{'}
-	it := FIRSTIterator{tlv: tlv}
+	it := FIRSTIterator{TLV: tlv}
 	for it.Next() {
 		if ZagZigUint64(it.revz) < 0 {
 			continue
@@ -104,7 +104,7 @@ func appendFirstTlvString(tlv []byte, lit byte, bare []byte) []byte {
 	case 'S':
 		return append(tlv, Sstring(bare)...)
 	case 'T':
-		//return append(tlv, Tstring(bare)...)
+		//return append(TLV, Tstring(bare)...)
 	default:
 	}
 	return nil
@@ -133,7 +133,7 @@ func appendParsedFirstTlv(tlv []byte, n *RDX) []byte {
 		return append(tlv, toytlv.Record('R', Rparse(string(n.Text)))...)
 	case String:
 		return append(tlv, toytlv.Record('S', Sparse(string(n.Text)))...)
-	case Tomb:
+	case Term:
 		//ret = append(ret, Tstring(it.val)...) fixme
 		return tlv
 	default:
@@ -145,7 +145,7 @@ func appendParsedFirstTlv(tlv []byte, n *RDX) []byte {
 func Emerge(tlvs [][]byte) (merged []byte) {
 	ih := ItHeap[*EIterator]{}
 	for _, tlv := range tlvs {
-		ih.Push(&EIterator{FIRSTIterator{tlv: tlv}})
+		ih.Push(&EIterator{FIRSTIterator{TLV: tlv}})
 	}
 	for ih.Len() > 0 {
 		merged = append(merged, ih.Next()...)
@@ -195,7 +195,7 @@ func (a *EIterator) Merge(b SortedIterator) int {
 // produce a text form (for REPL mostly)
 func Mstring(tlv []byte) (txt string) {
 	var ret = []byte{'{'}
-	it := FIRSTIterator{tlv: tlv}
+	it := FIRSTIterator{TLV: tlv}
 	for it.Next() {
 		if ZagZigUint64(it.revz) < 0 {
 			continue
@@ -236,7 +236,7 @@ func Mparse(txt string) (tlv []byte) {
 func Mmerge(tlvs [][]byte) (merged []byte) {
 	ih := ItHeap[*MIterator]{}
 	for _, tlv := range tlvs {
-		ih.Push(&MIterator{it: FIRSTIterator{tlv: tlv}})
+		ih.Push(&MIterator{it: FIRSTIterator{TLV: tlv}})
 	}
 	for ih.Len() > 0 {
 		merged = append(merged, ih.Next()...)
@@ -268,7 +268,7 @@ type MIterator struct {
 }
 
 func (a *MIterator) Next() (got bool) {
-	tlv := a.it.tlv
+	tlv := a.it.TLV
 	got = a.it.Next() // skip value
 	a.val = a.it.val
 	a.src = a.it.src
@@ -277,7 +277,7 @@ func (a *MIterator) Next() (got bool) {
 	if got {
 		got = a.it.Next()
 	}
-	a.pair = tlv[:len(tlv)-len(a.it.tlv)]
+	a.pair = tlv[:len(tlv)-len(a.it.TLV)]
 	return
 }
 
@@ -314,7 +314,7 @@ func Lstring(tlv []byte) (txt string) {
 		var sub []byte
 		sub, rest = toytlv.Take('B', rest)
 		_, subb := toytlv.Take('T', sub)
-		it := LIterator{FIRSTIterator{tlv: subb}}
+		it := LIterator{FIRSTIterator{TLV: subb}}
 		for it.Next() {
 			if ZagZigUint64(it.revz) < 0 {
 				continue
@@ -365,7 +365,7 @@ func appendParsedFirstTlvt(tlv []byte, n *RDX, t Time) []byte {
 	case String:
 		rdt = 'S'
 		untimed = Sparse(string(n.Text))
-	case Tomb:
+	case Term:
 		//ret = append(ret, Tstring(it.val)...) fixme
 		return nil // todo
 	default:
@@ -435,7 +435,7 @@ func Lmerge(tlvs [][]byte) (merged []byte) {
 
 func pileUp(heap *ItHeap[*LIterator], bares [][]byte) {
 	for _, bare := range bares {
-		heap.Push(&LIterator{FIRSTIterator{tlv: bare}})
+		heap.Push(&LIterator{FIRSTIterator{TLV: bare}})
 	}
 }
 
@@ -470,4 +470,19 @@ func (a *LIterator) Merge(bb SortedIterator) int {
 	} else {
 		return MergeA
 	}
+}
+
+func Mrdx2tlv(a *RDX) (tlv []byte) {
+	if a == nil || a.RdxType != Map {
+		return nil
+	}
+	for i := 0; i+1 < len(a.Nested); i += 2 {
+		tlv = append(tlv, FIRSTrdx2tlv(&a.Nested[i])...)
+		tlv = append(tlv, FIRSTrdx2tlv(&a.Nested[i+1])...)
+	}
+	return
+}
+
+func ELMdefault() (tlv []byte) {
+	return []byte{}
 }

@@ -57,7 +57,19 @@ func (cho *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 	return
 }
 
-func (cho *Chotki) ApplyCOLA(lot byte, id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
+func (cho *Chotki) ApplyC(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
+	desc := make([]byte, 0, len(body)+32)
+	desc = append(desc, toytlv.Record('T', rdx.Ttlv("_ref"))...)
+	desc = append(desc, toytlv.Record('R', rdx.Rtlv(ref))...)
+	desc = append(desc, body...)
+	err = batch.Merge(
+		OKey(id, 'C'),
+		desc,
+		&WriteOptions)
+	return
+}
+
+func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
 	err = batch.Merge(
 		OKey(id, lot),
 		ref.ZipBytes(),
@@ -76,7 +88,7 @@ func (cho *Chotki) ApplyCOLA(lot byte, id, ref rdx.ID, body []byte, batch *pebbl
 		switch lit {
 		case 'I', 'S', 'F', 'R':
 			rebar, err = rdx.SetSourceFIRST(bare, id.Src())
-		case 'M', 'E', 'L':
+		case 'E', 'L', 'M':
 			rebar, err = rdx.MelReSource(bare, id.Src())
 		default:
 			rebar = bare

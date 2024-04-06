@@ -15,7 +15,10 @@ func TestTypes(t *testing.T) {
 	assert.Nil(t, err)
 
 	var tid, oid rdx.ID
-	tid, err = a.NewClass(rdx.ID0, "SName", "IScore")
+	tid, err = a.NewClass(rdx.ID0,
+		Field{Name: "Name", RdxType: rdx.String},
+		Field{Name: "Score", RdxType: rdx.Integer},
+	)
 	assert.Nil(t, err)
 	oid, err = a.NewObject(tid, "\"Petrov\"", "42")
 	assert.Nil(t, err)
@@ -23,12 +26,16 @@ func TestTypes(t *testing.T) {
 
 	//a.DumpAll()
 
-	tid2, fields, err := a.GetObject(oid)
+	tid2, decl, fields, err := a.ObjectFields(oid)
 	assert.Nil(t, err)
 	assert.Equal(t, tid, tid2)
-	assert.Equal(t, 2, len(fields))
-	assert.Equal(t, "\"Petrov\"", fields[0])
-	assert.Equal(t, "42", fields[1])
+	assert.Equal(t, 3, len(fields))
+	assert.Equal(t, "Petrov", rdx.Snative(fields[1]))
+	assert.Equal(t, int64(42), rdx.Inative(fields[2]))
+	assert.Equal(t, decl[1].Name, "Name")
+	assert.Equal(t, decl[1].RdxType, rdx.String)
+	assert.Equal(t, decl[2].Name, "Score")
+	assert.Equal(t, decl[2].RdxType, rdx.Integer)
 
 	ex := Example{}
 	i := a.ObjectIterator(oid)

@@ -18,48 +18,10 @@ type REPL struct {
 	Host chotki.Chotki
 	tcp  *toytlv.TCPDepot
 	rl   *readline.Instance
-	Root Node
 	snap pebble.Reader
 }
 
-func (repl *REPL) Map(ctx rdx.ID, path string) (id rdx.ID, err error) {
-	// recur
-	return rdx.ID0, nil
-}
-
-func (repl *REPL) Name(path, name string) error {
-	return nil
-}
-
-func (repl *REPL) Get(path string) error {
-	return nil
-}
-
-func (repl *REPL) Set(path, value string) error {
-	return nil
-}
-
-func (repl *REPL) Put(path, node string) error {
-	return nil
-}
-
-func (repl *REPL) List(path string) error {
-	return nil
-}
-
 var ErrBadPath = errors.New("bad path")
-
-func (repl *REPL) NodeByPath(path *rdx.RDX) (node Node) {
-	if path == nil || path.RdxType != rdx.RdxPath {
-		return nil
-	}
-	node = &ReplicaNode{repl: repl}
-	for i := 0; node != nil && i < len(path.Nested); i++ {
-		normalized := path.Nested[i].String()
-		node = node.Get(normalized)
-	}
-	return
-}
 
 var completer = readline.NewPrefixCompleter(
 	readline.PcItem("help"),
@@ -129,9 +91,16 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 	if len(line) == 0 {
 		return rdx.ID0, nil
 	}
-	cmd, path, arg, err := rdx.ParseREPL([]byte(line))
+	ws := strings.IndexAny(line, " \t\r\n")
+	cmd := "get"
+	if ws > 0 {
+		cmd = line[:ws]
+		line = strings.TrimSpace(line[ws:])
+	}
+	var arg *rdx.RDX
+	arg, err = rdx.ParseRDX([]byte(line))
 	if err != nil {
-		return
+		return rdx.ID0, err
 	}
 	if repl.snap != nil {
 		_ = repl.snap.Close()
@@ -143,37 +112,37 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 	switch cmd {
 	// replica open/close
 	case "create":
-		id, err = repl.CommandCreate(path, arg)
+		id, err = repl.CommandCreate(arg)
 	case "open":
-		id, err = repl.CommandOpen(path, arg)
+		id, err = repl.CommandOpen(arg)
 	case "close":
-		id, err = repl.CommandClose(path, arg)
+		id, err = repl.CommandClose(arg)
 	case "exit", "quit":
 		if repl.Host.Last() != rdx.ID0 {
-			id, err = repl.CommandClose(path, arg)
+			id, err = repl.CommandClose(arg)
 		}
 		if err == nil {
 			err = io.EOF
 		}
 	// ----- object handling -----
 	case "class":
-		id, err = repl.CommandClass(path, arg)
+		id, err = repl.CommandClass(arg)
 	case "new":
-		id, err = repl.CommandNew(path, arg)
+		id, err = repl.CommandNew(arg)
 	case "edit":
-		id, err = repl.CommandEdit(path, arg)
+		id, err = repl.CommandEdit(arg)
 	case "ls", "show", "list":
-		id, err = repl.CommandList(path, arg)
+		id, err = repl.CommandList(arg)
 	case "cat":
-		id, err = repl.CommandCat(path, arg)
+		id, err = repl.CommandCat(arg)
 	// ----- networking -----
 	case "listen":
-		id, err = repl.CommandListen(path, arg)
+		id, err = repl.CommandListen(arg)
 	case "connect":
-		id, err = repl.CommandConnect(path, arg)
+		id, err = repl.CommandConnect(arg)
 	// ----- debug -----
 	case "dump":
-		id, err = repl.CommandDump(path, arg)
+		id, err = repl.CommandDump(arg)
 	case "ping":
 		// args[1] is an object/field id (otherwise create)
 		// subscribe to evs

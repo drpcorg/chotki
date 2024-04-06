@@ -157,7 +157,7 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 
 				case 5:
 					{
-						rdx.RdxType = RdxName
+						rdx.RdxType = Term
 						rdx.Text = data[mark[nest]:p]
 					}
 
@@ -208,7 +208,7 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 						}
 						nest--
 						rdx = rdx.Parent
-						if rdx.RdxType != ESet && rdx.RdxType != Map && rdx.RdxType != RdxObject {
+						if rdx.RdxType != ESet && rdx.RdxType != Map {
 							cs = _RDX_error
 							{
 								p += 1
@@ -311,25 +311,6 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 						n := rdx.Parent.Nested
 						if rdx.Parent.RdxType == Map {
 							if (len(n) & 1) == 0 {
-								cs = _RDX_error
-								{
-									p += 1
-									goto _out
-
-								}
-
-							}
-						} else if rdx.Parent.RdxType == RdxObject {
-							if (len(n) & 1) == 0 {
-								cs = _RDX_error
-								{
-									p += 1
-									goto _out
-
-								}
-
-							}
-							if rdx.RdxType != RdxName {
 								cs = _RDX_error
 								{
 									p += 1

@@ -7,22 +7,49 @@ import (
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
-	"net"
 )
 
 var HelpCreate = errors.New("create zone/1 {Name:\"Name\",Description:\"long text\"}")
 
-func (repl *REPL) CommandCreate(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
-	if path == nil || len(path.Nested) == 0 {
-		return rdx.BadId, HelpCreate
+func (repl *REPL) CommandCreate(arg *rdx.RDX) (id rdx.ID, err error) {
+	id = rdx.BadId
+	err = HelpCreate
+	if arg == nil {
+		return
 	}
-	last := path.Nested[len(path.Nested)-1]
-	if last.RdxType != rdx.Reference {
-		return rdx.BadId, HelpCreate
+	src := rdx.ID0
+	name := "Unnamed replica"
+	if arg.RdxType == rdx.Reference {
+		src = rdx.IDFromText(arg.Text)
+	} else if arg.RdxType == rdx.Map {
+		for i := 0; i+1 < len(arg.Nested); i += 2 {
+			key := arg.Nested[i]
+			val := arg.Nested[i+1]
+			if key.RdxType != rdx.Term {
+				return
+			}
+			term := string(key.Text)
+			value := string(val.Text)
+			switch term {
+			case "Name":
+				if val.RdxType != rdx.String {
+					return
+				}
+				name = rdx.Snative(rdx.Sparse(term))
+			case "_id":
+				if val.RdxType != rdx.Reference {
+					return
+				}
+				src = rdx.Rnative(rdx.Rparse(value))
+			default:
+				return
+			}
+		}
 	}
-	src0 := rdx.IDFromText(last.Text)
-	name := "name TODO"
-	err = repl.Host.Create(src0.Src(), name)
+	if src == rdx.ID0 {
+		return
+	}
+	err = repl.Host.Create(src.Src(), name)
 	if err == nil {
 		id = repl.Host.Last()
 	}
@@ -31,15 +58,11 @@ func (repl *REPL) CommandCreate(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err err
 
 var HelpOpen = errors.New("open zone/1")
 
-func (repl *REPL) CommandOpen(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
-	if path == nil || len(path.Nested) == 0 {
+func (repl *REPL) CommandOpen(arg *rdx.RDX) (id rdx.ID, err error) {
+	if arg == nil || arg.RdxType != rdx.Reference {
 		return rdx.BadId, HelpOpen
 	}
-	last := path.Nested[len(path.Nested)-1]
-	if last.RdxType != rdx.Reference {
-		return rdx.BadId, HelpOpen
-	}
-	src0 := rdx.IDFromText(last.Text)
+	src0 := rdx.IDFromText(arg.Text)
 	err = repl.Host.Open(src0.Src())
 	if err == nil {
 		id = repl.Host.Last()
@@ -49,9 +72,9 @@ func (repl *REPL) CommandOpen(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error
 
 var HelpDump = errors.New("dump (obj|objects|vv|all)?")
 
-func (repl *REPL) CommandDump(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
-	if path != nil && path.RdxType == rdx.RdxPath && len(path.Nested) > 0 && path.Nested[0].RdxType == rdx.RdxName {
-		name := path.Nested[0].String()
+func (repl *REPL) CommandDump(arg *rdx.RDX) (id rdx.ID, err error) {
+	if arg != nil && arg.RdxType == rdx.Term {
+		name := string(arg.Text)
 		switch name {
 		case "obj", "objects":
 			repl.Host.DumpObjects()
@@ -68,7 +91,7 @@ func (repl *REPL) CommandDump(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error
 	return
 }
 
-func (repl *REPL) CommandClose(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
+func (repl *REPL) CommandClose(arg *rdx.RDX) (id rdx.ID, err error) {
 	if repl.tcp != nil {
 		repl.tcp.Close()
 		repl.tcp = nil
@@ -80,131 +103,239 @@ func (repl *REPL) CommandClose(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err erro
 	return
 }
 
-var HelpType = errors.New("type Parent [\"SName\", \"IAge\"]")
+var HelpClass = errors.New(
+	"class {_ref: 0-0, Name: S, Score: N}",
+)
 
-func (repl *REPL) CommandClass(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
-	if path == nil || len(path.Nested) == 0 || arg == nil || len(arg.Nested) == 0 {
-		return rdx.BadId, HelpType
+func (repl *REPL) CommandClass(arg *rdx.RDX) (id rdx.ID, err error) {
+	id = rdx.BadId
+	err = HelpClass
+	if arg == nil || arg.RdxType != rdx.Map || len(arg.Nested) < 2 {
+		return
 	}
-	var fields []string
-	for _, f := range arg.Nested {
-		if f.RdxType != rdx.String {
-			return rdx.BadId, HelpType
+	fields := arg.Nested
+	for i := 0; i+1 < len(fields); i += 2 {
+		key := fields[i]
+		val := fields[i+1]
+		if key.RdxType != rdx.Term || val.RdxType != rdx.Term {
+			return
 		}
-		tlv := rdx.Sparse(f.String())
-		form := rdx.Snative(tlv)
-		if len(form) < 2 || form[0] < 'A' || form[0] > 'Z' {
-			return rdx.BadId, HelpType
-		}
-		fields = append(fields, form)
+		// TODO more checks
 	}
-	id, err = repl.Host.NewClass(rdx.ID0, fields...)
+	parent := rdx.ID0
+	if string(fields[0].Text) == "_ref" {
+		if fields[1].RdxType != rdx.Reference {
+			return
+		}
+		parent = rdx.IDFromText(fields[1].Text)
+		fields = fields[2:]
+	}
+	tlvs := rdx.FIRSTrdxs2tlvs(fields)
+	id, err = repl.Host.CommitPacket('C', parent, tlvs)
 	return
 }
 
 var ErrBadArgs = errors.New("bad arguments")
 
-func (repl *REPL) CommandNew(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
+var HelpNew = errors.New(
+	"new {_ref: Student, Name: \"Ivan Petrov\", Score: 118}, " +
+		"new [Student, \"Ivan Petrov\", 118]",
+)
+
+func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
+	id = rdx.BadId
+	err = HelpNew
 	tid := rdx.ID0
-	if path != nil && path.RdxType == rdx.RdxPath && len(path.Nested) > 0 && path.Nested[0].RdxType == rdx.Reference {
-		tid = rdx.IDFromText(path.Nested[0].Text)
-	}
-	if arg == nil || arg.RdxType != rdx.LArray {
-		return rdx.BadId, ErrBadArgs
-	}
-	fields := []string{}
-	for _, a := range arg.Nested {
-		fields = append(fields, string(a.Text))
-	}
-	id, err = repl.Host.NewObject(tid, fields...)
-	return
-}
-
-func (repl *REPL) CommandEdit(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
-	oid := rdx.ID0
-	if path != nil && path.RdxType == rdx.RdxPath && len(path.Nested) > 0 && path.Nested[0].RdxType == rdx.Reference {
-		oid = rdx.IDFromText(path.Nested[0].Text)
-	}
-	if arg == nil || arg.RdxType != rdx.LArray {
-		return rdx.BadId, ErrBadArgs
-	}
-	fields := []string{}
-	for _, a := range arg.Nested {
-		fields = append(fields, string(a.Text))
-	}
-	id, err = repl.Host.EditObject(oid, fields...)
-	return
-}
-
-func (repl *REPL) CommandList(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
-	node := repl.NodeByPath(path)
-	id = node.ID()
-	list := node.List()
-	for _, key := range list {
-		val := node.Get(key)
-		str := ""
-		if val != nil {
-			str = val.String()
-		}
-		fmt.Printf("%s:\t%s\n", key, str)
-	}
-	return
-}
-
-func (repl *REPL) CommandCat(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
-	node := repl.NodeByPath(path)
-	id = node.ID()
-	val := node.String()
-	fmt.Printf("%s:\t%s\n", id.String(), val)
-	return
-}
-
-var HelpAddress = errors.New("address syntax: 11.22.33.44 1234, host.com, etc")
-
-func (repl *REPL) ParseAddress(path *rdx.RDX, arg *rdx.RDX) (addr string, err error) {
-	if repl.Host.Last() == rdx.ID0 {
-		return "", chotki.ErrClosed
-	}
-	addr = "0.0.0.0"
-	if path != nil {
-		addr = string(path.Text)
-	}
+	tlvs := toyqueue.Records{}
 	if arg == nil {
-		addr += ":1234"
-	} else if arg.RdxType == rdx.Integer {
-		addr += ":" + string(arg.Text)
-	} else {
-		return "", HelpAddress
-	}
-	if repl.tcp == nil {
-		repl.tcp = &toytlv.TCPDepot{}
-		repl.tcp.Open(func(conn net.Conn) toyqueue.FeedDrainCloser {
-			return &chotki.Syncer{
-				Host: &repl.Host,
-				Mode: chotki.SyncRW,
-				Name: conn.RemoteAddr().String(),
+		return
+	} else if arg.RdxType == rdx.LArray {
+		return
+	} else if arg.RdxType == rdx.Map {
+		pairs := arg.Nested
+		if len(pairs) >= 2 && pairs[0].String() == "_ref" {
+			tid = rdx.IDFromText(pairs[1].Text)
+			pairs = pairs[2:]
+		}
+		var fields chotki.Fields
+		fields, err = repl.Host.ClassFields(tid)
+		if err != nil {
+			return
+		}
+		tmp := make(toyqueue.Records, len(fields))
+		for i := 0; i+1 < len(pairs); i += 2 {
+			if pairs[i].RdxType != rdx.Term {
+				return
 			}
-		})
+			name := pairs[i].String()
+			value := &pairs[i+1]
+			ndx := fields.Find(name)
+			if ndx == -1 {
+				err = fmt.Errorf("unknown field %s", name)
+				return
+			}
+			tmp[ndx] = rdx.FIRSTrdx2tlv(value)
+		}
+		for i := 0; i < len(fields); i++ {
+			if tmp[i] == nil {
+				rdt := fields[i].RdxType
+				tlvs = append(tlvs, rdx.Xdefault(byte(rdt)))
+			} else {
+				tlvs = append(tlvs, tmp[i])
+			}
+		}
+	} else {
+		return
+	}
+	id, err = repl.Host.CommitPacket('O', tid, tlvs)
+	return
+}
+
+var HelpEdit = errors.New(
+	"edit {_id: b0b-1e, Score: [+1], Pass: true}",
+)
+
+func (repl *REPL) EditObject(oid rdx.ID, pairs []rdx.RDX) (id rdx.ID, err error) {
+	tlvs := toyqueue.Records{}
+	_, form, fact, e := repl.Host.ObjectFields(oid) // FIXME fetch class
+	if e != nil {
+		return rdx.BadId, e
+	}
+	tmp := make(toyqueue.Records, len(fact))
+	for i := 0; i+1 < len(pairs); i += 2 {
+		if pairs[i].RdxType != rdx.Term {
+			return
+		}
+		name := pairs[i].String()
+		value := &pairs[i+1]
+		ndx := form.Find(name)
+		if ndx == -1 {
+			err = fmt.Errorf("unknown field %s", name)
+			return
+		}
+		tmp[ndx] = rdx.FIRSTrdx2tlv(value)
+	}
+	for i := 0; i < len(form); i++ {
+		if tmp[i] != nil {
+			tlvs = append(tlvs, toytlv.TinyRecord('F', rdx.ZipUint64(uint64(i))))
+			tlvs = append(tlvs, tmp[i])
+		}
+	}
+	return repl.Host.CommitPacket('E', oid, tlvs)
+}
+
+func (repl *REPL) CommandEdit(arg *rdx.RDX) (id rdx.ID, err error) {
+	id = rdx.BadId
+	err = HelpEdit
+	if arg == nil || arg.RdxType != rdx.Map || len(arg.Nested) < 2 {
+		return
+	}
+	if arg.Nested[0].String() == "_id" {
+		if arg.Nested[1].RdxType != rdx.Reference {
+			return
+		}
+		oid := rdx.IDFromText(arg.Nested[1].Text)
+		return repl.EditObject(oid, arg.Nested[2:])
+	} else { // todo
+		return
+	}
+}
+
+var HelpList = errors.New(
+	"ls b0b-1e",
+)
+
+func (repl *REPL) ListObject(oid rdx.ID) (txt []string, err error) {
+	_, form, fact, e := repl.Host.ObjectFields(oid)
+	if e != nil {
+		return nil, e
+	}
+	txt = append(txt, "{")
+	for n, d := range form {
+		if n != 0 {
+			txt = append(txt, ",")
+		}
+		switch d.RdxType {
+		case 'F', 'I', 'S', 'T':
+			value := rdx.Xstring(byte(d.RdxType), fact[n])
+			txt = append(txt, fmt.Sprintf("%s:\t%s\n", d.Name, value))
+		case 'R':
+			recid := rdx.Rnative(fact[n])
+			rectxt, rec := repl.ListObject(recid)
+			if rec != nil {
+				value := rdx.Xstring(byte(d.RdxType), fact[n])
+				txt = append(txt, fmt.Sprintf("%s:\t%s\n", d.Name, value))
+			} else {
+				txt = append(txt, rectxt...)
+			}
+		default:
+			txt = append(txt, "TODO")
+		}
+	}
+	txt = append(txt, "}")
+	return
+}
+
+func (repl *REPL) CommandList(arg *rdx.RDX) (id rdx.ID, err error) {
+	id = rdx.BadId
+	err = HelpCat
+	if arg == nil || arg.RdxType != rdx.Reference {
+		return
+	}
+	id = rdx.IDFromText(arg.Text)
+	var strs []string
+	strs, err = repl.ListObject(id)
+	if err == nil {
+		for _, s := range strs {
+			fmt.Print(s)
+		}
+		fmt.Println()
 	}
 	return
 }
 
-var HelpListen = errors.New("listen 11.22.33.44 1234")
+var HelpCat = errors.New(
+	"cat b0b-1e",
+)
 
-func (repl *REPL) CommandListen(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
-	addr := ""
-	addr, err = repl.ParseAddress(path, arg)
+func (repl *REPL) CommandCat(arg *rdx.RDX) (id rdx.ID, err error) {
+	id = rdx.BadId
+	err = HelpCat
+	if arg == nil || arg.RdxType != rdx.Reference {
+		return
+	}
+	oid := rdx.IDFromText(arg.Text)
+	_, form, fact, e := repl.Host.ObjectFields(oid)
+	if e != nil {
+		return rdx.BadId, e
+	}
+	for n, d := range form {
+		value := rdx.Xstring(byte(d.RdxType), fact[n])
+		fmt.Printf("%s:\t%s\n", d.Name, value)
+	}
+	return
+}
+
+var HelpListen = errors.New("listen \"11.22.33.44:1234\"")
+
+func (repl *REPL) CommandListen(arg *rdx.RDX) (id rdx.ID, err error) {
+	if arg == nil || arg.RdxType != rdx.String {
+		return rdx.BadId, HelpListen
+	}
+	addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
 	if err == nil {
 		err = repl.tcp.Listen(addr)
 	}
 	return
 }
 
-var HelpConnect = errors.New("connect 11.22.33.44 1234")
+var HelpConnect = errors.New("connect \"11.22.33.44:1234\"")
 
-func (repl *REPL) CommandConnect(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
-	addr := ""
-	addr, err = repl.ParseAddress(path, arg)
+func (repl *REPL) CommandConnect(arg *rdx.RDX) (id rdx.ID, err error) {
+	if arg == nil || arg.RdxType != rdx.String {
+		return rdx.BadId, HelpConnect
+	}
+	addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
 	if err == nil {
 		err = repl.tcp.Connect(addr)
 	}

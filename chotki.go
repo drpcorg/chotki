@@ -44,7 +44,7 @@ type Chotki struct {
 
 	opts Options
 
-	types map[rdx.ID][]string
+	types map[rdx.ID]Fields
 }
 
 var ErrCausalityBroken = errors.New("order fail: refs an unknown op")
@@ -132,7 +132,7 @@ func (cho *Chotki) Create(orig uint64, name string) (err error) {
 	var _0 rdx.ID
 	id0 := rdx.IDFromSrcSeqOff(orig, 0, 0)
 	rec0 := toytlv.Concat(
-		toytlv.Record('L',
+		toytlv.Record('Y',
 			toytlv.Record('I', id0.ZipBytes()),
 			toytlv.Record('R', _0.ZipBytes()),
 			toytlv.Record('S', rdx.Stlv(name)),
@@ -167,7 +167,7 @@ func (cho *Chotki) Open(orig uint64) (err error) {
 		_ = cho.db.Close()
 		return err
 	}
-	cho.types = make(map[rdx.ID][]string)
+	cho.types = make(map[rdx.ID]Fields)
 	cho.syncs = make(map[rdx.ID]*pebble.Batch)
 	var vv rdx.VV
 	vv, err = cho.VersionVector()
@@ -194,14 +194,14 @@ func (cho *Chotki) OpenTCP(tcp *toytlv.TCPDepot) {
 	// ...
 	io := pebble.IterOptions{}
 	i := cho.db.NewIter(&io)
-	for i.SeekGE([]byte{'L'}); i.Valid() && i.Key()[0] == 'L'; i.Next() {
+	for i.SeekGE([]byte{'l'}); i.Valid() && i.Key()[0] == 'L'; i.Next() {
 		address := string(i.Key()[1:])
 		err := tcp.Listen(address)
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err.Error())
 		}
 	}
-	for i.SeekGE([]byte{'C'}); i.Valid() && i.Key()[0] == 'C'; i.Next() {
+	for i.SeekGE([]byte{'c'}); i.Valid() && i.Key()[0] == 'C'; i.Next() {
 		address := string(i.Key()[1:])
 		err := tcp.Connect(address)
 		if err != nil {
@@ -249,17 +249,17 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 		pb := pebble.Batch{}
 		switch lit {
 		case 'C':
-			err = cho.ApplyCOLA('C', id, ref, body, &pb)
-		case 'L': // create replica log
-			if ref != rdx.ID0 {
-				return ErrBadLPacket
-			}
-			err = cho.ApplyCOLA('L', id, ref, body, &pb)
+			err = cho.ApplyC(id, ref, body, &pb)
 		case 'O': // create object
 			if ref == rdx.ID0 {
 				return ErrBadLPacket
 			}
-			err = cho.ApplyCOLA('O', id, ref, body, &pb)
+			err = cho.ApplyOY('O', id, ref, body, &pb)
+		case 'Y': // create replica log
+			if ref != rdx.ID0 {
+				return ErrBadLPacket
+			}
+			err = cho.ApplyOY('Y', id, ref, body, &pb)
 		case 'E':
 			if ref == rdx.ID0 {
 				return ErrBadLPacket
@@ -389,13 +389,15 @@ func (cho *Chotki) ObjectIterator(oid rdx.ID) *pebble.Iterator {
 		LowerBound: fro,
 		UpperBound: til,
 	}
-	ret := cho.db.NewIter(&io)
-	if ret.SeekGE(fro) {
-		return ret
-	} else {
-		_ = ret.Close()
-		return nil
+	it := cho.db.NewIter(&io)
+	if it.SeekGE(fro) {
+		id, rdt := OKeyIdRdt(it.Key())
+		if rdt == 'O' && id == oid {
+			return it
+		}
 	}
+	_ = it.Close()
+	return nil
 }
 
 func (cho *Chotki) GetFieldTLV(id rdx.ID) (rdt byte, tlv []byte) {

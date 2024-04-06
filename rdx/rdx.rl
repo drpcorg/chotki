@@ -28,8 +28,8 @@ action estring {
     rdx.RdxType = String; 
     rdx.Text = data[mark[nest] : p];
 }
-action name {
-    rdx.RdxType = RdxName; 
+action term {
+    rdx.RdxType = Term; 
     rdx.Text = data[mark[nest] : p];
 }
 action n {
@@ -66,7 +66,7 @@ action opop {
     }
     nest--;
     rdx = rdx.Parent;
-    if rdx.RdxType != ESet && rdx.RdxType!=Map && rdx.RdxType!=RdxObject {
+    if rdx.RdxType != ESet && rdx.RdxType!=Map {
         cs = _RDX_error;
         fbreak;
     }
@@ -136,15 +136,6 @@ action colon {
             cs = _RDX_error;
             fbreak;
         }
-    } else if rdx.Parent.RdxType==RdxObject {
-        if (len(n)&1)==0 {
-            cs = _RDX_error;
-            fbreak;
-        }
-        if rdx.RdxType != RdxName {
-            cs = _RDX_error;
-            fbreak;
-        }
     } else {
         cs = _RDX_error;
         fbreak;
@@ -165,10 +156,9 @@ INT = ( "-"? dec+ ) >b %eint;
 FLOAT = ( "-"? dec+ ("." dec+)? ([eE] [\-+]? dec+) ) >b %f;
 STRING = ( ["] char* ["] ) >b %estring; 
 REF = ( hex+ "-" hex+ ( "-" hex+ )? ) >b %eref;
-NULL = "null";
-FIRST = INT | FLOAT | STRING | REF | NULL;
+TERM = ( [_a-zA-Z] asci+ ) >b %term;
+FIRST = INT | FLOAT | STRING | REF | TERM;
 
-NAME = ( [_a-zA-Z] asci+ ) >b %name;
 
 NCOUNT = ( "(" dec+ ")" ) >b %n;
 NINC = ( "+" dec+ ) >b %dn;
@@ -188,7 +178,7 @@ COLON = ":" @colon;
 PUNCT = OOPEN | OCLOSE | AOPEN | ACLOSE | COMMA | COLON;
 
 sep = PUNCT | space;
-token = FIRST | NAME | COUNT;
+token = FIRST | COUNT;
 
 RDX = sep* token ( sep+ token )*  sep*;
 

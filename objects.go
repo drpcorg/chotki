@@ -25,25 +25,74 @@ var ErrTypeUnknown = errors.New("unknown object type")
 var ErrUnknownFieldInAType = errors.New("unknown field for the type")
 var ErrBadValueForAType = errors.New("bad value for the type")
 
-func (cho *Chotki) ClassFields(tid rdx.ID) (fields []string, err error) {
+type Field struct {
+	Name    string
+	RdxType byte
+}
+
+type Fields []Field
+
+func (f Fields) Find(name string) (ndx int) {
+	for i := 0; i < len(f); i++ {
+		if f[i].Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func (f Field) Valid() bool {
+	return f.RdxType >= 'A' && f.RdxType <= 'Z' && len(f.Name) > 0 && utf8.ValidString(f.Name) && !hasUnsafeChars(f.Name)
+}
+
+var ErrBadClass = errors.New("bad class description")
+
+func (cho *Chotki) ClassFields(tid rdx.ID) (fields Fields, err error) {
 	fields, ok := cho.types[tid]
 	if ok {
 		return
 	}
-	i := cho.ObjectIterator(tid)
-	if i == nil {
+	okey := OKey(tid, 'C')
+	tlv, clo, e := cho.db.Get(okey)
+	if e != nil {
 		return nil, ErrTypeUnknown
 	}
-	for i.Next() { // skip the parent
-		fields = append(fields, rdx.Snative(i.Value()))
+	it := rdx.FIRSTIterator{TLV: tlv}
+	if !it.Next() {
+		return nil, ErrBadClass
 	}
+	rr, _, rv := it.ParsedValue()
+	if rr != rdx.Term || string(rv) != "_ref" || !it.Next() {
+		return nil, ErrBadClass
+	}
+	pr, _, pv := it.ParsedValue()
+	if pr != rdx.Reference {
+		return nil, ErrBadClass
+	}
+	fields = append(fields, Field{Name: "_ref", RdxType: rdx.Reference})
+	_ = pv // todo recur
+	for it.Next() {
+		lit, _, name := it.ParsedValue()
+		if lit != rdx.Term || len(name) == 0 || !it.Next() {
+			break // todo unique names etc
+		}
+		lit2, _, rdt := it.ParsedValue()
+		if lit2 != rdx.Term || len(rdt) == 0 {
+			break
+		}
+		fields = append(fields, Field{
+			RdxType: rdt[0],
+			Name:    string(name),
+		})
+	}
+	_ = clo.Close()
 	cho.lock.Lock()
 	cho.types[tid] = fields
 	cho.lock.Unlock()
 	return
 }
 
-func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, tlv toyqueue.Records, err error) {
+func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, tlvs toyqueue.Records, err error) {
 	it := cho.ObjectIterator(oid)
 	if it == nil {
 		return rdx.BadId, nil, ErrUnknownObject
@@ -59,10 +108,40 @@ func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, t
 		if len(decl) == 0 || rdt != decl[0] {
 			continue
 		}
-		for off > len(tlv)+1 {
-			tlv = append(tlv, nil)
+		for off > len(tlvs)+1 {
+			tlvs = append(tlvs, nil)
 		}
-		tlv = append(tlv, it.Value())
+		tlvs = append(tlvs, it.Value())
+	}
+	_ = it.Close()
+	return
+}
+
+func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact toyqueue.Records, err error) {
+	it := cho.ObjectIterator(oid)
+	if it == nil {
+		err = ErrUnknownObject
+		return
+	}
+	tid = rdx.IDFromZipBytes(it.Value())
+	decl, err = cho.ClassFields(tid)
+	if err != nil {
+		return
+	}
+	fact = append(fact, it.Value())
+	for it.Next() {
+		id, rdt := OKeyIdRdt(it.Key())
+		off := int(id.Off())
+		if off == 0 || off >= len(decl) {
+			continue
+		}
+		if decl[off].RdxType != rdt {
+			continue
+		}
+		for off > len(fact) {
+			fact = append(fact, nil)
+		}
+		fact = append(fact, it.Value())
 	}
 	_ = it.Close()
 	return
@@ -93,15 +172,6 @@ func FieldOffset(fields []string, name string) rdx.ID {
 	return 0
 }
 
-// returns 0 if no such field found
-func (cho *Chotki) FindFieldOffset(oid rdx.ID, name string) (off rdx.ID) {
-	fields, err := cho.ClassFields(oid)
-	if err != nil {
-		return 0
-	}
-	return FieldOffset(fields, name)
-}
-
 func (cho *Chotki) ObjectField(oid rdx.ID, off rdx.ID) (rdt byte, tlv []byte, err error) {
 	it := cho.db.NewIter(&pebble.IterOptions{})
 	fid := (oid &^ rdx.OffMask) + off
@@ -119,37 +189,38 @@ func (cho *Chotki) ObjectField(oid rdx.ID, off rdx.ID) (rdt byte, tlv []byte, er
 	return
 }
 
-func (cho *Chotki) NewClass(parent rdx.ID, fields ...string) (id rdx.ID, err error) {
+func (cho *Chotki) NewClass(parent rdx.ID, fields ...Field) (id rdx.ID, err error) {
 	var fspecs toyqueue.Records
 	//fspecs = append(fspecs, toytlv.Record('A', parent.ZipBytes()))
 	for _, field := range fields {
-		if len(field) < 2 || field[0] < 'A' || field[0] > 'Z' || !utf8.ValidString(field) || hasUnsafeChars(field) {
+		if !field.Valid() {
 			return rdx.BadId, ErrBadTypeDescription
 		}
-		fspecs = append(fspecs, toytlv.Record('S', rdx.Stlv(field)))
+		fspecs = append(fspecs, toytlv.Record('T', rdx.Ttlv(field.Name)))
+		fspecs = append(fspecs, toytlv.Record('T', rdx.Ttlv(string(field.RdxType))))
 	}
 	return cho.CommitPacket('C', parent, fspecs)
 }
 
-func (cho *Chotki) NewObject(oid rdx.ID, fields ...string) (id rdx.ID, err error) {
-	var formula []string
-	formula, err = cho.ClassFields(oid)
+func (cho *Chotki) NewObject(tid rdx.ID, fields ...string) (id rdx.ID, err error) {
+	var form Fields
+	form, err = cho.ClassFields(tid)
 	if err != nil {
 		return
 	}
-	if len(fields) > len(formula) {
+	if len(fields) > len(form) {
 		return rdx.BadId, ErrUnknownFieldInAType
 	}
 	var packet toyqueue.Records
 	for i := 0; i < len(fields); i++ {
-		rdt := formula[i][0]
+		rdt := byte(form[i+1].RdxType)
 		tlv := rdx.Xparse(rdt, fields[i])
 		if tlv == nil {
 			return rdx.BadId, ErrBadValueForAType
 		}
 		packet = append(packet, toytlv.Record(rdt, tlv))
 	}
-	return cho.CommitPacket('O', oid, packet)
+	return cho.CommitPacket('O', tid, packet)
 }
 
 func (cho *Chotki) EditObject(oid rdx.ID, fields ...string) (id rdx.ID, err error) {
@@ -167,7 +238,7 @@ func (cho *Chotki) EditObject(oid rdx.ID, fields ...string) (id rdx.ID, err erro
 	// fetch type desc
 	var packet toyqueue.Records
 	for i := 0; i < len(fields); i++ {
-		rdt := formula[i][0]
+		rdt := byte(formula[i].RdxType)
 		tlv := rdx.X2string(rdt, obj[i], fields[i], cho.src)
 		if tlv == nil {
 			return rdx.BadId, ErrBadValueForAType

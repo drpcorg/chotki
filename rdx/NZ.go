@@ -12,6 +12,8 @@ func Nstring(tlv []byte) (txt string) {
 	return fmt.Sprintf("%d", Nnative(tlv))
 }
 
+func Ndefault() []byte { return []byte{} }
+
 // parse a text form into a TLV value
 func Nparse(txt string) (tlv []byte) {
 	var u uint64
@@ -179,7 +181,7 @@ func Znative(tlv []byte) (sum int64) {
 func Zmerge(tlvs [][]byte) (merged []byte) {
 	ih := ItHeap[*ZIterator]{}
 	for _, tlv := range tlvs {
-		ih.Push(&ZIterator{FIRSTIterator{tlv: tlv}})
+		ih.Push(&ZIterator{FIRSTIterator{TLV: tlv}})
 	}
 	for ih.Len() > 0 {
 		merged = append(merged, ih.Next()...)
