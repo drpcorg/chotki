@@ -16,9 +16,9 @@ const (
 	NInc
 	ZCounter
 	ZInc
-	Map
 	ESet
 	LArray
+	Map
 	RdxName
 	RdxObject
 	RdxPath

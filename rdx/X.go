@@ -28,15 +28,15 @@ func Xparse(rdt byte, val string) (tlv []byte) {
 func Xmerge(rdt byte, tlvs [][]byte) (tlv []byte) {
 	switch rdt {
 	case 'C', 'O', 'L', 'A': // object's ref is immutable
-		tlv = Amerge(tlvs)
+		tlv = COLAmerge(tlvs)
 	case 'F':
 		tlv = Fmerge(tlvs)
 	case 'I':
 		tlv = Imerge(tlvs)
-	case 'S':
-		tlv = Smerge(tlvs)
 	case 'R':
 		tlv = Rmerge(tlvs)
+	case 'S':
+		tlv = Smerge(tlvs)
 	case 'T':
 		tlv = Tmerge(tlvs)
 	case 'N':
@@ -54,7 +54,7 @@ func Xmerge(rdt byte, tlvs [][]byte) (tlv []byte) {
 func Xstring(rdt byte, tlv []byte) string {
 	switch rdt {
 	case 'C', 'O', 'L', 'A':
-		return Astring(tlv)
+		return COLAstring(tlv)
 	case 'F':
 		return Fstring(tlv)
 	case 'I':
@@ -73,6 +73,18 @@ func Xstring(rdt byte, tlv []byte) string {
 		return string(hex)
 	}
 
+}
+
+func X2string(rdt byte, tlv []byte, new_val string, src uint64) (delta []byte) {
+	switch rdt {
+	case 'C', 'O', 'L', 'A':
+		delta = nil
+	case 'N':
+		delta = N2string(tlv, new_val, src)
+	default:
+		delta = nil
+	}
+	return
 }
 
 func Xdiff(rdt byte, tlv []byte, sendvv VV) (diff []byte) {
@@ -97,11 +109,11 @@ func Xdiff(rdt byte, tlv []byte, sendvv VV) (diff []byte) {
 	return
 }
 
-func Amerge(inputs [][]byte) []byte {
+func COLAmerge(inputs [][]byte) []byte {
 	return inputs[0]
 }
 
-func Astring(tlv []byte) string {
+func COLAstring(tlv []byte) string {
 	return IDFromZipBytes(tlv).String()
 }
 

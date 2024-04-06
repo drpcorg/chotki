@@ -25,7 +25,7 @@ var ErrTypeUnknown = errors.New("unknown object type")
 var ErrUnknownFieldInAType = errors.New("unknown field for the type")
 var ErrBadValueForAType = errors.New("bad value for the type")
 
-func (cho *Chotki) TypeFields(tid rdx.ID) (fields []string, err error) {
+func (cho *Chotki) ClassFields(tid rdx.ID) (fields []string, err error) {
 	fields, ok := cho.types[tid]
 	if ok {
 		return
@@ -43,13 +43,38 @@ func (cho *Chotki) TypeFields(tid rdx.ID) (fields []string, err error) {
 	return
 }
 
-func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, tlv toyqueue.Records, err error) {
+func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, tlv toyqueue.Records, err error) {
 	it := cho.ObjectIterator(oid)
 	if it == nil {
 		return rdx.BadId, nil, ErrUnknownObject
 	}
 	tid = rdx.IDFromZipBytes(it.Value())
-	for it.Next() { // todo check offset/rdt
+	for it.Next() {
+		id, rdt := OKeyIdRdt(it.Key())
+		off := int(id.Off())
+		if off == 0 || off > len(form) {
+			continue
+		}
+		decl := form[off-1]
+		if len(decl) == 0 || rdt != decl[0] {
+			continue
+		}
+		for off > len(tlv)+1 {
+			tlv = append(tlv, nil)
+		}
+		tlv = append(tlv, it.Value())
+	}
+	_ = it.Close()
+	return
+}
+
+func (cho *Chotki) ObjectFieldsTLV(oid rdx.ID) (tid rdx.ID, tlv toyqueue.Records, err error) {
+	it := cho.ObjectIterator(oid)
+	if it == nil {
+		return rdx.BadId, nil, ErrUnknownObject
+	}
+	tid = rdx.IDFromZipBytes(it.Value())
+	for it.Next() {
 		cp := make([]byte, len(it.Value()))
 		copy(cp, it.Value())
 		tlv = append(tlv, cp)
@@ -70,7 +95,7 @@ func FieldOffset(fields []string, name string) rdx.ID {
 
 // returns 0 if no such field found
 func (cho *Chotki) FindFieldOffset(oid rdx.ID, name string) (off rdx.ID) {
-	fields, err := cho.TypeFields(oid)
+	fields, err := cho.ClassFields(oid)
 	if err != nil {
 		return 0
 	}
@@ -106,9 +131,9 @@ func (cho *Chotki) NewClass(parent rdx.ID, fields ...string) (id rdx.ID, err err
 	return cho.CommitPacket('C', parent, fspecs)
 }
 
-func (cho *Chotki) NewObject(tid rdx.ID, fields ...string) (id rdx.ID, err error) {
+func (cho *Chotki) NewObject(oid rdx.ID, fields ...string) (id rdx.ID, err error) {
 	var formula []string
-	formula, err = cho.TypeFields(tid)
+	formula, err = cho.ClassFields(oid)
 	if err != nil {
 		return
 	}
@@ -124,7 +149,33 @@ func (cho *Chotki) NewObject(tid rdx.ID, fields ...string) (id rdx.ID, err error
 		}
 		packet = append(packet, toytlv.Record(rdt, tlv))
 	}
-	return cho.CommitPacket('O', tid, packet)
+	return cho.CommitPacket('O', oid, packet)
+}
+
+func (cho *Chotki) EditObject(oid rdx.ID, fields ...string) (id rdx.ID, err error) {
+	formula, err := cho.ClassFields(oid)
+	if err != nil {
+		return rdx.BadId, err
+	}
+	if len(fields) > len(formula) {
+		return rdx.BadId, ErrUnknownFieldInAType
+	}
+	_, obj, err := cho.ObjectFieldsTLV(oid)
+	if err != nil {
+		return rdx.BadId, err
+	}
+	// fetch type desc
+	var packet toyqueue.Records
+	for i := 0; i < len(fields); i++ {
+		rdt := formula[i][0]
+		tlv := rdx.X2string(rdt, obj[i], fields[i], cho.src)
+		if tlv == nil {
+			return rdx.BadId, ErrBadValueForAType
+		}
+		packet = append(packet, toytlv.Record('F', rdx.ZipUint64(uint64(i))))
+		packet = append(packet, toytlv.Record(rdt, tlv))
+	}
+	return cho.CommitPacket('E', oid, packet)
 }
 
 func (cho *Chotki) GetObject(oid rdx.ID) (tid rdx.ID, fields []string, err error) {
@@ -135,17 +186,7 @@ func (cho *Chotki) GetObject(oid rdx.ID) (tid rdx.ID, fields []string, err error
 	tid = rdx.IDFromZipBytes(i.Value())
 	for i.Next() {
 		_, rdt := OKeyIdRdt(i.Key())
-		var str string
-		switch rdt {
-		case 'I':
-			str = rdx.Istring(i.Value())
-		case 'S':
-			str = rdx.Sstring(i.Value())
-		case 'F':
-			str = rdx.Fstring(i.Value())
-		case 'R':
-			str = rdx.Rstring(i.Value())
-		}
+		str := rdx.Xstring(rdt, i.Value())
 		fields = append(fields, str)
 	}
 	return

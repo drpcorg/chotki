@@ -156,10 +156,12 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 			err = io.EOF
 		}
 	// ----- object handling -----
-	case "new":
-		id, err = repl.CommandNew(path, arg)
 	case "class":
 		id, err = repl.CommandClass(path, arg)
+	case "new":
+		id, err = repl.CommandNew(path, arg)
+	case "edit":
+		id, err = repl.CommandEdit(path, arg)
 	case "ls", "show", "list":
 		id, err = repl.CommandList(path, arg)
 	case "cat":

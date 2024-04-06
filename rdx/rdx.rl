@@ -161,8 +161,8 @@ esc = "\\" ["\/\\bfnrt];
 char = [^0x00..0x19"\\] | uni | esc;
 asci = [_0-9a-zA-Z];
 
-INT = ( "+"? dec+ ) >b %eint;
-FLOAT = ( "+"? dec+ ("." dec+)? ([eE] [\-+]? dec+) ) >b %f;
+INT = ( "-"? dec+ ) >b %eint;
+FLOAT = ( "-"? dec+ ("." dec+)? ([eE] [\-+]? dec+) ) >b %f;
 STRING = ( ["] char* ["] ) >b %estring; 
 REF = ( hex+ "-" hex+ ( "-" hex+ )? ) >b %eref;
 NULL = "null";

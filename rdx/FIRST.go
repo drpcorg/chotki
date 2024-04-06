@@ -430,13 +430,6 @@ func Ttlv() (tlv []byte) {
 	return TlvFIRST(0, 0, nil)
 }
 
-// Enveloped I TLV
-func Ttlve(rev int64, src uint64) []byte {
-	return toytlv.Record('T',
-		toytlv.TinyRecord('T', ZipIntUint64Pair(rev, src)),
-	)
-}
-
 // merge TLV values
 func Tmerge(tlvs [][]byte) (tlv []byte) {
 	return MergeFIRST(tlvs)

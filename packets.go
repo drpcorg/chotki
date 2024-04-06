@@ -113,9 +113,9 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch) (err e
 		}
 		lit, bare, rest = toytlv.TakeAny(rest)
 		switch lit {
-		case 'I', 'S', 'F', 'R':
+		case 'F', 'I', 'R', 'S', 'T':
 			rebar, err = rdx.SetSourceFIRST(bare, id.Src())
-		case 'M', 'E', 'L':
+		case 'E', 'L', 'M':
 			rebar, err = rdx.MelReSource(bare, id.Src())
 		default:
 			rebar = bare

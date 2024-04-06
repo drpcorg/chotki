@@ -12,6 +12,7 @@ func TestRDX_Parse(t *testing.T) {
 	// - FIRST, object
 	cases := map[string]string{
 		"12345":                           "12345",
+		"-0":                              "-0",
 		"{1: 2}":                          "{1:2}",
 		"{1: {2 : 4}}":                    "{1:{2:4}}",
 		"[ 1, 2, 3]":                      "[1,2,3]",
@@ -24,6 +25,7 @@ func TestRDX_Parse(t *testing.T) {
 		" +1 ":                            "+1",
 		" --5 ":                           "--5",
 		" ++25 ":                          "++25",
+		"[ { {1}: [2] }, {3,4} ]":         "[{{1}:[2]},{3,4}]",
 	}
 	for in, out := range cases {
 		rdx, err := ParseRDX([]byte(in))

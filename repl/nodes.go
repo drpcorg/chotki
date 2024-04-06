@@ -133,7 +133,7 @@ func (tn *TypeNode) String() string {
 	return tn.Parent.String()
 }
 func (tn *TypeNode) List() (fields []string) {
-	formula, _ := tn.repl.Host.TypeFields(tn.Id)
+	formula, _ := tn.repl.Host.ClassFields(tn.Id)
 	for _, f := range formula {
 		fields = append(fields, f[1:])
 	}
@@ -141,7 +141,7 @@ func (tn *TypeNode) List() (fields []string) {
 }
 
 func (tn *TypeNode) Get(name string) Node {
-	formula, _ := tn.repl.Host.TypeFields(tn.Id)
+	formula, _ := tn.repl.Host.ClassFields(tn.Id)
 	for n, fn := range formula {
 		if fn[1:] != name {
 			continue
@@ -174,7 +174,7 @@ func (on *ObjectNode) loadFields() bool {
 		return true
 	}
 	var err error
-	on.fields, err = on.repl.Host.TypeFields(on.Type)
+	on.fields, err = on.repl.Host.ClassFields(on.Type)
 	return err == nil
 }
 
@@ -183,7 +183,7 @@ func (on *ObjectNode) loadValues() bool {
 		return true
 	}
 	var err error
-	on.Type, on.values, err = on.repl.Host.ObjectFields(on.Id)
+	on.Type, on.values, err = on.repl.Host.ObjectFieldsTLV(on.Id)
 	return err == nil
 }
 

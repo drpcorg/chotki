@@ -48,6 +48,40 @@ func Nmerge(tlvs [][]byte) (merged []byte) {
 	return
 }
 
+func N2string(tlv []byte, new_val string, src uint64) (tlv_delta []byte) {
+	if len(new_val) == 0 {
+		return nil
+	}
+	it := NIterator{tlv: tlv}
+	mine := uint64(0)
+	for it.Next() {
+		if it.src == src {
+			mine = it.inc
+			break
+		}
+	}
+	add := false
+	if new_val[0] == '+' {
+		add = true
+		new_val = new_val[1:]
+	}
+	var num uint64
+	n, _ := fmt.Sscanf(new_val, "%d", &num)
+	if n < 1 {
+		return nil
+	}
+	if add {
+		mine += num
+	} else if num < mine {
+		return nil
+	} else if num == mine {
+		return nil
+	} else {
+		mine = num
+	}
+	return ZipUint64Pair(mine, 0)
+}
+
 // produce an op that turns the old value into the new one
 func Ndelta(tlv []byte, new_val uint64) (tlv_delta []byte) {
 	sum := Nnative(tlv)

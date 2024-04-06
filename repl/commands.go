@@ -120,13 +120,21 @@ func (repl *REPL) CommandNew(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error)
 	return
 }
 
-// N counters:
-// - tlv heap
-// - merge oper
-// - N* fns
-// - N node (list: contribs)
-// - try set 3-3.Score.3 5
-// - fixme LOT rdt T (COLA)
+func (repl *REPL) CommandEdit(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
+	oid := rdx.ID0
+	if path != nil && path.RdxType == rdx.RdxPath && len(path.Nested) > 0 && path.Nested[0].RdxType == rdx.Reference {
+		oid = rdx.IDFromText(path.Nested[0].Text)
+	}
+	if arg == nil || arg.RdxType != rdx.LArray {
+		return rdx.BadId, ErrBadArgs
+	}
+	fields := []string{}
+	for _, a := range arg.Nested {
+		fields = append(fields, string(a.Text))
+	}
+	id, err = repl.Host.EditObject(oid, fields...)
+	return
+}
 
 func (repl *REPL) CommandList(path *rdx.RDX, arg *rdx.RDX) (id rdx.ID, err error) {
 	node := repl.NodeByPath(path)
