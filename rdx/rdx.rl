@@ -152,11 +152,13 @@ esc = "\\" ["\/\\bfnrt];
 char = [^0x00..0x19"\\] | uni | esc;
 asci = [_0-9a-zA-Z];
 
-INT = ( "-"? dec+ ) >b %eint;
-FLOAT = ( "-"? dec+ ("." dec+)? ([eE] [\-+]? dec+) ) >b %f;
-STRING = ( ["] char* ["] ) >b %estring; 
-REF = ( hex+ "-" hex+ ( "-" hex+ )? ) >b %eref;
-TERM = ( [_a-zA-Z] asci* ) >b %term;
+TIME = "(" hex+ "," dec+ ")";
+
+INT = ( "-"? dec+ TIME? ) >b %eint;
+FLOAT = ( "-"? dec+ ("." dec+)? ([eE] [\-+]? dec+) TIME? ) >b %f;
+STRING = ( ["] char* ["] TIME? ) >b %estring; 
+REF = ( hex+ "-" hex+ ( "-" hex+ )? TIME? ) >b %eref;
+TERM = ( [_a-zA-Z] asci* TIME? ) >b %term;
 FIRST = INT | FLOAT | STRING | REF | TERM;
 
 
