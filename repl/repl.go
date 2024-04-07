@@ -92,10 +92,13 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 		return rdx.ID0, nil
 	}
 	ws := strings.IndexAny(line, " \t\r\n")
-	cmd := "get"
+	cmd := ""
 	if ws > 0 {
 		cmd = line[:ws]
 		line = strings.TrimSpace(line[ws:])
+	} else {
+		cmd = line
+		line = ""
 	}
 	var arg *rdx.RDX
 	arg, err = rdx.ParseRDX([]byte(line))

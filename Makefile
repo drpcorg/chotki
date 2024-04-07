@@ -14,3 +14,6 @@ ragel:
 .PHONY: lint
 lint:
 	golangci-lint run ./...
+
+.PHONY: lint
+all: ragel fmt build test lint

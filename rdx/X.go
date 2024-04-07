@@ -53,8 +53,10 @@ func Xmerge(rdt byte, tlvs [][]byte) (tlv []byte) {
 
 func Xstring(rdt byte, tlv []byte) string {
 	switch rdt {
-	case 'C', 'O', 'Y':
-		return COLAstring(tlv)
+	case 'C':
+		return Cstring(tlv)
+	case 'O', 'Y':
+		return OYstring(tlv)
 	case 'F':
 		return Fstring(tlv)
 	case 'I':
@@ -132,7 +134,11 @@ func COLAmerge(inputs [][]byte) []byte {
 	return inputs[0]
 }
 
-func COLAstring(tlv []byte) string {
+func Cstring(tlv []byte) string {
+	return Mstring(tlv)
+}
+
+func OYstring(tlv []byte) string {
 	return IDFromZipBytes(tlv).String()
 }
 

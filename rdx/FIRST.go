@@ -24,7 +24,7 @@ func ParseFIRST(bulk []byte) (rev int64, src uint64, value []byte) {
 }
 
 // same as ParseFIRST, but the rev number is zigzagged
-func ParseFIRSTz(bulk []byte) (zrev uint64, src uint64, value []byte) {
+func FIRSTparsez(bulk []byte) (zrev uint64, src uint64, value []byte) {
 	lit, hlen, blen := toytlv.ProbeHeader(bulk)
 	if lit != 'T' && lit != '0' || hlen+blen > len(bulk) {
 		return
@@ -157,8 +157,11 @@ func (a *FIRSTIterator) Next() bool {
 	var hlen, blen, rlen int
 	a.lit, hlen, blen = toytlv.ProbeHeader(a.TLV)
 	rlen = hlen + blen
+	if len(a.TLV) < rlen {
+		return false
+	}
 	a.bare = a.TLV[hlen:rlen]
-	a.revz, a.src, a.val = ParseFIRSTz(a.bare)
+	a.revz, a.src, a.val = FIRSTparsez(a.bare)
 	a.one = a.TLV[:rlen]
 	a.TLV = a.TLV[rlen:]
 	return true
@@ -201,7 +204,8 @@ func FIRSTrdxs2tlvs(a []RDX) (tlv toyqueue.Records) {
 		if !a[i].FIRST() {
 			return nil
 		}
-		tlv = append(tlv, FIRSTrdx2tlv(&a[i]))
+		first := toytlv.Record(a[i].RdxType, FIRSTrdx2tlv(&a[i]))
+		tlv = append(tlv, first)
 	}
 	return
 }
@@ -467,7 +471,12 @@ func Fdiff(tlv []byte, vvdiff VV) []byte {
 
 // produce a text form (for REPL mostly)
 func Tstring(tlv []byte) (txt string) {
-	return "null"
+	_, _, term := FIRSTparsez(tlv)
+	if len(term) == 0 {
+		return "null"
+	} else {
+		return string(term)
+	}
 }
 
 // parse a text form into a TLV value

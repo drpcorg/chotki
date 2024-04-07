@@ -156,7 +156,7 @@ INT = ( "-"? dec+ ) >b %eint;
 FLOAT = ( "-"? dec+ ("." dec+)? ([eE] [\-+]? dec+) ) >b %f;
 STRING = ( ["] char* ["] ) >b %estring; 
 REF = ( hex+ "-" hex+ ( "-" hex+ )? ) >b %eref;
-TERM = ( [_a-zA-Z] asci+ ) >b %term;
+TERM = ( [_a-zA-Z] asci* ) >b %term;
 FIRST = INT | FLOAT | STRING | REF | TERM;
 
 
@@ -180,7 +180,7 @@ PUNCT = OOPEN | OCLOSE | AOPEN | ACLOSE | COMMA | COLON;
 sep = PUNCT | space;
 token = FIRST | COUNT;
 
-RDX = sep* token ( sep+ token )*  sep*;
+RDX = token? ( sep+ token )*  sep*;
 
 }%%
 

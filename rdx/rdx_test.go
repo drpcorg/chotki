@@ -12,6 +12,9 @@ func TestRDX_Parse(t *testing.T) {
 	// - FIRST, object
 	cases := map[string]string{
 		"12345":                           "12345",
+		" b0b ":                           "b0b",
+		" a1ece ":                         "a1ece",
+		" { Name:S , Score :I}":           "{Name:S,Score:I}",
 		"-0":                              "-0",
 		"{1: 2}":                          "{1:2}",
 		"{1: {2 : 4}}":                    "{1:{2:4}}",

@@ -104,7 +104,7 @@ func appendFirstTlvString(tlv []byte, lit byte, bare []byte) []byte {
 	case 'S':
 		return append(tlv, Sstring(bare)...)
 	case 'T':
-		//return append(TLV, Tstring(bare)...)
+		return append(tlv, Tstring(bare)...)
 	default:
 	}
 	return nil
