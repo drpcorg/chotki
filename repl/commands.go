@@ -163,25 +163,29 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 			return
 		}
 		tmp := make(toyqueue.Records, len(fields))
+
 		for i := 0; i+1 < len(pairs); i += 2 {
 			if pairs[i].RdxType != rdx.Term {
 				return
 			}
 			name := pairs[i].String()
 			value := &pairs[i+1]
-			ndx := fields.Find(name)
+			ndx := fields.Find(name) //fixme rdt
 			if ndx == -1 {
 				err = fmt.Errorf("unknown field %s", name)
 				return
 			}
+			if value.RdxType != fields[ndx].RdxType {
+				err = fmt.Errorf("wrong type for %s", name)
+			}
 			tmp[ndx] = rdx.FIRSTrdx2tlv(value)
 		}
-		for i := 0; i < len(fields); i++ {
+		for i := 1; i < len(fields); i++ {
+			rdt := fields[i].RdxType
 			if tmp[i] == nil {
-				rdt := fields[i].RdxType
-				tlvs = append(tlvs, rdx.Xdefault(byte(rdt)))
+				tlvs = append(tlvs, toytlv.Record(rdt, rdx.Xdefault(rdt)))
 			} else {
-				tlvs = append(tlvs, tmp[i])
+				tlvs = append(tlvs, toytlv.Record(rdt, tmp[i]))
 			}
 		}
 	} else {
@@ -305,14 +309,14 @@ func (repl *REPL) CommandCat(arg *rdx.RDX) (id rdx.ID, err error) {
 		return
 	}
 	oid := rdx.IDFromText(arg.Text)
-	_, form, fact, e := repl.Host.ObjectFields(oid)
-	if e != nil {
-		return rdx.BadId, e
+	var txt string
+	txt, err = repl.Host.GetObjectString(oid)
+	if err != nil {
+		return
 	}
-	for n, d := range form {
-		value := rdx.Xstring(byte(d.RdxType), fact[n])
-		fmt.Printf("%s:\t%s\n", d.Name, value)
-	}
+	fmt.Println(txt)
+	err = nil
+	id = oid
 	return
 }
 

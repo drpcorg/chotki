@@ -82,11 +82,15 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 			return rdx.ErrBadPacket
 		}
 		var bare, rebar []byte
-		bare = rest[hlen : hlen+blen]
+		rlen := hlen + blen
+		if len(rest) < rlen {
+			return ErrBadOPacket
+		}
+		bare = rest[hlen:rlen]
 		fid = id + fno
 		fkey := OKey(fid, lit)
 		switch lit {
-		case 'I', 'S', 'F', 'R':
+		case 'F', 'I', 'R', 'S', 'T':
 			rebar, err = rdx.SetSourceFIRST(bare, id.Src())
 		case 'E', 'L', 'M':
 			rebar, err = rdx.MelReSource(bare, id.Src())
@@ -100,7 +104,7 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 			fkey,
 			rebar,
 			&WriteOptions)
-		rest = rest[hlen+blen:]
+		rest = rest[rlen:]
 	}
 	if err == nil {
 		err = cho.UpdateVTree(fid, id, batch)

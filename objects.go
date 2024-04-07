@@ -262,3 +262,22 @@ func (cho *Chotki) GetObject(oid rdx.ID) (tid rdx.ID, fields []string, err error
 	}
 	return
 }
+
+func (cho *Chotki) GetObjectString(oid rdx.ID) (txt string, err error) {
+	_, form, fact, e := cho.ObjectFields(oid)
+	if e != nil {
+		return "", e
+	}
+	ret := []byte{'{'}
+	for n, d := range form {
+		if n != 0 {
+			ret = append(ret, ',')
+		}
+		ret = append(ret, d.Name...)
+		ret = append(ret, ':')
+		ret = append(ret, rdx.Xstring(d.RdxType, fact[n])...)
+	}
+	ret = append(ret, '}')
+	txt = string(ret)
+	return
+}
