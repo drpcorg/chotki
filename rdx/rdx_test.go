@@ -6,12 +6,9 @@ import (
 )
 
 func TestRDX_Parse(t *testing.T) {
-	// todo
-	// - separators
-	// - more checks
-	// - FIRST, object
 	cases := map[string]string{
 		"12345":                           "12345",
+		" \"localhost:8080\" ":            "\"localhost:8080\"",
 		" b0b ":                           "b0b",
 		" a1ece ":                         "a1ece",
 		" { Name:S , Score :I}":           "{Name:S,Score:I}",

@@ -54,7 +54,6 @@ func TestORMExample(t *testing.T) {
 	err = toyqueue.Pump(&syncera, &syncerb)
 	assert.Equal(t, io.EOF, err)
 
-	// fixme wait something
 	var exb Example
 	itb := b.ObjectIterator(rdx.IDFromString("1e-2"))
 	assert.NotNil(t, itb)

@@ -299,6 +299,10 @@ func (repl *REPL) CommandListen(arg *rdx.RDX) (id rdx.ID, err error) {
 	}
 	addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
 	if err == nil {
+		if repl.tcp == nil {
+			repl.tcp = &toytlv.TCPDepot{}
+			repl.Host.OpenTCP(repl.tcp)
+		}
 		err = repl.tcp.Listen(addr)
 	}
 	return
@@ -312,6 +316,10 @@ func (repl *REPL) CommandConnect(arg *rdx.RDX) (id rdx.ID, err error) {
 	}
 	addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
 	if err == nil {
+		if repl.tcp == nil {
+			repl.tcp = &toytlv.TCPDepot{}
+			repl.Host.OpenTCP(repl.tcp)
+		}
 		err = repl.tcp.Connect(addr)
 	}
 	return

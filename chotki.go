@@ -43,13 +43,11 @@ type Chotki struct {
 	hlock sync.Mutex
 
 	// queues to broadcast all new packets
-	outq toyqueue.DrainCloser
-	fan  *toyqueue.Fanout
+	outq map[string]toyqueue.DrainCloser
 
-	lock   sync.Mutex
-	idlock sync.Mutex
-
-	tcp toytlv.TCPDepot //nolint:golint,unused
+	outlock sync.Mutex
+	lock    sync.Mutex
+	idlock  sync.Mutex
 
 	opts Options
 
@@ -185,18 +183,19 @@ func (cho *Chotki) Open(orig uint64) (err error) {
 		return
 	}
 	cho.last = vv.GetID(cho.src)
-	outq := toyqueue.RecordQueue{Limit: 1024}
-	cho.outq = outq.Blocking()
-	cho.fan = toyqueue.FanoutFeeder(outq.Blocking())
-	go cho.fan.Run()
+	cho.outq = make(map[string]toyqueue.DrainCloser)
 	// repl.last = repl.heads.GetID(orig) todo root VV
 	return
 }
 
 func (cho *Chotki) OpenTCP(tcp *toytlv.TCPDepot) {
 	tcp.Open(func(conn net.Conn) toyqueue.FeedDrainCloser {
-		return &Syncer{Host: cho, Name: conn.RemoteAddr().String()}
+		return &Syncer{Host: cho, Name: conn.RemoteAddr().String(), Mode: SyncRWLive}
 	})
+}
+
+func (cho *Chotki) ReOpenTCP(tcp *toytlv.TCPDepot) {
+	cho.OpenTCP(tcp)
 	// ...
 	io := pebble.IterOptions{}
 	i := cho.db.NewIter(&io)
@@ -217,15 +216,43 @@ func (cho *Chotki) OpenTCP(tcp *toytlv.TCPDepot) {
 	_ = i.Close()
 }
 
-func (cho *Chotki) AddPacketHose(hose toyqueue.DrainCloser) error {
-	// todo open?
-	cho.fan.AddDrain(hose)
+func (cho *Chotki) AddPacketHose(name string) (feed toyqueue.FeedCloser) {
+	queue := toyqueue.RecordQueue{Limit: SyncOutQueueLimit}
+	cho.outlock.Lock()
+	q := cho.outq[name]
+	cho.outq[name] = &queue
+	cho.outlock.Unlock()
+	if q != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "closing the old conn to %s\n", name)
+		_ = q.Close()
+	}
+	return queue.Blocking()
+}
+
+func (cho *Chotki) RemovePacketHose(name string) error {
+	cho.outlock.Lock()
+	q := cho.outq[name]
+	delete(cho.outq, name)
+	cho.outlock.Unlock()
+	if q != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "closing the conn to %s\n", name)
+		_ = q.Close()
+	}
 	return nil
 }
 
-func (cho *Chotki) RemovePacketHose(hose toyqueue.DrainCloser) error {
-	// todo return repl.fan.RemoveDrain(hose)
-	return nil
+func (cho *Chotki) Broadcast(records toyqueue.Records, except string) {
+	cho.outlock.Lock()
+	for name, hose := range cho.outq {
+		if name == except {
+			continue
+		}
+		err := hose.Drain(records)
+		if err != nil {
+			delete(cho.outq, name)
+		}
+	}
+	cho.outlock.Unlock()
 }
 
 func (cho *Chotki) warn(format string, a ...any) {
@@ -234,7 +261,6 @@ func (cho *Chotki) warn(format string, a ...any) {
 
 func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 	rest := recs
-	apply := toyqueue.Records{}
 	var calls []CallHook
 
 	for len(rest) > 0 && err == nil { // parse the packets
@@ -245,7 +271,6 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 			cho.warn("bad packet: %s", parse_err.Error())
 			return parse_err
 		}
-		apply = append(apply, packet) //nolint:staticcheck
 		if id.Src() == cho.src && id > cho.last {
 			if id.Off() != 0 {
 				return rdx.ErrBadPacket
@@ -312,10 +337,6 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 
 	if len(calls) > 0 {
 		go cho.fireCalls(calls)
-	}
-
-	if cho.outq != nil {
-		err = cho.outq.Drain(recs) // nonblocking
 	}
 
 	return
@@ -397,7 +418,9 @@ func (cho *Chotki) CommitPacket(lit byte, ref rdx.ID, body toyqueue.Records) (id
 	i := toytlv.Record('I', id.ZipBytes())
 	r := toytlv.Record('R', ref.ZipBytes())
 	packet := toytlv.Record(lit, i, r, Join(body...))
-	err = cho.Drain(toyqueue.Records{packet})
+	recs := toyqueue.Records{packet}
+	err = cho.Drain(recs)
+	cho.Broadcast(recs, "")
 	cho.idlock.Unlock()
 	return
 }

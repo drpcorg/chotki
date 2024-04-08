@@ -149,7 +149,7 @@ hex = [0-9a-fA-F];
 dec = [0-9];
 uni = "\\u" hex hex hex hex;
 esc = "\\" ["\/\\bfnrt];
-char = [^0x00..0x19"\\] | uni | esc;
+char = (any - [\r\n"\\]) | uni | esc;
 asci = [_0-9a-zA-Z];
 
 TIME = "(" hex+ "," dec+ ")";

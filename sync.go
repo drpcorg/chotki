@@ -8,6 +8,7 @@ import (
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
 	"io"
+	"os"
 	"sync"
 	"time"
 )
@@ -26,7 +27,7 @@ type Syncer struct {
 	snaplast   rdx.ID
 	feedState  int
 	drainState int
-	oqueue     toyqueue.RecordQueue
+	oqueue     toyqueue.FeedCloser
 	myvv       rdx.VV
 	peervv     rdx.VV
 	lock       sync.Mutex
@@ -38,12 +39,12 @@ type Syncer struct {
 }
 
 const (
-	SyncRead  = 1
-	SyncWrite = 2
-	SyncLive  = 4
-	SyncRW    = SyncRead | SyncWrite
-	SyncRL    = SyncRead | SyncLive
-	SyncRWL   = SyncRead | SyncWrite | SyncLive
+	SyncRead   = 1
+	SyncWrite  = 2
+	SyncLive   = 4
+	SyncRW     = SyncRead | SyncWrite
+	SyncRL     = SyncRead | SyncLive
+	SyncRWLive = SyncRead | SyncWrite | SyncLive
 )
 
 const (
@@ -68,9 +69,10 @@ func (sync *Syncer) Close() error {
 		sync.lock.Unlock()
 		return toyqueue.ErrClosed
 	}
-	_ = sync.Host.RemovePacketHose(&sync.oqueue)
+	_ = sync.Host.RemovePacketHose(sync.Name)
 	sync.SetFeedState(SendNone) //fixme
 	sync.lock.Unlock()
+	_, _ = fmt.Fprintf(os.Stderr, "connection %s closed: %s\n", sync.Name, sync.reason)
 	return nil
 }
 
@@ -88,7 +90,7 @@ func (sync *Syncer) Feed() (recs toyqueue.Records, err error) {
 			if (sync.Mode & SyncLive) != 0 {
 				sync.SetFeedState(SendLive)
 			} else {
-				sync.SetFeedState(SendEOF)
+				sync.SetFeedState(SendLive) // SendEOF)
 			}
 			_ = sync.snap.Close()
 			sync.snap = nil
@@ -97,6 +99,7 @@ func (sync *Syncer) Feed() (recs toyqueue.Records, err error) {
 	case SendLive:
 		recs, err = sync.oqueue.Feed()
 		if err == toyqueue.ErrClosed {
+			fmt.Println("hose closed")
 			sync.SetFeedState(SendEOF)
 			err = nil
 		}
@@ -126,20 +129,14 @@ func (sync *Syncer) Feed() (recs toyqueue.Records, err error) {
 }
 
 func (sync *Syncer) EndGracefully(reason error) (err error) {
-	_ = sync.Host.RemovePacketHose(&sync.oqueue)
+	_ = sync.Host.RemovePacketHose(sync.Name)
 	_ = sync.oqueue.Close()
 	sync.reason = reason
 	return
 }
 
 func (sync *Syncer) FeedHandshake() (vv toyqueue.Records, err error) {
-	sync.oqueue.Limit = SyncOutQueueLimit
-	err = sync.Host.AddPacketHose(&sync.oqueue)
-	if err != nil {
-		_ = sync.Close()
-		return
-	}
-
+	sync.oqueue = sync.Host.AddPacketHose(sync.Name)
 	sync.snap = sync.Host.db.NewSnapshot()
 	sync.vvit = sync.snap.NewIter(&pebble.IterOptions{
 		LowerBound: []byte{'V'},
@@ -293,6 +290,7 @@ func (sync *Syncer) Drain(recs toyqueue.Records) (err error) {
 		if err != nil {
 			return
 		}
+		sync.Host.Broadcast(recs[0:1], sync.Name)
 		recs = recs[1:]
 		sync.SetDrainState(SendDiff)
 		if len(recs) == 0 {
@@ -309,12 +307,18 @@ func (sync *Syncer) Drain(recs toyqueue.Records) (err error) {
 			}
 		}
 		err = sync.Host.Drain(recs)
+		if err == nil {
+			sync.Host.Broadcast(recs, sync.Name)
+		}
 	case SendLive:
 		lit := LastLit(recs)
 		if lit == 'B' {
 			sync.SetDrainState(SendNone)
 		}
 		err = sync.Host.Drain(recs)
+		if err == nil {
+			sync.Host.Broadcast(recs, sync.Name)
+		}
 	default:
 		return ErrClosed
 	}
