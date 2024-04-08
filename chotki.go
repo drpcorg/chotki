@@ -23,6 +23,13 @@ type Options struct {
 	MaxLogLen    int64
 }
 
+type Hook func(id rdx.ID) error
+
+type CallHook struct {
+	hook Hook
+	id   rdx.ID
+}
+
 // TLV all the way down
 type Chotki struct {
 	last rdx.ID
@@ -32,10 +39,12 @@ type Chotki struct {
 	dir string
 
 	syncs map[rdx.ID]*pebble.Batch
+	hooks map[rdx.ID][]Hook
+	hlock sync.Mutex
 
 	// queues to broadcast all new packets
-	outq toyqueue.RecordQueue
-	fan  toyqueue.Fanout
+	outq toyqueue.DrainCloser
+	fan  *toyqueue.Fanout
 
 	lock   sync.Mutex
 	idlock sync.Mutex
@@ -169,22 +178,19 @@ func (cho *Chotki) Open(orig uint64) (err error) {
 	}
 	cho.types = make(map[rdx.ID]Fields)
 	cho.syncs = make(map[rdx.ID]*pebble.Batch)
+	cho.hooks = make(map[rdx.ID][]Hook)
 	var vv rdx.VV
 	vv, err = cho.VersionVector()
 	if err != nil {
 		return
 	}
 	cho.last = vv.GetID(cho.src)
+	outq := toyqueue.RecordQueue{Limit: 1024}
+	cho.outq = outq.Blocking()
+	cho.fan = toyqueue.FanoutFeeder(outq.Blocking())
+	go cho.fan.Run()
 	// repl.last = repl.heads.GetID(orig) todo root VV
-	//repl.inq.Limit = 8192
-	/*repl.fan.Feeder = &repl.oqueue
-	 */
 	return
-}
-
-func (cho *Chotki) Feed() (toyqueue.Records, error) {
-	// fixme multi if repl.fan.
-	return cho.outq.Feed()
 }
 
 func (cho *Chotki) OpenTCP(tcp *toytlv.TCPDepot) {
@@ -229,6 +235,7 @@ func (cho *Chotki) warn(format string, a ...any) {
 func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 	rest := recs
 	apply := toyqueue.Records{}
+	var calls []CallHook
 
 	for len(rest) > 0 && err == nil { // parse the packets
 		packet := rest[0]
@@ -264,7 +271,7 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 			if ref == rdx.ID0 {
 				return ErrBadLPacket
 			}
-			err = cho.ApplyE(id, ref, body, &pb)
+			err = cho.ApplyE(id, ref, body, &pb, &calls)
 		case 'H':
 			fmt.Printf("H sync session %s\n", id.String())
 			d := cho.db.NewBatch()
@@ -303,9 +310,27 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 		return
 	}
 
-	// todo err = repl.oqueue.Drain(recs) // nonblocking
+	if len(calls) > 0 {
+		go cho.fireCalls(calls)
+	}
+
+	if cho.outq != nil {
+		err = cho.outq.Drain(recs) // nonblocking
+	}
 
 	return
+}
+
+func (cho *Chotki) fireCalls(calls []CallHook) {
+	cho.hlock.Lock()
+	for i := 0; i < len(calls); i++ {
+		err := calls[i].hook(calls[i].id)
+		if err != nil {
+			calls[i] = calls[len(calls)-1]
+			calls = calls[:len(calls)-1]
+		}
+	}
+	cho.hlock.Unlock()
 }
 
 func (cho *Chotki) VersionVector() (vv rdx.VV, err error) {
@@ -418,5 +443,35 @@ func GetFieldTLV(reader pebble.Reader, id rdx.ID) (rdt byte, tlv []byte) {
 		}
 	}
 	_ = it.Close()
+	return
+}
+
+func (cho *Chotki) AddHook(fid rdx.ID, hook Hook) {
+	cho.hlock.Lock()
+	list := cho.hooks[fid]
+	list = append(list, hook)
+	cho.hooks[fid] = list
+	cho.hlock.Unlock()
+}
+
+var ErrHookNotFound = errors.New("hook not found")
+
+func (cho *Chotki) RemoveHook(fid rdx.ID, hook Hook) (err error) {
+	cho.hlock.Lock()
+	list := cho.hooks[fid]
+	i := 0
+	for i < len(list) {
+		if &list[i] == &hook { // todo ?
+			list[i] = list[len(list)-1]
+			list = list[:len(list)-1]
+			break
+		}
+		i++
+	}
+	if i == len(list) {
+		err = ErrHookNotFound
+	}
+	cho.hooks[fid] = list
+	cho.hlock.Unlock()
 	return
 }

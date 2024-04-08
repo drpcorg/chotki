@@ -146,10 +146,10 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 	// ----- debug -----
 	case "dump":
 		id, err = repl.CommandDump(arg)
+	case "tell":
+		id, err = repl.CommandTell(arg)
 	case "ping":
-		// args[1] is an object/field id (otherwise create)
-		// subscribe to evs
-		// start
+		id, err = repl.CommandPing(arg)
 	case "pong":
 		// args[1] is an object/field
 		// subscribe

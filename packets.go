@@ -114,7 +114,7 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 
 var ErrOffsetOpId = errors.New("op id is offset")
 
-func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch) (err error) {
+func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls *[]CallHook) (err error) {
 	if id.Off() != 0 || r.Off() != 0 {
 		return ErrOffsetOpId
 	}
@@ -139,11 +139,18 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch) (err e
 		if err != nil {
 			break
 		}
-		fkey := OKey(r+rdx.ID(field), lit)
+		fid := r + rdx.ID(field)
+		fkey := OKey(fid, lit)
 		err = batch.Merge(
 			fkey,
 			rebar,
 			&WriteOptions)
+		hook, ok := cho.hooks[fid]
+		if ok {
+			for _, h := range hook {
+				(*calls) = append((*calls), CallHook{h, fid})
+			}
+		}
 	}
 	if err == nil {
 		err = cho.UpdateVTree(id, r, batch)

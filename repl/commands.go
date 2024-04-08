@@ -199,35 +199,6 @@ var HelpEdit = errors.New(
 	"edit {_id: b0b-1e, Score: [+1], Pass: true}",
 )
 
-func (repl *REPL) EditObject(oid rdx.ID, pairs []rdx.RDX) (id rdx.ID, err error) {
-	tlvs := toyqueue.Records{}
-	_, form, fact, e := repl.Host.ObjectFields(oid) // FIXME fetch class
-	if e != nil {
-		return rdx.BadId, e
-	}
-	tmp := make(toyqueue.Records, len(fact))
-	for i := 0; i+1 < len(pairs); i += 2 {
-		if pairs[i].RdxType != rdx.Term {
-			return
-		}
-		name := pairs[i].String()
-		value := &pairs[i+1]
-		ndx := form.Find(name)
-		if ndx == -1 {
-			err = fmt.Errorf("unknown field %s", name)
-			return
-		}
-		tmp[ndx] = rdx.FIRSTrdx2tlv(value)
-	}
-	for i := 0; i < len(form); i++ {
-		if tmp[i] != nil {
-			tlvs = append(tlvs, toytlv.TinyRecord('F', rdx.ZipUint64(uint64(i))))
-			tlvs = append(tlvs, tmp[i])
-		}
-	}
-	return repl.Host.CommitPacket('E', oid, tlvs)
-}
-
 func (repl *REPL) CommandEdit(arg *rdx.RDX) (id rdx.ID, err error) {
 	id = rdx.BadId
 	err = HelpEdit
@@ -239,7 +210,7 @@ func (repl *REPL) CommandEdit(arg *rdx.RDX) (id rdx.ID, err error) {
 			return
 		}
 		oid := rdx.IDFromText(arg.Nested[1].Text)
-		return repl.EditObject(oid, arg.Nested[2:])
+		return repl.Host.EditObjectRDX(oid, arg.Nested[2:])
 	} else { // todo
 		return
 	}
@@ -310,7 +281,7 @@ func (repl *REPL) CommandCat(arg *rdx.RDX) (id rdx.ID, err error) {
 	}
 	oid := rdx.IDFromText(arg.Text)
 	var txt string
-	txt, err = repl.Host.GetObjectString(oid)
+	txt, err = repl.Host.ObjectString(oid)
 	if err != nil {
 		return
 	}
@@ -342,6 +313,55 @@ func (repl *REPL) CommandConnect(arg *rdx.RDX) (id rdx.ID, err error) {
 	addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
 	if err == nil {
 		err = repl.tcp.Connect(addr)
+	}
+	return
+}
+
+var HelpPing = errors.New("ping b0b-12-1")
+
+func (repl *REPL) CommandPing(arg *rdx.RDX) (id rdx.ID, err error) {
+	if arg == nil || arg.RdxType != rdx.Reference {
+		return rdx.BadId, HelpPing
+	}
+	fid := rdx.IDFromText(arg.Text)
+	oid := fid.ZeroOff()
+	_, form, fact, e := repl.Host.ObjectFields(oid)
+	if e != nil {
+		return rdx.BadId, e
+	}
+	off := fid.Off()
+	if off == 0 || int(off) > len(form) {
+		return rdx.BadId, HelpPing
+	}
+	if form[off].RdxType != rdx.String {
+		return rdx.BadId, errors.New(form[off].Name + " is not a string")
+	}
+	fmt.Printf("pinging through %s (field %s, previously %s)\n",
+		fid.String(), form[off].Name, rdx.Snative(fact[off]))
+	id, err = repl.Host.SetFieldTLV(fid, toytlv.Record('S', rdx.Stlv("ping")))
+	return
+}
+
+func (repl *REPL) CommandTick(arg *rdx.RDX) (id rdx.ID, err error) {
+	return
+}
+
+var HelpTell = errors.New("tell b0b-12-1")
+
+func (repl *REPL) CommandTell(arg *rdx.RDX) (id rdx.ID, err error) {
+	err = HelpTell
+	id = rdx.BadId
+	if arg == nil {
+		return
+	} else if arg.RdxType == rdx.Reference {
+		id = rdx.IDFromText(arg.Text)
+		repl.Host.AddHook(id, func(id rdx.ID) error {
+			fmt.Println("field changed")
+			return nil
+		})
+		err = nil
+	} else {
+		return
 	}
 	return
 }

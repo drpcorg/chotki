@@ -1,6 +1,7 @@
 package chotki
 
 import (
+	"fmt"
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toyqueue"
@@ -249,7 +250,7 @@ func (cho *Chotki) EditObject(oid rdx.ID, fields ...string) (id rdx.ID, err erro
 	return cho.CommitPacket('E', oid, packet)
 }
 
-func (cho *Chotki) GetObject(oid rdx.ID) (tid rdx.ID, fields []string, err error) {
+/*func (cho *Chotki) GetObject(oid rdx.ID) (tid rdx.ID, fields []string, err error) {
 	i := cho.ObjectIterator(oid)
 	if i == nil || !i.Valid() {
 		return rdx.BadId, nil, ErrUnknownObject
@@ -261,9 +262,9 @@ func (cho *Chotki) GetObject(oid rdx.ID) (tid rdx.ID, fields []string, err error
 		fields = append(fields, str)
 	}
 	return
-}
+}*/
 
-func (cho *Chotki) GetObjectString(oid rdx.ID) (txt string, err error) {
+func (cho *Chotki) ObjectString(oid rdx.ID) (txt string, err error) {
 	_, form, fact, e := cho.ObjectFields(oid)
 	if e != nil {
 		return "", e
@@ -280,4 +281,39 @@ func (cho *Chotki) GetObjectString(oid rdx.ID) (txt string, err error) {
 	ret = append(ret, '}')
 	txt = string(ret)
 	return
+}
+
+func (cho *Chotki) EditObjectRDX(oid rdx.ID, pairs []rdx.RDX) (id rdx.ID, err error) {
+	tlvs := toyqueue.Records{}
+	_, form, fact, e := cho.ObjectFields(oid)
+	if e != nil {
+		return rdx.BadId, e
+	}
+	tmp := make(toyqueue.Records, len(fact))
+	for i := 0; i+1 < len(pairs); i += 2 {
+		if pairs[i].RdxType != rdx.Term {
+			return
+		}
+		name := pairs[i].String()
+		value := &pairs[i+1]
+		ndx := form.Find(name)
+		if ndx == -1 {
+			err = fmt.Errorf("unknown field %s", name)
+			return
+		}
+		tmp[ndx] = rdx.FIRSTrdx2tlv(value)
+	}
+	for i := 0; i < len(form); i++ {
+		if tmp[i] != nil {
+			tlvs = append(tlvs, toytlv.TinyRecord('F', rdx.ZipUint64(uint64(i))))
+			tlvs = append(tlvs, tmp[i])
+		}
+	}
+	return cho.CommitPacket('E', oid, tlvs)
+}
+
+func (cho *Chotki) SetFieldTLV(fid rdx.ID, tlve []byte) (id rdx.ID, err error) {
+	oid := fid.ZeroOff()
+	f := toytlv.Record('F', rdx.ZipUint64(uint64(fid.Off())))
+	return cho.CommitPacket('E', oid, toyqueue.Records{f, tlve})
 }
