@@ -354,6 +354,33 @@ func (repl *REPL) CommandPing(arg *rdx.RDX) (id rdx.ID, err error) {
 }
 
 var HelpPinc = errors.New("pinc b0b-12-2 // N field id")
+var ErrBadField = errors.New("bad field")
+
+func KeepOddEven(oddeven uint64, cho *chotki.Chotki, fid rdx.ID) error {
+	rdt, tlv, err := cho.ObjectFieldTLV(fid)
+	if err != nil || rdt != rdx.Natural {
+		return ErrBadField
+	}
+	src := cho.Source()
+	mine := rdx.Nmine(tlv, src)
+	sum := rdx.Nnative(tlv)
+	if (sum & 1) != oddeven {
+		tlvs := toyqueue.Records{
+			toytlv.Record('F', rdx.ZipUint64(fid.Off())),
+			toytlv.Record(rdx.Natural, toytlv.Record(rdx.Term, rdx.ZipUint64Pair(mine+1, src))),
+		}
+		_, err = cho.CommitPacket('E', fid.ZeroOff(), tlvs)
+	}
+	return err
+}
+
+func KeepOdd(cho *chotki.Chotki, fid rdx.ID) error {
+	return KeepOddEven(1, cho, fid)
+}
+
+func KeepEven(cho *chotki.Chotki, fid rdx.ID) error {
+	return KeepOddEven(0, cho, fid)
+}
 
 func (repl *REPL) CommandPinc(arg *rdx.RDX) (id rdx.ID, err error) {
 	id, err = rdx.BadId, HelpPinc
@@ -364,21 +391,47 @@ func (repl *REPL) CommandPinc(arg *rdx.RDX) (id rdx.ID, err error) {
 	if fid.Off() == 0 {
 		return
 	}
-	rdt, tlv, err := repl.Host.ObjectFieldTLV(fid)
-	if err != nil || rdt != rdx.Natural {
+	err = KeepOdd(&repl.Host, fid)
+	if err != nil {
 		return
 	}
-	src := repl.Host.Source()
-	mine := rdx.Nmine(tlv, src)
-	tlvs := toyqueue.Records{
-		toytlv.Record('F', rdx.ZipUint64(uint64(fid.Off()))),
-		toytlv.Record(rdx.Natural, toytlv.Record(rdx.Term, rdx.ZipUint64Pair(mine+1, src))),
-	}
-	id, err = repl.Host.CommitPacket('E', fid.ZeroOff(), tlvs)
+	repl.Host.AddHook(fid, KeepOdd)
+	id = fid
+	err = nil
 	return
 }
 
 func (repl *REPL) CommandPonc(arg *rdx.RDX) (id rdx.ID, err error) {
+	id, err = rdx.BadId, HelpPinc
+	if arg == nil || arg.RdxType != rdx.Reference {
+		return
+	}
+	fid := rdx.IDFromText(arg.Text)
+	if fid.Off() == 0 {
+		return
+	}
+	err = KeepEven(&repl.Host, fid)
+	if err != nil {
+		return
+	}
+	repl.Host.AddHook(fid, KeepEven)
+	id = fid
+	err = nil
+	return
+}
+
+func (repl *REPL) CommandMute(arg *rdx.RDX) (id rdx.ID, err error) {
+	id, err = rdx.BadId, HelpPinc
+	if arg == nil || arg.RdxType != rdx.Reference {
+		return
+	}
+	fid := rdx.IDFromText(arg.Text)
+	if fid.Off() == 0 {
+		return
+	}
+	repl.Host.RemoveAllHooks(fid)
+	id = rdx.ID0
+	err = nil
 	return
 }
 
@@ -395,7 +448,7 @@ func (repl *REPL) CommandTell(arg *rdx.RDX) (id rdx.ID, err error) {
 		return
 	} else if arg.RdxType == rdx.Reference {
 		id = rdx.IDFromText(arg.Text)
-		repl.Host.AddHook(id, func(id rdx.ID) error {
+		repl.Host.AddHook(id, func(cho *chotki.Chotki, id rdx.ID) error {
 			fmt.Println("field changed")
 			return nil
 		})

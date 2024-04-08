@@ -156,7 +156,9 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 	case "pinc":
 		id, err = repl.CommandPinc(arg)
 	case "ponc":
-		id, err = repl.CommandPinc(arg)
+		id, err = repl.CommandPonc(arg)
+	case "mute":
+		id, err = repl.CommandMute(arg)
 	case "tic":
 		id, err = repl.CommandTic(arg)
 	default:

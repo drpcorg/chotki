@@ -23,7 +23,7 @@ type Options struct {
 	MaxLogLen    int64
 }
 
-type Hook func(id rdx.ID) error
+type Hook func(cho *Chotki, id rdx.ID) error
 
 type CallHook struct {
 	hook Hook
@@ -336,22 +336,12 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 	}
 
 	if len(calls) > 0 {
-		go cho.fireCalls(calls)
+		for _, call := range calls {
+			go call.hook(cho, call.id)
+		}
 	}
 
 	return
-}
-
-func (cho *Chotki) fireCalls(calls []CallHook) {
-	cho.hlock.Lock()
-	for i := 0; i < len(calls); i++ {
-		err := calls[i].hook(calls[i].id)
-		if err != nil {
-			calls[i] = calls[len(calls)-1]
-			calls = calls[:len(calls)-1]
-		}
-	}
-	cho.hlock.Unlock()
 }
 
 func (cho *Chotki) VersionVector() (vv rdx.VV, err error) {
@@ -477,21 +467,24 @@ func (cho *Chotki) AddHook(fid rdx.ID, hook Hook) {
 	cho.hlock.Unlock()
 }
 
+func (cho *Chotki) RemoveAllHooks(fid rdx.ID) {
+	cho.hlock.Lock()
+	delete(cho.hooks, fid)
+	cho.hlock.Unlock()
+}
+
 var ErrHookNotFound = errors.New("hook not found")
 
 func (cho *Chotki) RemoveHook(fid rdx.ID, hook Hook) (err error) {
 	cho.hlock.Lock()
 	list := cho.hooks[fid]
-	i := 0
-	for i < len(list) {
-		if &list[i] == &hook { // todo ?
-			list[i] = list[len(list)-1]
-			list = list[:len(list)-1]
-			break
+	new_list := make([]Hook, 0, len(list))
+	for _, h := range list {
+		if &h != &hook {
+			new_list = append(new_list, h)
 		}
-		i++
 	}
-	if i == len(list) {
+	if len(new_list) == len(list) {
 		err = ErrHookNotFound
 	}
 	cho.hooks[fid] = list
