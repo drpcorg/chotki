@@ -163,7 +163,7 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 
 				case 6:
 					{
-						rdx.RdxType = NCounter
+						rdx.RdxType = Natural
 						rdx.Text = data[mark[nest]:p]
 					}
 

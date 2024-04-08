@@ -73,8 +73,8 @@ func (id ID) Pro() uint64 {
 	return i & ProMask
 }
 
-func (id ID) Off() uint16 {
-	return uint16(id & OffMask)
+func (id ID) Off() uint64 {
+	return uint64(id & OffMask)
 }
 
 func (id ID) ToOff(newoff ID) ID {

@@ -90,7 +90,7 @@ func (sync *Syncer) Feed() (recs toyqueue.Records, err error) {
 			if (sync.Mode & SyncLive) != 0 {
 				sync.SetFeedState(SendLive)
 			} else {
-				sync.SetFeedState(SendLive) // SendEOF)
+				sync.SetFeedState(SendEOF)
 			}
 			_ = sync.snap.Close()
 			sync.snap = nil
@@ -99,7 +99,6 @@ func (sync *Syncer) Feed() (recs toyqueue.Records, err error) {
 	case SendLive:
 		recs, err = sync.oqueue.Feed()
 		if err == toyqueue.ErrClosed {
-			fmt.Println("hose closed")
 			sync.SetFeedState(SendEOF)
 			err = nil
 		}
@@ -328,7 +327,7 @@ func (sync *Syncer) Drain(recs toyqueue.Records) (err error) {
 	return
 }
 
-func ParseHandshake(body []byte) (mode int, vv rdx.VV, err error) {
+func ParseHandshake(body []byte) (mode uint64, vv rdx.VV, err error) {
 	// handshake: H(T{pro,src} M(mode) V(V{p,s}+) ...)
 	var mbody, vbody []byte
 	rest := body
@@ -337,8 +336,7 @@ func ParseHandshake(body []byte) (mode int, vv rdx.VV, err error) {
 	if mbody == nil {
 		return
 	}
-	peermode := rdx.UnzipUint64(mbody)
-	_ = peermode // todo
+	mode = rdx.UnzipUint64(mbody)
 	vbody, _ = toytlv.Take('V', rest)
 	if vbody == nil {
 		return
@@ -358,10 +356,10 @@ func (sync *Syncer) DrainHandshake(recs toyqueue.Records) (err error) {
 	if lit != 'H' || e != nil {
 		return ErrBadHPacket
 	}
-	mode := 0
 	sync.peert = id
+	var mode uint64
 	mode, sync.peervv, err = ParseHandshake(body)
-	_ = mode
+	sync.Mode &= mode
 	return
 }
 

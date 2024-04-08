@@ -153,6 +153,12 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 	case "pong":
 		// args[1] is an object/field
 		// subscribe
+	case "pinc":
+		id, err = repl.CommandPinc(arg)
+	case "ponc":
+		id, err = repl.CommandPinc(arg)
+	case "tic":
+		id, err = repl.CommandTic(arg)
 	default:
 		_, _ = fmt.Fprintf(os.Stderr, "command unknown: %s\n", cmd)
 	}

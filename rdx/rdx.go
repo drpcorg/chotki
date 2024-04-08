@@ -12,7 +12,7 @@ const (
 	Reference = byte('R')
 	String    = byte('S')
 	Term      = byte('T')
-	NCounter  = byte('N')
+	Natural   = byte('N')
 	NInc      = byte('n')
 	ZCounter  = byte('Z')
 	ZInc      = byte('z')
@@ -78,7 +78,7 @@ func (rdx *RDX) Feed() (recs toyqueue.Records, err error) {
 		recs = append(recs, rdx.Text)
 	case Term:
 		recs = append(recs, rdx.Text)
-	case NCounter, NInc, ZCounter, ZInc:
+	case Natural, NInc, ZCounter, ZInc:
 		recs = append(recs, rdx.Text)
 	case Map:
 		recs = append(recs, RdxSep[RdxOOpen:RdxOOpen+1])

@@ -83,7 +83,7 @@ Merge rules for LWW are straighforward:
 ### `NZ`
 
 `N` are increment-only counters. Their TLV state is a sequence
-of `U` records containing zipped uint64 pairs {val,src}, the
+of `T` records containing zipped uint64 pairs {val,src}, the
 counter value and source replica id. As the counter is inc-only,
 we may use the value itself as a revision number. The merge
 operator is per-replica `max`, as later versions are greater.

@@ -33,7 +33,7 @@ action term {
     rdx.Text = data[mark[nest] : p];
 }
 action n {
-    rdx.RdxType = NCounter;
+    rdx.RdxType = Natural;
     rdx.Text = data[mark[nest] : p];
 }
 action dn {

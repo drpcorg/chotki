@@ -427,7 +427,7 @@ func (cho *Chotki) CommitPacket(lit byte, ref rdx.ID, body toyqueue.Records) (id
 
 func (cho *Chotki) ObjectKeyRange(oid rdx.ID) (fro, til []byte) {
 	oid = oid & ^rdx.OffMask
-	return OKey(oid, 0), OKey(oid+rdx.ProInc, 0)
+	return OKey(oid, 'O'), OKey(oid+rdx.ProInc, 0)
 }
 
 // returns nil for "not found"

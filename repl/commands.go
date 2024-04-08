@@ -117,6 +117,9 @@ func (repl *REPL) CommandClass(arg *rdx.RDX) (id rdx.ID, err error) {
 	for i := 0; i+1 < len(fields); i += 2 {
 		key := fields[i]
 		val := fields[i+1]
+		if string(key.Text) == "_ref" {
+			continue
+		}
 		if key.RdxType != rdx.Term || val.RdxType != rdx.Term {
 			return
 		}
@@ -325,7 +328,7 @@ func (repl *REPL) CommandConnect(arg *rdx.RDX) (id rdx.ID, err error) {
 	return
 }
 
-var HelpPing = errors.New("ping b0b-12-1")
+var HelpPing = errors.New("ping b0b-12-1 // S field id")
 
 func (repl *REPL) CommandPing(arg *rdx.RDX) (id rdx.ID, err error) {
 	if arg == nil || arg.RdxType != rdx.Reference {
@@ -350,7 +353,36 @@ func (repl *REPL) CommandPing(arg *rdx.RDX) (id rdx.ID, err error) {
 	return
 }
 
-func (repl *REPL) CommandTick(arg *rdx.RDX) (id rdx.ID, err error) {
+var HelpPinc = errors.New("pinc b0b-12-2 // N field id")
+
+func (repl *REPL) CommandPinc(arg *rdx.RDX) (id rdx.ID, err error) {
+	id, err = rdx.BadId, HelpPinc
+	if arg == nil || arg.RdxType != rdx.Reference {
+		return
+	}
+	fid := rdx.IDFromText(arg.Text)
+	if fid.Off() == 0 {
+		return
+	}
+	rdt, tlv, err := repl.Host.ObjectFieldTLV(fid)
+	if err != nil || rdt != rdx.Natural {
+		return
+	}
+	src := repl.Host.Source()
+	mine := rdx.Nmine(tlv, src)
+	tlvs := toyqueue.Records{
+		toytlv.Record('F', rdx.ZipUint64(uint64(fid.Off()))),
+		toytlv.Record(rdx.Natural, toytlv.Record(rdx.Term, rdx.ZipUint64Pair(mine+1, src))),
+	}
+	id, err = repl.Host.CommitPacket('E', fid.ZeroOff(), tlvs)
+	return
+}
+
+func (repl *REPL) CommandPonc(arg *rdx.RDX) (id rdx.ID, err error) {
+	return
+}
+
+func (repl *REPL) CommandTic(arg *rdx.RDX) (id rdx.ID, err error) {
 	return
 }
 

@@ -173,9 +173,8 @@ func FieldOffset(fields []string, name string) rdx.ID {
 	return 0
 }
 
-func (cho *Chotki) ObjectField(oid rdx.ID, off rdx.ID) (rdt byte, tlv []byte, err error) {
+func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) {
 	it := cho.db.NewIter(&pebble.IterOptions{})
-	fid := (oid &^ rdx.OffMask) + off
 	key := OKey(fid, 0)
 	if !it.SeekGE(key) {
 		return 0, nil, pebble.ErrNotFound

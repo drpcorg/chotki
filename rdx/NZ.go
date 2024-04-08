@@ -23,7 +23,7 @@ func Nparse(txt string) (tlv []byte) {
 
 // convert native golang value into a TLV form
 func Ntlv(u uint64) (tlv []byte) {
-	return toytlv.Record('U', ZipUint64Pair(u, 0))
+	return toytlv.Record(Term, ZipUint64Pair(u, 0))
 }
 
 // convert a TLV value to a native golang value
@@ -31,7 +31,7 @@ func Nnative(tlv []byte) (sum uint64) {
 	rest := tlv
 	for len(rest) > 0 {
 		var one []byte
-		one, rest = toytlv.Take('U', rest)
+		one, rest = toytlv.Take(Term, rest)
 		inc, _ := UnzipUint64Pair(one)
 		sum += inc
 	}
@@ -102,6 +102,16 @@ func Nvalid(tlv []byte) bool {
 
 func Ndiff(tlv []byte, vvdiff VV) []byte {
 	return tlv //fixme
+}
+
+func Nmine(tlv []byte, src uint64) uint64 {
+	it := NIterator{tlv: tlv}
+	for it.Next() {
+		if it.src == src {
+			return it.inc
+		}
+	}
+	return 0
 }
 
 type NIterator struct {

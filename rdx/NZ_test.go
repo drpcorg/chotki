@@ -8,7 +8,7 @@ import (
 
 func TestNtlv(t *testing.T) {
 	fact := Ntlv(123)
-	correct := toytlv.Record('U', ZipUint64Pair(123, 0))
+	correct := toytlv.Record(Term, ZipUint64Pair(123, 0))
 	assert.Equal(t, correct, fact)
 	str := Nstring(fact)
 	assert.Equal(t, "123", str)
@@ -19,25 +19,25 @@ func TestNtlv(t *testing.T) {
 
 func TestNmerge(t *testing.T) {
 	one := toytlv.Concat(
-		toytlv.Record('U', ZipUint64Pair(1, 1)),
-		toytlv.Record('U', ZipUint64Pair(2, 2)),
-		toytlv.Record('U', ZipUint64Pair(3, 3)),
+		toytlv.Record(Term, ZipUint64Pair(1, 1)),
+		toytlv.Record(Term, ZipUint64Pair(2, 2)),
+		toytlv.Record(Term, ZipUint64Pair(3, 3)),
 	)
 	assert.Equal(t, uint64(6), Nnative(one))
 	two := toytlv.Concat(
-		toytlv.Record('U', ZipUint64Pair(3, 2)),
-		toytlv.Record('U', ZipUint64Pair(3, 3)),
-		toytlv.Record('U', ZipUint64Pair(4, 4)),
+		toytlv.Record(Term, ZipUint64Pair(3, 2)),
+		toytlv.Record(Term, ZipUint64Pair(3, 3)),
+		toytlv.Record(Term, ZipUint64Pair(4, 4)),
 	)
 	assert.Equal(t, uint64(10), Nnative(two))
 
 	three := Nmerge([][]byte{one, two})
 
 	correct := toytlv.Concat(
-		toytlv.Record('U', ZipUint64Pair(1, 1)),
-		toytlv.Record('U', ZipUint64Pair(3, 2)),
-		toytlv.Record('U', ZipUint64Pair(3, 3)),
-		toytlv.Record('U', ZipUint64Pair(4, 4)),
+		toytlv.Record(Term, ZipUint64Pair(1, 1)),
+		toytlv.Record(Term, ZipUint64Pair(3, 2)),
+		toytlv.Record(Term, ZipUint64Pair(3, 3)),
+		toytlv.Record(Term, ZipUint64Pair(4, 4)),
 	)
 
 	assert.Equal(t, correct, three)
