@@ -47,7 +47,6 @@ type Chotki struct {
 
 	outlock sync.Mutex
 	lock    sync.Mutex
-	idlock  sync.Mutex
 
 	opts Options
 
@@ -384,13 +383,16 @@ func (cho *Chotki) Snapshot() pebble.Reader {
 }
 
 func (cho *Chotki) Close() error {
+	cho.lock.Lock()
 	if cho.db == nil {
+		cho.lock.Unlock()
 		return ErrClosed
 	}
 	_ = cho.db.Close()
 	cho.db = nil
 	// todo
 	cho.last = rdx.ID0
+	cho.lock.Unlock()
 	return nil
 }
 
@@ -403,7 +405,11 @@ func Join(records ...[]byte) (ret []byte) {
 
 // Here new packets are timestamped and queued for save
 func (cho *Chotki) CommitPacket(lit byte, ref rdx.ID, body toyqueue.Records) (id rdx.ID, err error) {
-	cho.idlock.Lock()
+	cho.lock.Lock()
+	if cho.db == nil {
+		cho.lock.Unlock()
+		return rdx.BadId, ErrClosed
+	}
 	id = (cho.last & ^rdx.OffMask) + rdx.ProInc
 	i := toytlv.Record('I', id.ZipBytes())
 	r := toytlv.Record('R', ref.ZipBytes())
@@ -411,7 +417,7 @@ func (cho *Chotki) CommitPacket(lit byte, ref rdx.ID, body toyqueue.Records) (id
 	recs := toyqueue.Records{packet}
 	err = cho.Drain(recs)
 	cho.Broadcast(recs, "")
-	cho.idlock.Unlock()
+	cho.lock.Unlock()
 	return
 }
 

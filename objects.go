@@ -174,6 +174,10 @@ func FieldOffset(fields []string, name string) rdx.ID {
 }
 
 func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) {
+	db := cho.db
+	if db == nil {
+		return 0, nil, ErrClosed
+	}
 	it := cho.db.NewIter(&pebble.IterOptions{})
 	key := OKey(fid, 0)
 	if !it.SeekGE(key) {
@@ -315,4 +319,21 @@ func (cho *Chotki) SetFieldTLV(fid rdx.ID, tlve []byte) (id rdx.ID, err error) {
 	oid := fid.ZeroOff()
 	f := toytlv.Record('F', rdx.ZipUint64(uint64(fid.Off())))
 	return cho.CommitPacket('E', oid, toyqueue.Records{f, tlve})
+}
+
+var ErrWrongFieldType = errors.New("wrong field type")
+
+func (cho *Chotki) IncNField(fid rdx.ID) (id rdx.ID, err error) {
+	rdt, tlv, err := cho.ObjectFieldTLV(fid)
+	if err != nil || rdt != rdx.Natural {
+		return rdx.BadId, ErrWrongFieldType
+	}
+	src := cho.Source()
+	mine := rdx.Nmine(tlv, src)
+	tlvs := toyqueue.Records{
+		toytlv.Record('F', rdx.ZipUint64(fid.Off())),
+		toytlv.Record(rdx.Natural, toytlv.Record(rdx.Term, rdx.ZipUint64Pair(mine+1, src))),
+	}
+	id, err = cho.CommitPacket('E', fid.ZeroOff(), tlvs)
+	return
 }

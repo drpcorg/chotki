@@ -21,7 +21,7 @@ func Nparse(txt string) (tlv []byte) {
 	return Ntlv(u)
 }
 
-// convert native golang value into a TLV form
+// convert a native golang value into TLV
 func Ntlv(u uint64) (tlv []byte) {
 	return toytlv.Record(Term, ZipUint64Pair(u, 0))
 }
@@ -166,7 +166,7 @@ func Zparse(txt string) (tlv []byte) {
 	return Ztlv(i)
 }
 
-// convert native golang value into a TLV form
+// convert a native golang value into TLV
 func Ztlv(i int64) (tlv []byte) {
 	return toytlv.Record('I',
 		toytlv.TinyRecord('T', ZipIntUint64Pair(0, 0)),

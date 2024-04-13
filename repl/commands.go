@@ -7,6 +7,8 @@ import (
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
+	"os"
+	"time"
 )
 
 var HelpCreate = errors.New("create zone/1 {Name:\"Name\",Description:\"long text\"}")
@@ -353,7 +355,7 @@ func (repl *REPL) CommandPing(arg *rdx.RDX) (id rdx.ID, err error) {
 	return
 }
 
-var HelpPinc = errors.New("pinc b0b-12-2 // N field id")
+var HelpPinc = errors.New("pinc b0b-12-2")
 var ErrBadField = errors.New("bad field")
 
 func KeepOddEven(oddeven uint64, cho *chotki.Chotki, fid rdx.ID) error {
@@ -435,7 +437,117 @@ func (repl *REPL) CommandMute(arg *rdx.RDX) (id rdx.ID, err error) {
 	return
 }
 
-func (repl *REPL) CommandTic(arg *rdx.RDX) (id rdx.ID, err error) {
+var HelpTinc = errors.New("tinc b0b-12-2, tinc {fid:b0b-12-2,ms:1000,count:100}")
+
+func (repl *REPL) doTinc(fid rdx.ID, delay time.Duration, count int64) {
+	var err error
+	for ; count > 0 && err == nil; count-- {
+		_, err = repl.Host.IncNField(fid)
+		if delay > time.Duration(0) {
+			time.Sleep(delay)
+		}
+	}
+}
+
+// testing: read-inc loop
+func (repl *REPL) CommandTinc(arg *rdx.RDX) (id rdx.ID, err error) {
+	id, err = rdx.BadId, HelpTinc
+	count := int64(1)
+	delay := time.Second
+	if arg == nil {
+		return
+	} else if arg.RdxType == rdx.Reference {
+		id = rdx.IDFromText(arg.Text)
+	} else if arg.RdxType == rdx.Map {
+		for i := 0; i+1 < len(arg.Nested); i += 2 {
+			key := &arg.Nested[i]
+			val := &arg.Nested[i+1]
+			switch key.String() {
+			case "fid":
+				id = rdx.IDFromText(val.Text)
+			case "ms":
+				ms := rdx.Inative(rdx.Iparse(val.String()))
+				delay = time.Millisecond * time.Duration(ms)
+			case "count":
+				count = rdx.Inative(rdx.Iparse(val.String()))
+			default:
+				return
+			}
+		}
+	} else {
+		return
+	}
+	err = nil
+	go repl.doTinc(id, delay, count)
+	return
+}
+
+var HelpSinc = errors.New("sinc b0b-12-2, tinc {fid:b0b-12-2,ms:1000,count:100}")
+
+func (repl *REPL) doSinc(fid rdx.ID, delay time.Duration, count int64, mine uint64) {
+	var err error
+	start := time.Now()
+	fro := repl.Host.Last()
+	src := fro.Src()
+	til := rdx.ID0
+	for c := count; c > 0 && err == nil; c-- {
+		mine++
+		tlvs := toyqueue.Records{
+			toytlv.Record('F', rdx.ZipUint64(fid.Off())),
+			toytlv.Record(rdx.Natural, toytlv.Record(rdx.Term, rdx.ZipUint64Pair(mine, src))),
+		}
+		til, err = repl.Host.CommitPacket('E', fid.ZeroOff(), tlvs)
+		if delay > time.Duration(0) {
+			time.Sleep(delay)
+		}
+	}
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+	timer := time.Since(start)
+	_, _ = fmt.Fprintf(os.Stdout, "inc storm: %d incs complete for %s, elapsed %s, %s..%s\n",
+		count, fid.String(), timer.String(), fro.String(), til.String())
+}
+
+func (repl *REPL) CommandSinc(arg *rdx.RDX) (id rdx.ID, err error) {
+	id, err = rdx.BadId, HelpSinc
+	count := int64(1)
+	delay := time.Second
+	if arg == nil {
+		return
+	} else if arg.RdxType == rdx.Reference {
+		id = rdx.IDFromText(arg.Text)
+	} else if arg.RdxType == rdx.Map {
+		for i := 0; i+1 < len(arg.Nested); i += 2 {
+			key := &arg.Nested[i]
+			val := &arg.Nested[i+1]
+			switch key.String() {
+			case "fid":
+				id = rdx.IDFromText(val.Text)
+				if id.Off() == 0 {
+					return rdx.BadId, chotki.ErrWrongFieldType
+				}
+			case "ms":
+				ms := rdx.Inative(rdx.Iparse(val.String()))
+				delay = time.Millisecond * time.Duration(ms)
+			case "count":
+				count = rdx.Inative(rdx.Iparse(val.String()))
+			default:
+				return
+			}
+		}
+	} else {
+		return
+	}
+
+	rdt, tlv, err := repl.Host.ObjectFieldTLV(id)
+	if err != nil || rdt != rdx.Natural {
+		return rdx.BadId, chotki.ErrWrongFieldType
+	}
+	src := repl.Host.Source()
+	mine := rdx.Nmine(tlv, src)
+
+	go repl.doSinc(id, delay, count, mine)
 	return
 }
 

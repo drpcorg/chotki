@@ -159,8 +159,10 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 		id, err = repl.CommandPonc(arg)
 	case "mute":
 		id, err = repl.CommandMute(arg)
-	case "tic":
-		id, err = repl.CommandTic(arg)
+	case "tinc":
+		id, err = repl.CommandTinc(arg)
+	case "sinc":
+		id, err = repl.CommandSinc(arg)
 	default:
 		_, _ = fmt.Fprintf(os.Stderr, "command unknown: %s\n", cmd)
 	}
