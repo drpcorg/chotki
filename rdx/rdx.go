@@ -16,9 +16,9 @@ const (
 	NInc      = byte('n')
 	ZCounter  = byte('Z')
 	ZInc      = byte('z')
-	ESet      = byte('E')
-	LArray    = byte('L')
-	Map       = byte('M')
+	Eulerian  = byte('E')
+	Linear    = byte('L')
+	Mapping   = byte('M')
 )
 
 type RDX struct {
@@ -80,7 +80,7 @@ func (rdx *RDX) Feed() (recs toyqueue.Records, err error) {
 		recs = append(recs, rdx.Text)
 	case Natural, NInc, ZCounter, ZInc:
 		recs = append(recs, rdx.Text)
-	case Map:
+	case Mapping:
 		recs = append(recs, RdxSep[RdxOOpen:RdxOOpen+1])
 		for i := 0; i+1 < len(rdx.Nested); i += 2 {
 			key, _ := rdx.Nested[i].Feed()
@@ -93,7 +93,7 @@ func (rdx *RDX) Feed() (recs toyqueue.Records, err error) {
 			}
 		}
 		recs = append(recs, RdxSep[RdxOClose:RdxOClose+1])
-	case ESet:
+	case Eulerian:
 		recs = append(recs, RdxSep[RdxOOpen:RdxOOpen+1])
 		for i := 0; i < len(rdx.Nested); i++ {
 			val, _ := rdx.Nested[i].Feed()
@@ -103,7 +103,7 @@ func (rdx *RDX) Feed() (recs toyqueue.Records, err error) {
 			}
 		}
 		recs = append(recs, RdxSep[RdxOClose:RdxOClose+1])
-	case LArray:
+	case Linear:
 		recs = append(recs, RdxSep[RdxAOpen:RdxAOpen+1])
 		for i := 0; i < len(rdx.Nested); i++ {
 			val, _ := rdx.Nested[i].Feed()

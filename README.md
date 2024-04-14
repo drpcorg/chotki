@@ -5,6 +5,7 @@
 [![Build Status](https://github.com/drpcorg/chotki/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/drpcorg/chotki/actions/workflows/test.yml)
 
 <img align="right" width="30%" src="chotki.jpg"> 
+
 Chotki is a syncable store with really fast counters.
 Internally, it is [pebble db][p] running CRDT natively, using
 the [Replicated Data Interchange][r] format (RDX). Chotki is
@@ -61,9 +62,9 @@ is very close to JSON, e.g.
 ````
 Each command returns an ID and/or an error.
 
-Text RDX is different from JSON in several aspects: it has
-explicit ID type, arbitrary literals apart from `true`, `false`
-and `null`, set collections and some other minor differences.
+Text RDX is different from JSON in several aspects: it has the
+ID type, arbitrary literals apart from `true`, `false` and
+`null`, also set collections and some other minor differences.
 On the human readability side, it is pretty much the same thing.
 
 ### HTTP
@@ -79,12 +80,14 @@ serialization/parsing, etc.
 
 ##  Replicas
 
-The N1 superpower of Chotki is syncing. Replicas may work
+The main superpower of Chotki is syncing. Replicas may work
 offline, reconnect and resync, or they may sync continuously in
 real time. Chotki so far only supports a spanning-tree overlay
 network topology. Each replica has a 20-bit "name" (aka
 *source*); a replica can only connect to replicas with lesser
 src number to prevent loops.
+E.g. `a1ece` can connect to `b0b`, but not the other way around
+(replica ids are given in hex).
 
 Implementations of client replicas working on mobile devices or
 in a browser are planned.
@@ -93,8 +96,8 @@ in a browser are planned.
 
 Chotki is based on pebble db, which is an LSM database.
 A superpower of LSM is "blind writes", i.e. writes with no
-preceing read necessary. On a Lenovo Yoga laptop, a Chotki
-replica can do about 1mln blind increments to a counter in about
+preceding read necessary. On a Lenovo Yoga laptop, a Chotki
+replica can do about 1mln blind increments of a counter in about
 3 seconds, be it connected to other replicas or not:
 ````
     ◌ sinc {fid:b0b-6-2,count:10000000,ms:0}
@@ -124,7 +127,7 @@ One may check the [first 2017 RON/RDX talk][c] manifesting the
 project's goals. In that regard, we may compare RON/RDX to
 [Automerge][a], which is a project of exactly the same age. Both
 projects started with a columnar-like coding of operations,
-which Automerge is using to this day, while RDX followed
+which Automerge is using to this day, while RDX followed the
 Einstein's maxim: "Everything should be made as simple as
 possible, but not simpler". After spending quite some time to
 [cram][s] columnar-encoded CRDT into exising databases, RDX was
@@ -137,17 +140,18 @@ We can also compare Chotki to a number of JavaScript-centric
 CRDT databases, such as [RxDB][x] or [SyncedStore][z].
 Historically RON/RDX also has it roots in the JavaScript world.
 [Swarm.js][j] was likely the first CRDT sync lib in history
-(2013-2018); although it was distilled from the earlier Citrea
-project (2011-2012). Still, Chotki/RDX has an objective of
-creating a production-ready scalable CRDT store, which
-JavaScript does not really allow. Still, we will be extremely
-happy if some of the JavaScript libs would support RDX
-as a unifying format. (Ping us any time!)
+(2013-2018); although it was distilled from the earlier
+[Citrea][t] project (2011-2012). Still, Chotki/RDX has an
+objective of creating a production-ready scalable CRDT store,
+which JavaScript does not really allow. Still, we will be
+extremely happy if some of the JavaScript libs would consider
+supporting RDX as a unifying format. (Ping us any time!)
 
 [j]: https://github.com/gritzko/swarm
 [a]: https://automerge.org/
 [c]: https://www.youtube.com/watch?v=0Xx9kkTMi10
 [s]: https://www.youtube.com/live/M8RRZakZgiI?si=yQVT0Le7FlnpfWXw&t=32187
+[t]: https://github.com/gritzko/citrea-model
 [x]: https://github.com/pubkey/rxdb
 [z]: https://syncedstore.org/docs/
 

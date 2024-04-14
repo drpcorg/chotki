@@ -113,7 +113,7 @@ func appendFirstTlvString(tlv []byte, lit byte, bare []byte) []byte {
 // parse a text form into a TLV value
 func Eparse(txt string) (tlv []byte) {
 	rdx, err := ParseRDX([]byte(txt))
-	if err != nil || rdx == nil || rdx.RdxType != ESet {
+	if err != nil || rdx == nil || rdx.RdxType != Eulerian {
 		return nil
 	}
 	for i := 0; i < len(rdx.Nested); i++ {
@@ -222,7 +222,7 @@ func Mstring(tlv []byte) (txt string) {
 // parse a text form into a TLV value
 func Mparse(txt string) (tlv []byte) {
 	rdx, err := ParseRDX([]byte(txt))
-	if err != nil || rdx == nil || rdx.RdxType != Map {
+	if err != nil || rdx == nil || rdx.RdxType != Mapping {
 		return nil
 	}
 	for i := 0; i < len(rdx.Nested); i++ {
@@ -338,7 +338,7 @@ func Lparse(txt string) (tlv []byte) {
 	bm, tlv = toytlv.OpenHeader(tlv, 'B')
 	tlv = append(tlv, '0')
 	rdx, err := ParseRDX([]byte(txt))
-	if err != nil || rdx == nil || rdx.RdxType != LArray {
+	if err != nil || rdx == nil || rdx.RdxType != Linear {
 		return nil
 	}
 	for i := 0; i < len(rdx.Nested); i++ {
@@ -473,7 +473,7 @@ func (a *LIterator) Merge(bb SortedIterator) int {
 }
 
 func Mrdx2tlv(a *RDX) (tlv []byte) {
-	if a == nil || a.RdxType != Map {
+	if a == nil || a.RdxType != Mapping {
 		return nil
 	}
 	for i := 0; i+1 < len(a.Nested); i += 2 {

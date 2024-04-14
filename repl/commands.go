@@ -23,7 +23,7 @@ func (repl *REPL) CommandCreate(arg *rdx.RDX) (id rdx.ID, err error) {
 	name := "Unnamed replica"
 	if arg.RdxType == rdx.Reference {
 		src = rdx.IDFromText(arg.Text)
-	} else if arg.RdxType == rdx.Map {
+	} else if arg.RdxType == rdx.Mapping {
 		for i := 0; i+1 < len(arg.Nested); i += 2 {
 			key := arg.Nested[i]
 			val := arg.Nested[i+1]
@@ -112,7 +112,7 @@ var HelpClass = errors.New(
 func (repl *REPL) CommandClass(arg *rdx.RDX) (id rdx.ID, err error) {
 	id = rdx.BadId
 	err = HelpClass
-	if arg == nil || arg.RdxType != rdx.Map || len(arg.Nested) < 2 {
+	if arg == nil || arg.RdxType != rdx.Mapping || len(arg.Nested) < 2 {
 		return
 	}
 	fields := arg.Nested
@@ -154,9 +154,9 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 	tlvs := toyqueue.Records{}
 	if arg == nil {
 		return
-	} else if arg.RdxType == rdx.LArray {
+	} else if arg.RdxType == rdx.Linear {
 		return
-	} else if arg.RdxType == rdx.Map {
+	} else if arg.RdxType == rdx.Mapping {
 		pairs := arg.Nested
 		if len(pairs) >= 2 && pairs[0].String() == "_ref" {
 			tid = rdx.IDFromText(pairs[1].Text)
@@ -207,7 +207,7 @@ var HelpEdit = errors.New(
 func (repl *REPL) CommandEdit(arg *rdx.RDX) (id rdx.ID, err error) {
 	id = rdx.BadId
 	err = HelpEdit
-	if arg == nil || arg.RdxType != rdx.Map || len(arg.Nested) < 2 {
+	if arg == nil || arg.RdxType != rdx.Mapping || len(arg.Nested) < 2 {
 		return
 	}
 	if arg.Nested[0].String() == "_id" {
@@ -458,7 +458,7 @@ func (repl *REPL) CommandTinc(arg *rdx.RDX) (id rdx.ID, err error) {
 		return
 	} else if arg.RdxType == rdx.Reference {
 		id = rdx.IDFromText(arg.Text)
-	} else if arg.RdxType == rdx.Map {
+	} else if arg.RdxType == rdx.Mapping {
 		for i := 0; i+1 < len(arg.Nested); i += 2 {
 			key := &arg.Nested[i]
 			val := &arg.Nested[i+1]
@@ -517,7 +517,7 @@ func (repl *REPL) CommandSinc(arg *rdx.RDX) (id rdx.ID, err error) {
 		return
 	} else if arg.RdxType == rdx.Reference {
 		id = rdx.IDFromText(arg.Text)
-	} else if arg.RdxType == rdx.Map {
+	} else if arg.RdxType == rdx.Mapping {
 		for i := 0; i+1 < len(arg.Nested); i += 2 {
 			key := &arg.Nested[i]
 			val := &arg.Nested[i+1]

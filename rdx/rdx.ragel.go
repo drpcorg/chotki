@@ -190,7 +190,7 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 						n := rdx.Nested
 						n = append(n, RDX{Parent: rdx})
 						rdx.Nested = n
-						rdx.RdxType = Map
+						rdx.RdxType = Mapping
 						rdx = &n[len(n)-1]
 						nest++
 					}
@@ -208,7 +208,7 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 						}
 						nest--
 						rdx = rdx.Parent
-						if rdx.RdxType != ESet && rdx.RdxType != Map {
+						if rdx.RdxType != Eulerian && rdx.RdxType != Mapping {
 							cs = _RDX_error
 							{
 								p += 1
@@ -218,9 +218,9 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 
 						}
 						if len(rdx.Nested) == 1 {
-							rdx.RdxType = ESet
+							rdx.RdxType = Eulerian
 						}
-						if rdx.RdxType == Map {
+						if rdx.RdxType == Mapping {
 							if (len(rdx.Nested) & 1) == 1 {
 								cs = _RDX_error
 								{
@@ -238,7 +238,7 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 						n := rdx.Nested
 						n = append(n, RDX{Parent: rdx})
 						rdx.Nested = n
-						rdx.RdxType = LArray
+						rdx.RdxType = Linear
 						rdx = &n[len(n)-1]
 						nest++
 					}
@@ -256,7 +256,7 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 						}
 						nest--
 						rdx = rdx.Parent
-						if rdx.RdxType != LArray {
+						if rdx.RdxType != Linear {
 							cs = _RDX_error
 							{
 								p += 1
@@ -279,9 +279,9 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 
 						}
 						n := rdx.Parent.Nested
-						if rdx.Parent.RdxType == Map {
+						if rdx.Parent.RdxType == Mapping {
 							if len(n) == 1 {
-								rdx.Parent.RdxType = ESet
+								rdx.Parent.RdxType = Eulerian
 							} else if (len(n) & 1) == 1 {
 								cs = _RDX_error
 								{
@@ -309,7 +309,7 @@ func ParseRDX(data []byte) (rdx *RDX, err error) {
 
 						}
 						n := rdx.Parent.Nested
-						if rdx.Parent.RdxType == Map {
+						if rdx.Parent.RdxType == Mapping {
 							if (len(n) & 1) == 0 {
 								cs = _RDX_error
 								{
