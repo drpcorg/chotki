@@ -1,4 +1,4 @@
-# Fast distributed cache (CRDT based)
+#   ◌ Chotki: fast syncable store 
 
 [![godoc](http://img.shields.io/badge/godoc-reference-blue.svg?style=flat)](https://godoc.org/github.com/drpcorg/chotki)
 [![MIT License](http://img.shields.io/badge/license-MIT-red.svg?style=flat)](https://raw.githubusercontent.com/drpcorg/chotki/main/LICENSE)
@@ -10,8 +10,8 @@ Chotki is a syncable store with really fast counters.
 Internally, it is [pebble db][p] running CRDT natively, using
 the [Replicated Data Interchange][r] format (RDX). Chotki is
 sync-centric and causally consistent. That means, Chotki
-replicas can sync incrementally in real-time or they can
-function offline and diff-sync later.
+replicas can sync master-master, either incrementally in
+real-time or stay offline to diff-sync periodically.
 Chotki API is REST/object based, no SQL yet.
 
 [p]: https://github.com/cockroachdb/pebble
@@ -83,11 +83,11 @@ serialization/parsing, etc.
 The main superpower of Chotki is syncing. Replicas may work
 offline, reconnect and resync, or they may sync continuously in
 real time. Chotki so far only supports a spanning-tree overlay
-network topology. Each replica has a 20-bit "name" (aka
+network topology. Each replica has a 20-bit number (aka
 *source*); a replica can only connect to replicas with lesser
 src number to prevent loops.
 E.g. `a1ece` can connect to `b0b`, but not the other way around
-(replica ids are given in hex).
+(replica numbers are given in hex).
 
 Implementations of client replicas working on mobile devices or
 in a browser are planned.
@@ -98,7 +98,7 @@ Chotki is based on pebble db, which is an LSM database.
 A superpower of LSM is "blind writes", i.e. writes with no
 preceding read necessary. On a Lenovo Yoga laptop, a Chotki
 replica can do about 1mln blind increments of a counter in about
-3 seconds, be it connected to other replicas or not:
+3 seconds single-thread, be it connected to other replicas or not:
 ````
     ◌ sinc {fid:b0b-6-2,count:10000000,ms:0}
     b0b-6-2
@@ -137,11 +137,11 @@ Effectively, that simplicity allows to use a commodity LSM
 storage engine to *natively* store arbitrary CRDT.
 
 We can also compare Chotki to a number of JavaScript-centric
-CRDT databases, such as [RxDB][x] or [SyncedStore][z].
+CRDT databases, such as [RxDB][x], [TinyBase][b] or [SyncedStore][z].
 Historically RON/RDX also has it roots in the JavaScript world.
 [Swarm.js][j] was likely the first CRDT sync lib in history
 (2013-2018); although it was distilled from the earlier
-[Citrea][t] project (2011-2012). Still, Chotki/RDX has an
+[Citrea][t] project (2011-2012). Chotki/RDX has an
 objective of creating a production-ready scalable CRDT store,
 which JavaScript does not really allow. Still, we will be
 extremely happy if some of the JavaScript libs would consider
@@ -149,13 +149,14 @@ supporting RDX as a unifying format. (Ping us any time!)
 
 [j]: https://github.com/gritzko/swarm
 [a]: https://automerge.org/
+[b]: https://tinybase.org/
 [c]: https://www.youtube.com/watch?v=0Xx9kkTMi10
 [s]: https://www.youtube.com/live/M8RRZakZgiI?si=yQVT0Le7FlnpfWXw&t=32187
 [t]: https://github.com/gritzko/citrea-model
 [x]: https://github.com/pubkey/rxdb
 [z]: https://syncedstore.org/docs/
 
-##  The original mission summary
+##  The original Chotki project summary
 
 The mission of the system is to keep and update real-time statistics, such as
 quotas, counters, billing and suchlike. Update propagation time is expected to
