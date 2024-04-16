@@ -1,17 +1,23 @@
 package chotki
 
 import (
-	"github.com/drpcorg/chotki/rdx"
-	"github.com/learn-decentralized-systems/toyqueue"
-	"github.com/stretchr/testify/assert"
 	"io"
 	"os"
 	"testing"
+
+	"github.com/drpcorg/chotki/rdx"
+	"github.com/learn-decentralized-systems/toyqueue"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestORMExample(t *testing.T) {
 	_ = os.RemoveAll("cho1e")
 	_ = os.RemoveAll("cho1f")
+	defer func() {
+		_ = os.RemoveAll("cho1e")
+		_ = os.RemoveAll("cho1f")
+	}()
+
 	var a, b Chotki
 	err := a.Create(0x1e, "test replica")
 	assert.Nil(t, err)
@@ -54,18 +60,20 @@ func TestORMExample(t *testing.T) {
 	err = toyqueue.Pump(&syncera, &syncerb)
 	assert.Equal(t, io.EOF, err)
 
-	var exb Example
 	itb := b.ObjectIterator(rdx.IDFromString("1e-2"))
 	assert.NotNil(t, itb)
+
+	var exb Example
 	err = exb.Load(itb)
 	assert.Nil(t, err)
+
 	assert.Equal(t, "Ivan Petrov", exb.Name)
 	assert.Equal(t, int64(102), exb.Score)
 
-	err = a.Close()
-	assert.Nil(t, err)
-	err = b.Close()
-	assert.Nil(t, err)
-	_ = os.RemoveAll("cho1e")
-	_ = os.RemoveAll("cho1f")
+	assert.Nil(t, ita.Close())
+	assert.Nil(t, itb.Close())
+	assert.Nil(t, syncera.Close())
+	assert.Nil(t, syncerb.Close())
+	assert.Nil(t, a.Close())
+	assert.Nil(t, b.Close())
 }

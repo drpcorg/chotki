@@ -198,6 +198,8 @@ func (cho *Chotki) ReOpenTCP(tcp *toytlv.TCPDepot) {
 	// ...
 	io := pebble.IterOptions{}
 	i := cho.db.NewIter(&io)
+	defer i.Close()
+
 	for i.SeekGE([]byte{'l'}); i.Valid() && i.Key()[0] == 'L'; i.Next() {
 		address := string(i.Key()[1:])
 		err := tcp.Listen(address)
@@ -212,7 +214,6 @@ func (cho *Chotki) ReOpenTCP(tcp *toytlv.TCPDepot) {
 			_, _ = fmt.Fprintln(os.Stderr, err.Error())
 		}
 	}
-	_ = i.Close()
 }
 
 func (cho *Chotki) AddPacketHose(name string) (feed toyqueue.FeedCloser) {
@@ -388,7 +389,9 @@ func (cho *Chotki) Close() error {
 		cho.lock.Unlock()
 		return ErrClosed
 	}
-	_ = cho.db.Close()
+	if err := cho.db.Close(); err != nil {
+		return err
+	}
 	cho.db = nil
 	// todo
 	cho.last = rdx.ID0
@@ -437,10 +440,11 @@ func (cho *Chotki) ObjectIterator(oid rdx.ID) *pebble.Iterator {
 	if it.SeekGE(fro) {
 		id, rdt := OKeyIdRdt(it.Key())
 		if rdt == 'O' && id == oid {
+			// An iterator is returned from a function, it cannot be closed
 			return it
 		}
 	}
-	_ = it.Close()
+	it.Close()
 	return nil
 }
 
@@ -454,6 +458,7 @@ func GetFieldTLV(reader pebble.Reader, id rdx.ID) (rdt byte, tlv []byte) {
 		LowerBound: []byte{'O'},
 		UpperBound: []byte{'P'},
 	})
+	defer it.Close()
 	if it.SeekGE(key) {
 		fact, r := OKeyIdRdt(it.Key())
 		if fact == id {
@@ -461,7 +466,6 @@ func GetFieldTLV(reader pebble.Reader, id rdx.ID) (rdt byte, tlv []byte) {
 			rdt = r
 		}
 	}
-	_ = it.Close()
 	return
 }
 

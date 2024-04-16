@@ -33,6 +33,7 @@ func (cho *Chotki) DumpObjects() {
 		UpperBound: []byte{'P'},
 	}
 	i := cho.db.NewIter(&io)
+	defer i.Close()
 	for i.SeekGE([]byte{'O'}); i.Valid(); i.Next() {
 		_, _ = fmt.Fprintln(os.Stderr, ChotkiKVString(i.Key(), i.Value()))
 	}
@@ -44,6 +45,7 @@ func (cho *Chotki) DumpVV() {
 		UpperBound: []byte{'W'},
 	}
 	i := cho.db.NewIter(&io)
+	defer i.Close()
 	for i.SeekGE(VKey(rdx.ID0)); i.Valid(); i.Next() {
 		id := rdx.IDFromBytes(i.Key()[1:])
 		vv := make(rdx.VV)
