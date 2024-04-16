@@ -217,7 +217,7 @@ func (cho *Chotki) NewObject(tid rdx.ID, fields ...string) (id rdx.ID, err error
 	}
 	var packet toyqueue.Records
 	for i := 0; i < len(fields); i++ {
-		rdt := byte(form[i+1].RdxType)
+		rdt := form[i+1].RdxType
 		tlv := rdx.Xparse(rdt, fields[i])
 		if tlv == nil {
 			return rdx.BadId, ErrBadValueForAType
@@ -334,6 +334,26 @@ func (cho *Chotki) IncNField(fid rdx.ID) (id rdx.ID, err error) {
 		toytlv.Record('F', rdx.ZipUint64(fid.Off())),
 		toytlv.Record(rdx.Natural, toytlv.Record(rdx.Term, rdx.ZipUint64Pair(mine+1, src))),
 	}
+	id, err = cho.CommitPacket('E', fid.ZeroOff(), tlvs)
+	return
+}
+
+func (cho *Chotki) ObjectFieldMapTermId(fid rdx.ID) (themap map[string]rdx.ID, err error) {
+	rdt, tlv, e := cho.ObjectFieldTLV(fid)
+	if e != nil {
+		return nil, e
+	}
+	if rdt != rdx.Mapping {
+		return nil, ErrWrongFieldType
+	}
+	themap = rdx.MnativeTR(tlv)
+	return
+}
+
+func (cho *Chotki) EditFieldTLV(fid rdx.ID, delta []byte) (id rdx.ID, err error) {
+	tlvs := toyqueue.Records{}
+	tlvs = append(tlvs, toytlv.TinyRecord('F', rdx.ZipUint64(fid.Off())))
+	tlvs = append(tlvs, delta)
 	id, err = cho.CommitPacket('E', fid.ZeroOff(), tlvs)
 	return
 }

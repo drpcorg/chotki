@@ -35,7 +35,7 @@ func FIRSTparsez(bulk []byte) (zrev uint64, src uint64, value []byte) {
 	return
 }
 
-// Parses an enveloped ISFR record
+// Parses an enveloped FIRST record
 func ParseEnvelopedFIRST(data []byte) (lit byte, t Time, value, rest []byte, err error) {
 	var hlen, blen int
 	lit, hlen, blen = toytlv.ProbeHeader(data)
@@ -43,12 +43,12 @@ func ParseEnvelopedFIRST(data []byte) (lit byte, t Time, value, rest []byte, err
 		err = toytlv.ErrIncomplete
 		return
 	}
-	rec := data[:hlen+blen]
+	rec := data[hlen : hlen+blen]
 	rest = data[hlen+blen:]
-	tlit, thlen, tblen := toytlv.ProbeHeader(data)
+	tlit, thlen, tblen := toytlv.ProbeHeader(rec)
 	tlen := thlen + tblen
 	if (tlit != 'T' && tlit != '0') || (tlen > len(rec)) {
-		err = ErrBadISFR
+		err = ErrBadFIRST
 		return
 	}
 	tsb := rec[thlen:tlen]
@@ -208,6 +208,17 @@ func FIRSTrdxs2tlvs(a []RDX) (tlv toyqueue.Records) {
 		tlv = append(tlv, first)
 	}
 	return
+}
+
+func FIRSTcompare(a, b []byte) int {
+	alit, ahlen, ablen := toytlv.ProbeHeader(a)
+	blit, bhlen, bblen := toytlv.ProbeHeader(b)
+	if alit != blit {
+		return int(alit) - int(blit)
+	}
+	_, _, av := FIRSTparsez(a[ahlen : ahlen+ablen])
+	_, _, bv := FIRSTparsez(b[bhlen : bhlen+bblen])
+	return bytes.Compare(av, bv)
 }
 
 // I is a last-write-wins int64

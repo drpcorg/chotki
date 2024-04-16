@@ -25,6 +25,22 @@ func Xparse(rdt byte, val string) (tlv []byte) {
 	return
 }
 
+func FIRSTparsee(rdt byte, val string) (tlv []byte) {
+	switch rdt {
+	case 'F':
+		tlv = toytlv.Record(rdt, Fparse(val))
+	case 'I':
+		tlv = toytlv.Record(rdt, Iparse(val))
+	case 'R':
+		tlv = toytlv.Record(rdt, Rparse(val))
+	case 'S':
+		tlv = toytlv.Record(rdt, Sparse(val))
+	case 'T':
+		tlv = toytlv.Record(rdt, Tparse(val))
+	}
+	return
+}
+
 func Xmerge(rdt byte, tlvs [][]byte) (tlv []byte) {
 	switch rdt {
 	case 'C', 'O', 'Y': // object's ref is immutable
@@ -43,6 +59,12 @@ func Xmerge(rdt byte, tlvs [][]byte) (tlv []byte) {
 		tlv = Nmerge(tlvs)
 	case 'Z':
 		tlv = Zmerge(tlvs)
+	case 'E':
+		tlv = Emerge(tlvs)
+	case 'L':
+		tlv = Lmerge(tlvs)
+	case 'M':
+		tlv = Mmerge(tlvs)
 	case 'V':
 		tlv = Vmerge(tlvs)
 	default:
@@ -69,6 +91,8 @@ func Xstring(rdt byte, tlv []byte) string {
 		return Tstring(tlv)
 	case 'N':
 		return Nstring(tlv)
+	case 'M':
+		return ELMstring(tlv)
 	default:
 		hex := make([]byte, len(tlv)*2)
 		hex2.Encode(hex, tlv)

@@ -55,7 +55,7 @@ func TestChotki_Sync(t *testing.T) {
 
 	bvv, err := b.VersionVector()
 	assert.Nil(t, err)
-	assert.Equal(t, "1,a-0-1,b-0-1", bvv.String())
+	assert.Equal(t, "0-2-3,a-0-1,b-0-1", bvv.String())
 
 	b.DumpAll()
 

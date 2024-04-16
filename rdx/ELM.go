@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"github.com/learn-decentralized-systems/toytlv"
+	"slices"
 	"sort"
 )
 
@@ -36,32 +37,32 @@ func TimeFromZipBytes(zip []byte) (t Time) {
 	return
 }
 
-var ErrBadISFR = errors.New("bad ISFR record")
+var ErrBadFIRST = errors.New("bad FIRST record")
 
 func MelAppend(to []byte, lit byte, t Time, body []byte) []byte {
 	tb := toytlv.TinyRecord('T', t.ZipBytes())
 	return toytlv.Append(to, lit, tb, body)
 }
 
-func MelReSource(isfr []byte, src uint64) (ret []byte, err error) {
+func MelReSource(first []byte, src uint64) (ret []byte, err error) {
 	var lit byte
 	var time Time
 	var body []byte
-	rest := isfr
+	rest := first
 	for len(rest) > 0 {
-		at := len(isfr) - len(rest)
+		at := len(first) - len(rest)
 		lit, time, body, rest, err = ParseEnvelopedFIRST(rest)
 		if err != nil {
 			return
 		}
 		if time.src != src {
-			ret = make([]byte, at, len(isfr)*2)
-			copy(ret, isfr[:at])
+			ret = make([]byte, at, len(first)*2)
+			copy(ret, first[:at])
 			break
 		}
 	}
 	if ret == nil && err == nil {
-		return isfr, nil
+		return first, nil
 	}
 	for err == nil {
 		time.src = src
@@ -219,15 +220,33 @@ func Mstring(tlv []byte) (txt string) {
 	return string(ret)
 }
 
+type kv struct {
+	k, v []byte
+}
+
 // parse a text form into a TLV value
 func Mparse(txt string) (tlv []byte) {
 	rdx, err := ParseRDX([]byte(txt))
 	if err != nil || rdx == nil || rdx.RdxType != Mapping {
 		return nil
 	}
-	for i := 0; i < len(rdx.Nested); i++ {
-		n := &rdx.Nested[i]
-		tlv = appendParsedFirstTlv(tlv, n)
+	kvs := []kv{}
+	pairs := rdx.Nested
+	for i := 0; i+1 < len(pairs); i += 2 {
+		next := kv{
+			FIRSTparsee(pairs[i].RdxType, string(pairs[i].Text)),
+			FIRSTparsee(pairs[i+1].RdxType, string(pairs[i+1].Text)),
+		}
+		if next.k != nil && next.v != nil {
+			kvs = append(kvs, next)
+		}
+	}
+	slices.SortFunc(kvs, func(i, j kv) int {
+		return FIRSTcompare(i.k, j.k)
+	})
+	for _, x := range kvs {
+		tlv = append(tlv, x.k...)
+		tlv = append(tlv, x.v...)
 	}
 	return
 }
@@ -244,9 +263,84 @@ func Mmerge(tlvs [][]byte) (merged []byte) {
 	return
 }
 
+func MnativeTR(tlv []byte) MapTR {
+	ret := make(map[string]ID)
+	it := FIRSTIterator{TLV: tlv}
+	for it.Next() {
+		keyrdt, _, key := it.ParsedValue()
+		if !it.Next() {
+			break
+		}
+		valrdt, _, val := it.ParsedValue()
+		if keyrdt != Term || valrdt != Reference {
+			continue
+		}
+		id := IDFromZipBytes(val)
+		ret[string(key)] = id
+	}
+	return ret
+}
+
+func MparseTR(arg *RDX) MapTR {
+	if arg == nil || arg.RdxType != Mapping {
+		return nil
+	}
+	ret := make(MapTR)
+	kvs := arg.Nested
+	for i := 0; i+1 < len(kvs); i += 2 {
+		if kvs[i].RdxType != Term || kvs[i+1].RdxType != Reference {
+			continue
+		}
+		ret[string(kvs[i].Text)] = IDFromText(kvs[i+1].Text)
+	}
+	return ret
+}
+
+type MapTR map[string]ID
+
+func (m MapTR) String() string {
+	var keys []string
+	for key := range m {
+		keys = append(keys, key)
+	}
+	var ret []byte
+	ret = append(ret, '{', '\n')
+	for _, key := range keys {
+		ret = append(ret, '\t')
+		ret = append(ret, key...)
+		ret = append(ret, ':', '\t')
+		ret = append(ret, m[key].String()...)
+		ret = append(ret, ',', '\n')
+	}
+	ret = append(ret, '}')
+	return string(ret)
+}
+
 // produce an op that turns the old value into the new one
-func Mdelta(tlv []byte, new_val int64) (tlv_delta []byte) {
-	return nil // todo
+func MdeltaTR(tlv []byte, changes MapTR) (tlv_delta []byte) {
+	it := MIterator{it: FIRSTIterator{TLV: tlv}}
+	for it.Next() {
+		if it.lit != Term {
+			continue
+		}
+		change, ok := changes[string(it.val)]
+		if !ok {
+			continue
+		}
+		new_rev := ZagZigUint64(it.revz)
+		if new_rev < 0 {
+			new_rev = -new_rev
+		}
+		new_rev++
+		tlv_delta = append(tlv_delta, toytlv.Record(Term, FIRSTtlv(new_rev, 0, it.val))...)
+		tlv_delta = append(tlv_delta, toytlv.Record(Reference, FIRSTtlv(new_rev, 0, change.ZipBytes()))...)
+		delete(changes, string(it.val))
+	}
+	for key, val := range changes {
+		tlv_delta = append(tlv_delta, toytlv.Record(Term, Ttlv(key))...)
+		tlv_delta = append(tlv_delta, toytlv.Record(Reference, Rtlv(val))...)
+	}
+	return
 }
 
 // checks a TLV value for validity (format violations)
@@ -260,6 +354,7 @@ func Mdiff(tlv []byte, vvdiff VV) []byte {
 
 type MIterator struct {
 	it   FIRSTIterator
+	keye []byte
 	val  []byte
 	src  uint64
 	revz uint64
@@ -270,6 +365,7 @@ type MIterator struct {
 func (a *MIterator) Next() (got bool) {
 	tlv := a.it.TLV
 	got = a.it.Next() // skip value
+	a.keye = a.it.one
 	a.val = a.it.val
 	a.src = a.it.src
 	a.revz = a.it.revz
@@ -283,7 +379,7 @@ func (a *MIterator) Next() (got bool) {
 
 func (a *MIterator) Merge(b SortedIterator) int {
 	bb := b.(*MIterator)
-	cmp := bytes.Compare(a.val, bb.val)
+	cmp := FIRSTcompare(a.keye, bb.keye)
 	if cmp < 0 {
 		return MergeAB
 	} else if cmp > 0 {
@@ -485,4 +581,27 @@ func Mrdx2tlv(a *RDX) (tlv []byte) {
 
 func ELMdefault() (tlv []byte) {
 	return []byte{}
+}
+
+func ELMstring(tlv []byte) string {
+	ret := []byte{}
+	it := FIRSTIterator{TLV: tlv}
+	for it.Next() {
+		switch it.lit {
+		case 'F':
+			ret = append(ret, Fstring(it.bare)...)
+		case 'I':
+			ret = append(ret, Istring(it.bare)...)
+		case 'R':
+			ret = append(ret, Rstring(it.bare)...)
+		case 'S':
+			ret = append(ret, Sstring(it.bare)...)
+		case 'T':
+			ret = append(ret, Tstring(it.bare)...)
+		default:
+			ret = append(ret, '?')
+		}
+		ret = append(ret, ',')
+	}
+	return string(ret)
 }

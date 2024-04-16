@@ -22,9 +22,9 @@ func TestEmerge(t *testing.T) {
 }
 
 func TestMmerge(t *testing.T) {
-	tlv1 := Mparse("{1: 2, 3: 4, 5:6}")
+	tlv1 := Mparse("{1: 2,  5:6, 3: 4}")
 	assert.Equal(t, "{1:2,3:4,5:6}", Mstring(tlv1))
-	tlv2 := Mparse("{3:4, 5:6, 7:8}")
+	tlv2 := Mparse("{ 7:8, 3:4, 5:6}")
 	tlv12 := Mmerge(toyqueue.Records{tlv1, tlv2})
 	str12 := Mstring(tlv12)
 	assert.Equal(t, "{1:2,3:4,5:6,7:8}", str12)

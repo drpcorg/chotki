@@ -54,7 +54,7 @@ action opush {
     n := rdx.Nested 
     n = append(n, RDX{Parent: rdx})
     rdx.Nested = n
-    rdx.RdxType = Map;
+    rdx.RdxType = Mapping;
     rdx = &n[len(n)-1]
     nest++; 
 }
@@ -66,14 +66,14 @@ action opop {
     }
     nest--;
     rdx = rdx.Parent;
-    if rdx.RdxType != ESet && rdx.RdxType!=Map {
+    if rdx.RdxType != Eulerian && rdx.RdxType!=Mapping {
         cs = _RDX_error;
         fbreak;
     }
     if len(rdx.Nested)==1 {
-        rdx.RdxType = ESet
+        rdx.RdxType = Eulerian
     }
-    if rdx.RdxType == Map {
+    if rdx.RdxType == Mapping {
         if (len(rdx.Nested)&1)==1 {
             cs = _RDX_error;
             fbreak;
@@ -86,7 +86,7 @@ action apush {
     n := rdx.Nested 
     n = append(n, RDX{Parent: rdx})
     rdx.Nested = n
-    rdx.RdxType = LArray;
+    rdx.RdxType = Linear;
     rdx = &n[len(n)-1]
     nest++; 
 }
@@ -98,7 +98,7 @@ action apop {
     }
     nest--;
     rdx = rdx.Parent;
-    if rdx.RdxType != LArray {
+    if rdx.RdxType != Linear {
         cs = _RDX_error;
         fbreak;
     }
@@ -111,9 +111,9 @@ action comma {
         fbreak;
     }
     n := rdx.Parent.Nested 
-    if rdx.Parent.RdxType==Map {
+    if rdx.Parent.RdxType==Mapping {
         if len(n)==1 {
-            rdx.Parent.RdxType = ESet
+            rdx.Parent.RdxType = Eulerian
         } else if (len(n)&1)==1 {
             cs = _RDX_error;
             fbreak;
@@ -131,7 +131,7 @@ action colon {
         fbreak;
     }
     n := rdx.Parent.Nested 
-    if rdx.Parent.RdxType==Map { 
+    if rdx.Parent.RdxType==Mapping { 
         if (len(n)&1)==0 {
             cs = _RDX_error;
             fbreak;

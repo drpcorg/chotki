@@ -26,20 +26,38 @@ var ErrBadPath = errors.New("bad path")
 var completer = readline.NewPrefixCompleter(
 	readline.PcItem("help"),
 
+	readline.PcItem("create"),
+	readline.PcItem("open"),
+	readline.PcItem("close"),
+	readline.PcItem("exit"),
+	readline.PcItem("quit"),
+
 	readline.PcItem("listen"),
-	readline.PcItem("talk"),
-	readline.PcItem("mute"),
-	readline.PcItem("bye"),
+	readline.PcItem("connect"),
+
+	readline.PcItem("class"),
+	readline.PcItem("new"),
+	readline.PcItem("edit"),
+	readline.PcItem("cat"),
+	readline.PcItem("list"),
 
 	readline.PcItem("name"),
 
-	readline.PcItem("get"),
-	readline.PcItem("list"),
-	readline.PcItem("put"),
-	readline.PcItem("set"),
+	readline.PcItem("dump",
+		readline.PcItem("objects"),
+		readline.PcItem("vv"),
+		readline.PcItem("all"),
+	),
 
-	readline.PcItem("exit"),
-	readline.PcItem("quit"),
+	readline.PcItem("tell"),
+	readline.PcItem("mute"),
+
+	readline.PcItem("ping"),
+	readline.PcItem("pong"),
+	readline.PcItem("pinc"),
+	readline.PcItem("ponc"),
+	readline.PcItem("tinc"),
+	readline.PcItem("sinc"),
 )
 
 func filterInput(r rune) (rune, bool) {
@@ -138,6 +156,8 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 		id, err = repl.CommandList(arg)
 	case "cat":
 		id, err = repl.CommandCat(arg)
+	case "name":
+		id, err = repl.CommandName(arg)
 	// ----- networking -----
 	case "listen":
 		id, err = repl.CommandListen(arg)
@@ -170,21 +190,6 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 }
 
 func main() {
-
-	/*
-		if len(os.Args) > 1 {
-			rno := uint64(1)
-			_, err := fmt.Sscanf(os.Args[1], "%d", &rno)
-			if err != nil {
-				_, _ = fmt.Fprintln(os.Stderr, "Usage: Chotki 123")
-				os.Exit(-2)
-			}
-			err = re.Open(rno)
-			if err != nil {
-				_, _ = fmt.Fprintln(os.Stderr, err.Error())
-				os.Exit(-1)
-			}
-		}*/
 
 	repl := REPL{}
 

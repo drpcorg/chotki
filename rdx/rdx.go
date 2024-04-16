@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	None      = byte('0')
+	None      = byte(0)
 	Float     = byte('F')
 	Integer   = byte('I')
 	Reference = byte('R')

@@ -570,3 +570,29 @@ func (repl *REPL) CommandTell(arg *rdx.RDX) (id rdx.ID, err error) {
 	}
 	return
 }
+
+var HelpName = errors.New("name, name Obj, name {Obj: b0b-12-1}")
+
+func (repl *REPL) CommandName(arg *rdx.RDX) (id rdx.ID, err error) {
+	id = rdx.BadId
+	var names rdx.MapTR
+	names, err = repl.Host.ObjectFieldMapTermId(chotki.NamesID)
+	if err != nil {
+		return
+	}
+	if arg == nil || arg.RdxType == rdx.None {
+		fmt.Println(names.String())
+		id = chotki.ID2
+	} else if arg.RdxType == rdx.Term {
+		key := string(arg.Text)
+		fmt.Printf("{%s:%s}\n", key, names[key])
+	} else if arg.RdxType == rdx.Mapping {
+		_, tlv, _ := repl.Host.ObjectFieldTLV(chotki.NamesID)
+		parsed := rdx.MparseTR(arg)
+		delta := toytlv.Record('M', rdx.MdeltaTR(tlv, parsed))
+		id, err = repl.Host.EditFieldTLV(chotki.NamesID, delta)
+	} else {
+		err = HelpName
+	}
+	return
+}
