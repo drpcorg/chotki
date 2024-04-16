@@ -5,10 +5,9 @@ go 1.21.4
 require (
 	github.com/cockroachdb/pebble v1.0.0
 	github.com/ergochat/readline v0.1.0
-	github.com/learn-decentralized-systems/toykv v0.0.0-20231218053616-8d6e32388877
-	github.com/learn-decentralized-systems/toylog v0.1.6
 	github.com/learn-decentralized-systems/toyqueue v0.1.5
 	github.com/learn-decentralized-systems/toytlv v0.2.0
+	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.8.4
 )
 
@@ -28,7 +27,6 @@ require (
 	github.com/kr/pretty v0.2.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.2-0.20181231171920-c182affec369 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/client_golang v1.12.0 // indirect
 	github.com/prometheus/client_model v0.2.1-0.20210607210712-147c58e9608a // indirect
