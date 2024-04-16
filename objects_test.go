@@ -9,9 +9,10 @@ import (
 )
 
 func TestTypes(t *testing.T) {
-	_ = os.RemoveAll("cho1a")
-	var a Chotki
-	err := a.Create(0x1a, "test replica A")
+	adir := ReplicaDirName(0x1a)
+
+	_ = os.RemoveAll(adir)
+	a, _, err := Open(0x1a, "test replica A", adir)
 	assert.Nil(t, err)
 
 	var tid, oid rdx.ID

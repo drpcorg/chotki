@@ -4,13 +4,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/cockroachdb/pebble"
-	"github.com/drpcorg/chotki/rdx"
-	"github.com/learn-decentralized-systems/toyqueue"
-	"github.com/learn-decentralized-systems/toytlv"
 	"net"
 	"os"
 	"sync"
+
+	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/vfs"
+	"github.com/drpcorg/chotki/rdx"
+	"github.com/learn-decentralized-systems/toyqueue"
+	"github.com/learn-decentralized-systems/toytlv"
 )
 
 type Packet []byte
@@ -53,9 +55,28 @@ type Chotki struct {
 	types map[rdx.ID]Fields
 }
 
-var ErrCausalityBroken = errors.New("order fail: refs an unknown op")
-var ErrOutOfOrder = errors.New("order fail: sequence gap")
-var ErrNotImplemented = errors.New("not implemented yet")
+var (
+	ErrDbClosed       = errors.New("chotki: db is closed")
+	ErrDirnameIsFile  = errors.New("chotki: the dirname is file")
+	ErrNotImplemented = errors.New("chotki: not implemented yet")
+
+	ErrHookNotFound = errors.New("chotki: hook not found")
+	ErrBadIRecord   = errors.New("chotki: bad id-ref record")
+	ErrBadHPacket   = errors.New("chotki: bad handshake packet")
+	ErrBadEPacket   = errors.New("chotki: bad E packet")
+	ErrBadVPacket   = errors.New("chotki: bad V packet")
+	ErrBadYPacket   = errors.New("chotki: bad Y packet")
+	ErrBadLPacket   = errors.New("chotki: bad L packet")
+	ErrBadTPacket   = errors.New("chotki: bad T packet")
+	ErrBadOPacket   = errors.New("chotki: bad O packet")
+	ErrSrcUnknown   = errors.New("chotki: source unknown")
+	ErrSyncUnknown  = errors.New("chotki: sync session unknown")
+	ErrBadRRecord   = errors.New("chotki: bad ref record")
+	ErrClosed       = errors.New("chotki: no replica open")
+
+	ErrOutOfOrder      = errors.New("chotki: order fail: sequence gap")
+	ErrCausalityBroken = errors.New("chotki: order fail: refs an unknown op")
+)
 
 func OKey(id rdx.ID, rdt byte) (key []byte) {
 	var ret = [16]byte{'O'}
@@ -99,8 +120,6 @@ func ReplicaDirName(rno uint64) string {
 	return fmt.Sprintf("cho%x", rno)
 }
 
-var ErrAlreadyOpen = errors.New("the db is already open")
-
 func (o *Options) SetDefaults() {
 	if o.MaxLogLen == 0 {
 		o.MaxLogLen = 1 << 23
@@ -120,81 +139,99 @@ func merger(key, value []byte) (pebble.ValueMerger, error) {
 	return &pma, nil
 }
 
-// Create a replica. orig=0 for read-only replicas.
-func (cho *Chotki) Create(orig uint64, name string) (err error) {
-	opts := pebble.Options{
-		ErrorIfExists:    true,
+func Exists(dirname string) (bool, error) {
+	stats, err := os.Stat(dirname)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+
+		return false, err
+	}
+
+	if !stats.IsDir() {
+		return false, ErrDirnameIsFile
+	}
+
+	desc, err := pebble.Peek(dirname, vfs.Default)
+	if err != nil {
+		return false, err
+	}
+
+	return desc.Exists, nil
+}
+
+func Open(orig uint64, name, dirname string) (*Chotki, bool, error) {
+	exists, err := Exists(dirname)
+	if err != nil {
+		return nil, false, err
+	}
+
+	db, err := pebble.Open(dirname, &pebble.Options{
+		ErrorIfExists:    false,
 		ErrorIfNotExists: false,
-		Merger: &pebble.Merger{
-			Name:  "CRDT",
-			Merge: merger,
-		}}
-	cho.opts.SetDefaults() // todo param
-	path := ReplicaDirName(orig)
-	cho.db, err = pebble.Open(path, &opts)
+		Merger:           &pebble.Merger{Name: "CRDT", Merge: merger},
+	})
 	if err != nil {
-		return
+		return nil, exists, err
 	}
-	var _0 rdx.ID
-	id0 := rdx.IDFromSrcSeqOff(orig, 0, 0)
-	rec0 := toytlv.Concat(
-		toytlv.Record('Y',
+
+	conn := Chotki{
+		db:    db,
+		src:   orig,
+		dir:   dirname,
+		types: make(map[rdx.ID]Fields),
+		hooks: make(map[rdx.ID][]Hook),
+		syncs: make(map[rdx.ID]*pebble.Batch),
+		outq:  make(map[string]toyqueue.DrainCloser),
+	}
+	conn.opts.SetDefaults() // todo param
+
+	if !exists {
+		id0 := rdx.IDFromSrcSeqOff(orig, 0, 0)
+
+		init := append(toyqueue.Records(nil), Log0...)
+		init = append(init, toytlv.Record('Y',
 			toytlv.Record('I', id0.ZipBytes()),
-			toytlv.Record('R', _0.ZipBytes()),
+			toytlv.Record('R', rdx.ID0.ZipBytes()),
 			toytlv.Record('S', rdx.Stlv(name)),
-		),
-	)
-	init := append(Log0, rec0)
-	err = cho.Drain(init)
-	if err != nil {
-		return
+		))
+
+		if err = conn.Drain(init); err != nil {
+			return nil, exists, err
+		}
 	}
-	_ = cho.Close()
-	return cho.Open(orig)
+
+	vv, err := conn.VersionVector()
+	if err != nil {
+		return nil, exists, err
+	}
+
+	conn.last = vv.GetID(conn.src)
+
+	return &conn, exists, nil
 }
 
-// Open a replica. orig=0 for read-only replicas.
-func (cho *Chotki) Open(orig uint64) (err error) {
-	cho.src = orig
-	opts := pebble.Options{
-		ErrorIfNotExists: true,
-		Merger: &pebble.Merger{
-			Name:  "CRDT",
-			Merge: merger,
-		}}
-	cho.opts.SetDefaults() // todo param
-	path := ReplicaDirName(orig)
-	cho.db, err = pebble.Open(path, &opts)
-	if err != nil {
-		return
+func (cho *Chotki) OpenTCP(tcp *toytlv.TCPDepot) error {
+	if cho.db == nil {
+		return ErrDbClosed
 	}
-	cho.dir = path
-	if err != nil {
-		_ = cho.db.Close()
-		return err
-	}
-	cho.types = make(map[rdx.ID]Fields)
-	cho.syncs = make(map[rdx.ID]*pebble.Batch)
-	cho.hooks = make(map[rdx.ID][]Hook)
-	var vv rdx.VV
-	vv, err = cho.VersionVector()
-	if err != nil {
-		return
-	}
-	cho.last = vv.GetID(cho.src)
-	cho.outq = make(map[string]toyqueue.DrainCloser)
-	// repl.last = repl.heads.GetID(orig) todo root VV
-	return
-}
 
-func (cho *Chotki) OpenTCP(tcp *toytlv.TCPDepot) {
 	tcp.Open(func(conn net.Conn) toyqueue.FeedDrainCloser {
 		return &Syncer{Host: cho, Name: conn.RemoteAddr().String(), Mode: SyncRWLive}
 	})
+
+	return nil
 }
 
-func (cho *Chotki) ReOpenTCP(tcp *toytlv.TCPDepot) {
-	cho.OpenTCP(tcp)
+func (cho *Chotki) ReOpenTCP(tcp *toytlv.TCPDepot) error {
+	if cho.db == nil {
+		return ErrDbClosed
+	}
+
+	if err := cho.OpenTCP(tcp); err != nil {
+		return err
+	}
 	// ...
 	io := pebble.IterOptions{}
 	i := cho.db.NewIter(&io)
@@ -214,6 +251,7 @@ func (cho *Chotki) ReOpenTCP(tcp *toytlv.TCPDepot) {
 			_, _ = fmt.Fprintln(os.Stderr, err.Error())
 		}
 	}
+	return nil
 }
 
 func (cho *Chotki) AddPacketHose(name string) (feed toyqueue.FeedCloser) {
@@ -327,10 +365,18 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 		default:
 			return fmt.Errorf("unsupported packet type %c", lit)
 		}
+
 		if !yvh && err == nil {
-			_ = cho.db.Apply(&pb, &WriteOptions)
+			if err := cho.db.Apply(&pb, &WriteOptions); err != nil {
+				return err
+			}
 		}
 	}
+
+	if err := cho.db.Flush(); err != nil {
+		return err
+	}
+
 	if err != nil { // fixme separate packets
 		return
 	}
@@ -358,20 +404,6 @@ func (cho *Chotki) VersionVector() (vv rdx.VV, err error) {
 }
 
 var WriteOptions = pebble.WriteOptions{Sync: false}
-
-var ErrBadIRecord = errors.New("bad id-ref record")
-
-var ErrBadHPacket = errors.New("bad handshake packet")
-var ErrBadEPacket = errors.New("bad E packet")
-var ErrBadVPacket = errors.New("bad V packet")
-var ErrBadYPacket = errors.New("bad Y packet")
-var ErrBadLPacket = errors.New("bad L packet")
-var ErrBadTPacket = errors.New("bad T packet")
-var ErrBadOPacket = errors.New("bad O packet")
-var ErrSrcUnknown = errors.New("source unknown")
-var ErrSyncUnknown = errors.New("sync session unknown")
-var ErrBadRRecord = errors.New("bad ref record")
-var ErrClosed = errors.New("no replica open")
 
 var KeyLogLen = []byte("Mloglen")
 
@@ -482,8 +514,6 @@ func (cho *Chotki) RemoveAllHooks(fid rdx.ID) {
 	delete(cho.hooks, fid)
 	cho.hlock.Unlock()
 }
-
-var ErrHookNotFound = errors.New("hook not found")
 
 func (cho *Chotki) RemoveHook(fid rdx.ID, hook Hook) (err error) {
 	cho.hlock.Lock()

@@ -23,13 +23,14 @@ func TestChotki_Debug(t *testing.T) {
 }
 
 func TestChotki_Create(t *testing.T) {
-	_ = os.RemoveAll("cho1a")
-	var a Chotki
-	err := a.Create(0x1a, "test replica")
+	dirname := ReplicaDirName(0x1a)
+	_ = os.RemoveAll(dirname)
+	a, exists, err := Open(0x1a, "test replica", dirname)
 	assert.Nil(t, err)
+	assert.Equal(t, exists, false)
 	//a.DumpAll()
 	_ = a.Close()
-	_ = os.RemoveAll("cho1a")
+	_ = os.RemoveAll(dirname)
 }
 
 type KVMerger interface {
@@ -37,17 +38,19 @@ type KVMerger interface {
 }
 
 func TestChotki_Sync(t *testing.T) {
-	_ = os.RemoveAll("choa")
-	_ = os.RemoveAll("chob")
-	var a, b Chotki
-	err := a.Create(0xa, "test replica A")
+	adir, bdir := ReplicaDirName(0xa), ReplicaDirName(0xb)
+	_ = os.RemoveAll(adir)
+	_ = os.RemoveAll(bdir)
+
+	a, _, err := Open(0xa, "test replica A", adir)
 	assert.Nil(t, err)
 	//a.DumpAll()
-	err = b.Create(0xb, "test replica B")
+
+	b, _, err := Open(0xb, "test replica B", bdir)
 	assert.Nil(t, err)
 
-	synca := Syncer{Host: &a, Mode: SyncRW, Name: "a"}
-	syncb := Syncer{Host: &b, Mode: SyncRW, Name: "b"}
+	synca := Syncer{Host: a, Mode: SyncRW, Name: "a"}
+	syncb := Syncer{Host: b, Mode: SyncRW, Name: "b"}
 	err = toyqueue.Relay(&syncb, &synca)
 	assert.Nil(t, err)
 	err = toyqueue.Pump(&synca, &syncb)

@@ -11,6 +11,7 @@ import (
 )
 
 func TestORMExample(t *testing.T) {
+	edir, fdir := ReplicaDirName(0x1e), ReplicaDirName(0x1f)
 	_ = os.RemoveAll("cho1e")
 	_ = os.RemoveAll("cho1f")
 	defer func() {
@@ -18,8 +19,7 @@ func TestORMExample(t *testing.T) {
 		_ = os.RemoveAll("cho1f")
 	}()
 
-	var a, b Chotki
-	err := a.Create(0x1e, "test replica")
+	a, _, err := Open(0x1e, "test replica", edir)
 	assert.Nil(t, err)
 	var tid, oid rdx.ID
 	tid, err = a.NewClass(rdx.ID0,
@@ -35,9 +35,9 @@ func TestORMExample(t *testing.T) {
 
 	err = a.Close()
 	assert.Nil(t, err)
-	err = a.Open(0x1e)
+
+	a, _, err = Open(0x1e, "test replica", edir)
 	assert.Nil(t, err)
-	//a.DumpAll()
 
 	var exa Example
 	ita := a.ObjectIterator(rdx.IDFromString("1e-2"))
@@ -50,11 +50,11 @@ func TestORMExample(t *testing.T) {
 	exa.Score = 103
 	// todo save the object
 
-	err = b.Create(0x1f, "another test replica")
+	b, _, err := Open(0x1f, "another test replica", fdir)
 	assert.Nil(t, err)
 
-	syncera := Syncer{Host: &a, Mode: SyncRW}
-	syncerb := Syncer{Host: &b, Mode: SyncRW}
+	syncera := Syncer{Host: a, Mode: SyncRW}
+	syncerb := Syncer{Host: b, Mode: SyncRW}
 	err = toyqueue.Relay(&syncerb, &syncera)
 	assert.Nil(t, err)
 	err = toyqueue.Pump(&syncera, &syncerb)
