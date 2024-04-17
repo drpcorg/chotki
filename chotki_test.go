@@ -1,13 +1,30 @@
 package chotki
 
 import (
-	"github.com/drpcorg/chotki/rdx"
-	"github.com/learn-decentralized-systems/toyqueue"
-	"github.com/stretchr/testify/assert"
 	"io"
 	"os"
 	"testing"
+
+	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/rdx"
+	"github.com/learn-decentralized-systems/toyqueue"
+	"github.com/stretchr/testify/assert"
 )
+
+func testdirs(origs ...uint64) ([]string, func()) {
+	dirs := make([]string, len(origs))
+
+	for i, orig := range origs {
+		dirs[i] = ReplicaDirName(orig)
+		os.RemoveAll(dirs[i])
+	}
+
+	return dirs, func() {
+		for _, dir := range dirs {
+			os.RemoveAll(dir)
+		}
+	}
+}
 
 func TestChotki_Debug(t *testing.T) {
 	oid := rdx.IDFromSrcSeqOff(0x1e, 0x1ab, 0)
@@ -23,14 +40,18 @@ func TestChotki_Debug(t *testing.T) {
 }
 
 func TestChotki_Create(t *testing.T) {
-	dirname := ReplicaDirName(0x1a)
-	_ = os.RemoveAll(dirname)
-	a, exists, err := Open(0x1a, "test replica", dirname)
+	dirs, cancel := testdirs(0x1a)
+	defer cancel()
+
+	a, err := Open(dirs[0], Options{
+		Orig:    0x1a,
+		Name:    "test replica",
+		Options: pebble.Options{ErrorIfExists: true},
+	})
 	assert.Nil(t, err)
-	assert.Equal(t, exists, false)
-	//a.DumpAll()
+	assert.NotNil(t, a)
+
 	_ = a.Close()
-	_ = os.RemoveAll(dirname)
 }
 
 type KVMerger interface {
@@ -38,15 +59,12 @@ type KVMerger interface {
 }
 
 func TestChotki_Sync(t *testing.T) {
-	adir, bdir := ReplicaDirName(0xa), ReplicaDirName(0xb)
-	_ = os.RemoveAll(adir)
-	_ = os.RemoveAll(bdir)
+	dirs, clear := testdirs(0xa, 0xb)
+	defer clear()
 
-	a, _, err := Open(0xa, "test replica A", adir)
+	a, err := Open(dirs[0], Options{Orig: 0xa, Name: "test replica A"})
 	assert.Nil(t, err)
-	//a.DumpAll()
-
-	b, _, err := Open(0xb, "test replica B", bdir)
+	b, err := Open(dirs[1], Options{Orig: 0xb, Name: "test replica B"})
 	assert.Nil(t, err)
 
 	synca := Syncer{Host: a, Mode: SyncRW, Name: "a"}
@@ -64,6 +82,4 @@ func TestChotki_Sync(t *testing.T) {
 
 	_ = a.Close()
 	_ = b.Close()
-	_ = os.RemoveAll("choa")
-	_ = os.RemoveAll("chob")
 }

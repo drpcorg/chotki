@@ -21,8 +21,22 @@ type Packet []byte
 type Batch [][]byte
 
 type Options struct {
+	pebble.Options
+
+	Orig         uint64
+	Name         string
 	RelaxedOrder bool
 	MaxLogLen    int64
+}
+
+func (o *Options) SetDefaults() {
+	if o.MaxLogLen == 0 {
+		o.MaxLogLen = 1 << 23
+	}
+
+	if o.Merger == nil {
+		o.Merger = &pebble.Merger{Name: "CRDT", Merge: merger}
+	}
 }
 
 type Hook func(cho *Chotki, id rdx.ID) error
@@ -120,12 +134,6 @@ func ReplicaDirName(rno uint64) string {
 	return fmt.Sprintf("cho%x", rno)
 }
 
-func (o *Options) SetDefaults() {
-	if o.MaxLogLen == 0 {
-		o.MaxLogLen = 1 << 23
-	}
-}
-
 func merger(key, value []byte) (pebble.ValueMerger, error) {
 	/*if len(key) != 10 {
 		return nil, nil
@@ -161,55 +169,53 @@ func Exists(dirname string) (bool, error) {
 	return desc.Exists, nil
 }
 
-func Open(orig uint64, name, dirname string) (*Chotki, bool, error) {
+func Open(dirname string, opts Options) (*Chotki, error) {
 	exists, err := Exists(dirname)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
-	db, err := pebble.Open(dirname, &pebble.Options{
-		ErrorIfExists:    false,
-		ErrorIfNotExists: false,
-		Merger:           &pebble.Merger{Name: "CRDT", Merge: merger},
-	})
+	opts.SetDefaults() // todo param
+
+	db, err := pebble.Open(dirname, &opts.Options)
 	if err != nil {
-		return nil, exists, err
+		return nil, err
 	}
 
 	conn := Chotki{
 		db:    db,
-		src:   orig,
+		src:   opts.Orig,
 		dir:   dirname,
+		opts:  opts,
 		types: make(map[rdx.ID]Fields),
 		hooks: make(map[rdx.ID][]Hook),
 		syncs: make(map[rdx.ID]*pebble.Batch),
 		outq:  make(map[string]toyqueue.DrainCloser),
 	}
-	conn.opts.SetDefaults() // todo param
 
 	if !exists {
-		id0 := rdx.IDFromSrcSeqOff(orig, 0, 0)
+		id0 := rdx.IDFromSrcSeqOff(opts.Orig, 0, 0)
 
 		init := append(toyqueue.Records(nil), Log0...)
 		init = append(init, toytlv.Record('Y',
 			toytlv.Record('I', id0.ZipBytes()),
 			toytlv.Record('R', rdx.ID0.ZipBytes()),
-			toytlv.Record('S', rdx.Stlv(name)),
+			toytlv.Record('S', rdx.Stlv(opts.Name)),
 		))
 
 		if err = conn.Drain(init); err != nil {
-			return nil, exists, err
+			return nil, err
 		}
 	}
 
 	vv, err := conn.VersionVector()
 	if err != nil {
-		return nil, exists, err
+		return nil, err
 	}
 
 	conn.last = vv.GetID(conn.src)
 
-	return &conn, exists, nil
+	return &conn, nil
 }
 
 func (cho *Chotki) OpenTCP(tcp *toytlv.TCPDepot) error {

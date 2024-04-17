@@ -2,7 +2,6 @@ package chotki
 
 import (
 	"io"
-	"os"
 	"testing"
 
 	"github.com/drpcorg/chotki/rdx"
@@ -11,32 +10,26 @@ import (
 )
 
 func TestORMExample(t *testing.T) {
-	edir, fdir := ReplicaDirName(0x1e), ReplicaDirName(0x1f)
-	_ = os.RemoveAll("cho1e")
-	_ = os.RemoveAll("cho1f")
-	defer func() {
-		_ = os.RemoveAll("cho1e")
-		_ = os.RemoveAll("cho1f")
-	}()
+	dirs, clear := testdirs(0x1e, 0x1f)
+	defer clear()
 
-	a, _, err := Open(0x1e, "test replica", edir)
+	a, err := Open(dirs[0], Options{Orig: 0x1e, Name: "test replica"})
 	assert.Nil(t, err)
-	var tid, oid rdx.ID
-	tid, err = a.NewClass(rdx.ID0,
+	tid, err := a.NewClass(rdx.ID0,
 		Field{Name: "Name", RdxType: rdx.String},
 		Field{Name: "Score", RdxType: rdx.Integer},
 	)
 	assert.Nil(t, err)
 	assert.Equal(t, "1e-1", tid.String())
 
-	oid, _ = a.NewObject(tid, "\"Ivan Petrov\"", "102")
+	oid, _ := a.NewObject(tid, "\"Ivan Petrov\"", "102")
 	assert.Equal(t, "1e-2", oid.String())
 	//a.DumpAll()
 
 	err = a.Close()
 	assert.Nil(t, err)
 
-	a, _, err = Open(0x1e, "test replica", edir)
+	a, err = Open(dirs[0], Options{Orig: 0x1e, Name: "test replica"})
 	assert.Nil(t, err)
 
 	var exa Example
@@ -50,7 +43,7 @@ func TestORMExample(t *testing.T) {
 	exa.Score = 103
 	// todo save the object
 
-	b, _, err := Open(0x1f, "another test replica", fdir)
+	b, err := Open(dirs[1], Options{Orig:0x1f, Name: "another test replica"})
 	assert.Nil(t, err)
 
 	syncera := Syncer{Host: a, Mode: SyncRW}
