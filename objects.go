@@ -355,6 +355,12 @@ func (cho *Chotki) ObjectFieldMapTermId(fid rdx.ID) (themap map[string]rdx.ID, e
 	return
 }
 
+func EditTLV(off uint64, rdt byte, tlv []byte) (edit []byte) {
+	edit = append(edit, toytlv.TinyRecord('F', rdx.ZipUint64(off))...)
+	edit = append(edit, toytlv.Record(rdt, tlv)...)
+	return
+}
+
 func (cho *Chotki) EditFieldTLV(fid rdx.ID, delta []byte) (id rdx.ID, err error) {
 	tlvs := toyqueue.Records{}
 	tlvs = append(tlvs, toytlv.TinyRecord('F', rdx.ZipUint64(fid.Off())))

@@ -81,6 +81,8 @@ func ZipUint64Pair(big, lil uint64) []byte {
 	return ret[:]
 }
 
+const ValidZipPairLen = 0xe880 ^ 0xffff
+
 func UnzipUint64Pair(buf []byte) (big, lil uint64) {
 	switch len(buf) {
 	case 0:

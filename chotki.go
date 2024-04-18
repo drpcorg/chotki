@@ -73,20 +73,20 @@ var (
 	ErrDbClosed       = errors.New("chotki: db is closed")
 	ErrDirnameIsFile  = errors.New("chotki: the dirname is file")
 	ErrNotImplemented = errors.New("chotki: not implemented yet")
-
-	ErrHookNotFound = errors.New("chotki: hook not found")
-	ErrBadIRecord   = errors.New("chotki: bad id-ref record")
-	ErrBadHPacket   = errors.New("chotki: bad handshake packet")
-	ErrBadEPacket   = errors.New("chotki: bad E packet")
-	ErrBadVPacket   = errors.New("chotki: bad V packet")
-	ErrBadYPacket   = errors.New("chotki: bad Y packet")
-	ErrBadLPacket   = errors.New("chotki: bad L packet")
-	ErrBadTPacket   = errors.New("chotki: bad T packet")
-	ErrBadOPacket   = errors.New("chotki: bad O packet")
-	ErrSrcUnknown   = errors.New("chotki: source unknown")
-	ErrSyncUnknown  = errors.New("chotki: sync session unknown")
-	ErrBadRRecord   = errors.New("chotki: bad ref record")
-	ErrClosed       = errors.New("chotki: no replica open")
+	ErrHookNotFound   = errors.New("chotki: hook not found")
+	ErrBadIRecord     = errors.New("chotki: bad id-ref record")
+	ErrBadORecord     = errors.New("chotki: bad id-ref record")
+	ErrBadHPacket     = errors.New("chotki: bad handshake packet")
+	ErrBadEPacket     = errors.New("chotki: bad E packet")
+	ErrBadVPacket     = errors.New("chotki: bad V packet")
+	ErrBadYPacket     = errors.New("chotki: bad Y packet")
+	ErrBadLPacket     = errors.New("chotki: bad L packet")
+	ErrBadTPacket     = errors.New("chotki: bad T packet")
+	ErrBadOPacket     = errors.New("chotki: bad O packet")
+	ErrSrcUnknown     = errors.New("chotki: source unknown")
+	ErrSyncUnknown    = errors.New("chotki: sync session unknown")
+	ErrBadRRecord     = errors.New("chotki: bad ref record")
+	ErrClosed         = errors.New("chotki: no replica open")
 
 	ErrOutOfOrder      = errors.New("chotki: order fail: sequence gap")
 	ErrCausalityBroken = errors.New("chotki: order fail: refs an unknown op")
@@ -145,6 +145,10 @@ func merger(key, value []byte) (pebble.ValueMerger, error) {
 		vals: [][]byte{value},
 	}
 	return &pma, nil
+}
+
+func (cho *Chotki) Database() *pebble.DB {
+	return cho.db
 }
 
 func Exists(dirname string) (bool, error) {

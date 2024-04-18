@@ -158,6 +158,8 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 		id, err = repl.CommandCat(arg)
 	case "name":
 		id, err = repl.CommandName(arg)
+	case "choc":
+		id, err = repl.CommandCompile(arg)
 	// ----- networking -----
 	case "listen":
 		id, err = repl.CommandListen(arg)
@@ -183,6 +185,8 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 		id, err = repl.CommandTinc(arg)
 	case "sinc":
 		id, err = repl.CommandSinc(arg)
+	case "valid":
+		id, err = repl.CommandValid(arg)
 	default:
 		_, _ = fmt.Fprintf(os.Stderr, "command unknown: %s\n", cmd)
 	}

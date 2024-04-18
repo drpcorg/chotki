@@ -56,8 +56,8 @@ func (repl *REPL) CommandCreate(arg *rdx.RDX) (id rdx.ID, err error) {
 
 	dirname := chotki.ReplicaDirName(src.Src())
 	repl.Host, err = chotki.Open(dirname, chotki.Options{
-		Orig: src.Src(),
-		Name: name,
+		Orig:    src.Src(),
+		Name:    name,
 		Options: pebble.Options{ErrorIfExists: true},
 	})
 	if err == nil {
@@ -78,7 +78,7 @@ func (repl *REPL) CommandOpen(arg *rdx.RDX) (rdx.ID, error) {
 
 	var err error
 	repl.Host, err = chotki.Open(dirname, chotki.Options{
-		Orig: src0.Src(),
+		Orig:    src0.Src(),
 		Options: pebble.Options{ErrorIfNotExists: true},
 	})
 	if err != nil {
@@ -609,6 +609,47 @@ func (repl *REPL) CommandName(arg *rdx.RDX) (id rdx.ID, err error) {
 		id, err = repl.Host.EditFieldTLV(chotki.NamesID, delta)
 	} else {
 		err = HelpName
+	}
+	return
+}
+
+func (repl *REPL) CommandValid(arg *rdx.RDX) (id rdx.ID, err error) {
+	it := repl.Host.Database().NewIter(&pebble.IterOptions{
+		LowerBound: []byte{'O'},
+		UpperBound: []byte{'P'},
+	})
+	key := chotki.OKey(rdx.ID0, 'A')
+	for it.SeekGE(key); it.Valid(); it.Next() {
+		id, rdt := chotki.OKeyIdRdt(it.Key())
+		val, e := it.ValueAndErr()
+		if e != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "record read fail %s\n", e.Error())
+			continue
+		}
+		if !rdx.Xvalid(rdt, val) {
+			fmt.Printf("%c record is not valid at %s\n", rdt, id.String())
+		}
+	}
+	_ = it.Close()
+	return rdx.ID0, nil
+}
+
+var HelpCompile = errors.New("compile ClassName, compile b0b-2")
+
+func (repl *REPL) CommandCompile(arg *rdx.RDX) (id rdx.ID, err error) {
+	err = HelpTell
+	id = rdx.BadId
+	var code string
+	if arg == nil {
+		return
+	} else if arg.RdxType == rdx.Reference {
+		id = rdx.IDFromText(arg.Text)
+		code, err = repl.Host.CompileClass("SomeClass", id)
+	} else {
+		return
+	}
+	if err == nil {
+		fmt.Println(code)
 	}
 	return
 }

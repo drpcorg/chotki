@@ -93,3 +93,13 @@ func TestLWWTie(t *testing.T) {
 	assert.Equal(t, int64(4), rev)
 	assert.Equal(t, uint64(7), src)
 }
+
+func TestValid(t *testing.T) {
+	var arr [16]byte
+	empty := arr[0:0]
+	valid := arr[0:8]
+	invalid := arr[0:11]
+	assert.True(t, OValid(empty))
+	assert.True(t, OValid(valid))
+	assert.False(t, OValid(invalid))
+}

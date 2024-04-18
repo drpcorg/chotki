@@ -263,8 +263,25 @@ func Mmerge(tlvs [][]byte) (merged []byte) {
 	return
 }
 
+func MnativeTT(tlv []byte) MapTT {
+	ret := make(MapTT)
+	it := FIRSTIterator{TLV: tlv}
+	for it.Next() {
+		keyrdt, _, key := it.ParsedValue()
+		if !it.Next() {
+			break
+		}
+		valrdt, _, val := it.ParsedValue()
+		if keyrdt != Term || valrdt != Term {
+			continue
+		}
+		ret[string(key)] = string(val)
+	}
+	return ret
+}
+
 func MnativeTR(tlv []byte) MapTR {
-	ret := make(map[string]ID)
+	ret := make(MapTR)
 	it := FIRSTIterator{TLV: tlv}
 	for it.Next() {
 		keyrdt, _, key := it.ParsedValue()
@@ -297,6 +314,7 @@ func MparseTR(arg *RDX) MapTR {
 }
 
 type MapTR map[string]ID
+type MapTT map[string]string
 
 func (m MapTR) String() string {
 	var keys []string

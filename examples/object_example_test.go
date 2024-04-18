@@ -1,23 +1,25 @@
-package chotki
+package examples
 
 import (
 	"io"
+	"os"
 	"testing"
 
+	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestORMExample(t *testing.T) {
-	dirs, clear := testdirs(0x1e, 0x1f)
-	defer clear()
+	defer os.RemoveAll("cho1e")
+	defer os.RemoveAll("cho1f")
 
-	a, err := Open(dirs[0], Options{Orig: 0x1e, Name: "test replica"})
+	a, err := chotki.Open("cho1e", chotki.Options{Orig: 0x1e, Name: "test replica"})
 	assert.Nil(t, err)
 	tid, err := a.NewClass(rdx.ID0,
-		Field{Name: "Name", RdxType: rdx.String},
-		Field{Name: "Score", RdxType: rdx.Integer},
+		chotki.Field{Name: "Name", RdxType: rdx.String},
+		chotki.Field{Name: "Score", RdxType: rdx.Integer},
 	)
 	assert.Nil(t, err)
 	assert.Equal(t, "1e-1", tid.String())
@@ -29,7 +31,7 @@ func TestORMExample(t *testing.T) {
 	err = a.Close()
 	assert.Nil(t, err)
 
-	a, err = Open(dirs[0], Options{Orig: 0x1e, Name: "test replica"})
+	a, err = chotki.Open("cho1e", chotki.Options{Orig: 0x1e, Name: "test replica"})
 	assert.Nil(t, err)
 
 	var exa Example
@@ -43,11 +45,11 @@ func TestORMExample(t *testing.T) {
 	exa.Score = 103
 	// todo save the object
 
-	b, err := Open(dirs[1], Options{Orig:0x1f, Name: "another test replica"})
+	b, err := chotki.Open("cho1f", chotki.Options{Orig: 0x1f, Name: "another test replica"})
 	assert.Nil(t, err)
 
-	syncera := Syncer{Host: a, Mode: SyncRW}
-	syncerb := Syncer{Host: b, Mode: SyncRW}
+	syncera := chotki.Syncer{Host: a, Mode: chotki.SyncRW}
+	syncerb := chotki.Syncer{Host: b, Mode: chotki.SyncRW}
 	err = toyqueue.Relay(&syncerb, &syncera)
 	assert.Nil(t, err)
 	err = toyqueue.Pump(&syncera, &syncerb)

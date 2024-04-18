@@ -1,24 +1,25 @@
-package chotki
+package examples
 
 import (
+	"os"
 	"testing"
 
+	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestTypes(t *testing.T) {
-	dirs, clear := testdirs(0x1a)
-	defer clear()
+	defer os.RemoveAll("cho1a")
 
-	a, err := Open(dirs[0], Options{Orig: 0x1a, Name: "test replica A"})
+	a, err := chotki.Open("cho1a", chotki.Options{Orig: 0x1a, Name: "test replica A"})
 	assert.Nil(t, err)
 
 	var tid, oid rdx.ID
 	tid, err = a.NewClass(rdx.ID0,
-		Field{Name: "Name", RdxType: rdx.String},
-		Field{Name: "Score", RdxType: rdx.Integer},
+		chotki.Field{Name: "Name", RdxType: rdx.String},
+		chotki.Field{Name: "Score", RdxType: rdx.Integer},
 	)
 	assert.Nil(t, err)
 	oid, err = a.NewObject(tid, "\"Petrov\"", "42")

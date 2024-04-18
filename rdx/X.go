@@ -116,6 +116,46 @@ func Xdefault(rdt byte) (tlv []byte) {
 	}
 }
 
+func Xvalid(rdt byte, bare []byte) bool {
+	switch rdt {
+	case 'C', 'O', 'Y':
+		return OValid(bare)
+	case 'F':
+		return Fvalid(bare)
+	case 'I':
+		return Ivalid(bare)
+	case 'R':
+		return Rvalid(bare)
+	case 'S':
+		return Svalid(bare)
+	case 'T':
+		return Tvalid(bare)
+	case 'N':
+		return Nvalid(bare)
+	case 'Z':
+		return Zvalid(bare)
+	case 'E':
+		return Evalid(bare)
+	case 'L':
+		return Lvalid(bare)
+	case 'M':
+		return Mvalid(bare)
+	case 'V':
+		return Vvalid(bare)
+	default:
+		return false
+	}
+}
+
+func Xvalide(tlve []byte) bool {
+	rdt, hlen, blen := toytlv.ProbeHeader(tlve)
+	if len(tlve) != hlen+blen {
+		return false
+	}
+	bare := tlve[hlen : hlen+blen]
+	return Xvalid(rdt, bare)
+}
+
 func X2string(rdt byte, tlv []byte, new_val string, src uint64) (delta []byte) {
 	switch rdt {
 	case 'C', 'O', 'Y':
@@ -172,4 +212,8 @@ func NoMerge(inputs [][]byte) []byte {
 		ret = append(ret, input...)
 	}
 	return ret
+}
+
+func OValid(tlv []byte) bool {
+	return len(tlv) <= 16 && (ValidZipPairLen&(1<<len(tlv))) != 0
 }
