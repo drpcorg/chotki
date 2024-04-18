@@ -3,12 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
+	"time"
+
+	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
-	"os"
-	"time"
 )
 
 var HelpCreate = errors.New("create zone/1 {Name:\"Name\",Description:\"long text\"}")
@@ -51,7 +53,13 @@ func (repl *REPL) CommandCreate(arg *rdx.RDX) (id rdx.ID, err error) {
 	if src == rdx.ID0 {
 		return
 	}
-	err = repl.Host.Create(src.Src(), name)
+
+	dirname := chotki.ReplicaDirName(src.Src())
+	repl.Host, err = chotki.Open(dirname, chotki.Options{
+		Orig: src.Src(),
+		Name: name,
+		Options: pebble.Options{ErrorIfExists: true},
+	})
 	if err == nil {
 		id = repl.Host.Last()
 	}
@@ -60,16 +68,24 @@ func (repl *REPL) CommandCreate(arg *rdx.RDX) (id rdx.ID, err error) {
 
 var HelpOpen = errors.New("open zone/1")
 
-func (repl *REPL) CommandOpen(arg *rdx.RDX) (id rdx.ID, err error) {
+func (repl *REPL) CommandOpen(arg *rdx.RDX) (rdx.ID, error) {
 	if arg == nil || arg.RdxType != rdx.Reference {
 		return rdx.BadId, HelpOpen
 	}
+
 	src0 := rdx.IDFromText(arg.Text)
-	err = repl.Host.Open(src0.Src())
-	if err == nil {
-		id = repl.Host.Last()
+	dirname := chotki.ReplicaDirName(src0.Src())
+
+	var err error
+	repl.Host, err = chotki.Open(dirname, chotki.Options{
+		Orig: src0.Src(),
+		Options: pebble.Options{ErrorIfNotExists: true},
+	})
+	if err != nil {
+		return rdx.BadId, err
 	}
-	return
+
+	return repl.Host.Last(), nil
 }
 
 var HelpDump = errors.New("dump (obj|objects|vv|all)?")
@@ -393,7 +409,7 @@ func (repl *REPL) CommandPinc(arg *rdx.RDX) (id rdx.ID, err error) {
 	if fid.Off() == 0 {
 		return
 	}
-	err = KeepOdd(&repl.Host, fid)
+	err = KeepOdd(repl.Host, fid)
 	if err != nil {
 		return
 	}
@@ -412,7 +428,7 @@ func (repl *REPL) CommandPonc(arg *rdx.RDX) (id rdx.ID, err error) {
 	if fid.Off() == 0 {
 		return
 	}
-	err = KeepEven(&repl.Host, fid)
+	err = KeepEven(repl.Host, fid)
 	if err != nil {
 		return
 	}

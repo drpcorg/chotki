@@ -1,17 +1,18 @@
 package chotki
 
 import (
+	"testing"
+
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/stretchr/testify/assert"
-	"os"
-	"testing"
 )
 
 func TestTypes(t *testing.T) {
-	_ = os.RemoveAll("cho1a")
-	var a Chotki
-	err := a.Create(0x1a, "test replica A")
+	dirs, clear := testdirs(0x1a)
+	defer clear()
+
+	a, err := Open(dirs[0], Options{Orig: 0x1a, Name: "test replica A"})
 	assert.Nil(t, err)
 
 	var tid, oid rdx.ID
@@ -69,5 +70,4 @@ func TestTypes(t *testing.T) {
 	_ = i3.Close()
 
 	_ = a.Close()
-	_ = os.RemoveAll("cho1a")
 }

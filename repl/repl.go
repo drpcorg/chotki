@@ -15,7 +15,7 @@ import (
 
 // REPL per se.
 type REPL struct {
-	Host chotki.Chotki
+	Host *chotki.Chotki
 	tcp  *toytlv.TCPDepot
 	rl   *readline.Instance
 	snap pebble.Reader
@@ -127,7 +127,7 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 		_ = repl.snap.Close()
 		repl.snap = nil
 	}
-	if repl.Host.Last() != rdx.ID0 {
+	if repl.Host != nil && repl.Host.Last() != rdx.ID0 {
 		repl.snap = repl.Host.Snapshot()
 	}
 	switch cmd {
@@ -139,7 +139,7 @@ func (repl *REPL) REPL() (id rdx.ID, err error) {
 	case "close":
 		id, err = repl.CommandClose(arg)
 	case "exit", "quit":
-		if repl.Host.Last() != rdx.ID0 {
+		if repl.Host != nil && repl.Host.Last() != rdx.ID0 {
 			id, err = repl.CommandClose(arg)
 		}
 		if err == nil {

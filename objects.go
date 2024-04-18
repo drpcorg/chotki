@@ -98,6 +98,8 @@ func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, t
 	if it == nil {
 		return rdx.BadId, nil, ErrUnknownObject
 	}
+	defer it.Close()
+
 	tid = rdx.IDFromZipBytes(it.Value())
 	for it.Next() {
 		id, rdt := OKeyIdRdt(it.Key())
@@ -114,7 +116,6 @@ func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, t
 		}
 		tlvs = append(tlvs, it.Value())
 	}
-	_ = it.Close()
 	return
 }
 
@@ -124,6 +125,8 @@ func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact toyqu
 		err = ErrUnknownObject
 		return
 	}
+	defer it.Close()
+
 	tid = rdx.IDFromZipBytes(it.Value())
 	decl, err = cho.ClassFields(tid)
 	if err != nil {
@@ -144,7 +147,6 @@ func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact toyqu
 		}
 		fact = append(fact, it.Value())
 	}
-	_ = it.Close()
 	return
 }
 
@@ -153,13 +155,14 @@ func (cho *Chotki) ObjectFieldsTLV(oid rdx.ID) (tid rdx.ID, tlv toyqueue.Records
 	if it == nil {
 		return rdx.BadId, nil, ErrUnknownObject
 	}
+	defer it.Close()
+
 	tid = rdx.IDFromZipBytes(it.Value())
 	for it.Next() {
 		cp := make([]byte, len(it.Value()))
 		copy(cp, it.Value())
 		tlv = append(tlv, cp)
 	}
-	_ = it.Close()
 	return
 }
 
@@ -178,7 +181,10 @@ func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) 
 	if db == nil {
 		return 0, nil, ErrClosed
 	}
+
 	it := cho.db.NewIter(&pebble.IterOptions{})
+	defer it.Close()
+
 	key := OKey(fid, 0)
 	if !it.SeekGE(key) {
 		return 0, nil, pebble.ErrNotFound
@@ -189,7 +195,6 @@ func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) 
 		return 0, nil, pebble.ErrNotFound
 	}
 	tlv = it.Value()
-	_ = it.Close()
 	return
 }
 

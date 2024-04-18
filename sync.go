@@ -65,14 +65,35 @@ var SendStates = []string{
 
 func (sync *Syncer) Close() error {
 	sync.lock.Lock()
+	defer sync.lock.Unlock()
+
 	if sync.Host == nil {
-		sync.lock.Unlock()
 		return toyqueue.ErrClosed
 	}
+
+	if sync.snap != nil {
+		_ = sync.snap.Close()
+		sync.snap = nil
+	}
+
+	if sync.ffit != nil {
+		if err := sync.ffit.Close(); err != nil {
+			return err
+		}
+		sync.ffit = nil
+	}
+
+	if sync.vvit != nil {
+		if err := sync.vvit.Close(); err != nil {
+			return err
+		}
+		sync.vvit = nil
+	}
+
 	_ = sync.Host.RemovePacketHose(sync.Name)
 	sync.SetFeedState(SendNone) //fixme
-	sync.lock.Unlock()
-	_, _ = fmt.Fprintf(os.Stderr, "connection %s closed: %s\n", sync.Name, sync.reason)
+	_, _ = fmt.Fprintf(os.Stderr, "connection %s closed: %v\n", sync.Name, sync.reason)
+
 	return nil
 }
 
