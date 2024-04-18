@@ -379,10 +379,6 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 		}
 	}
 
-	if err := cho.db.Flush(); err != nil {
-		return err
-	}
-
 	if err != nil { // fixme separate packets
 		return
 	}
@@ -409,7 +405,7 @@ func (cho *Chotki) VersionVector() (vv rdx.VV, err error) {
 	return
 }
 
-var WriteOptions = pebble.WriteOptions{Sync: false}
+var WriteOptions = pebble.WriteOptions{Sync: true}
 
 var KeyLogLen = []byte("Mloglen")
 
