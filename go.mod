@@ -11,7 +11,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 )
 
-replace github.com/cockroachdb/pebble => ./pebble
+replace github.com/cockroachdb/pebble => github.com/drpcorg/pebble v0.0.0-20240419104020-8295ba098910
 
 require (
 	github.com/DataDog/zstd v1.5.6-0.20230824185856-869dae002e5e // indirect
@@ -20,7 +20,6 @@ require (
 	github.com/cockroachdb/errors v1.11.1 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20230118201751-21c54148d20b // indirect
 	github.com/cockroachdb/redact v1.1.5 // indirect
-	github.com/cockroachdb/swiss v0.0.0-20240303172742-c161743eb608 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/getsentry/sentry-go v0.18.0 // indirect

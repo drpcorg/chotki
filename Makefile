@@ -15,5 +15,10 @@ ragel:
 lint:
 	golangci-lint run ./...
 
+.PHONY: update-pebble
+update-pebble:
+	go mod edit -replace github.com/cockroachdb/pebble=github.com/drpcorg/pebble@master
+	go mod tidy
+
 .PHONY: lint
 all: ragel fmt build test lint
