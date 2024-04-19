@@ -2,7 +2,7 @@ package rdx
 
 import (
 	hex2 "encoding/hex"
-	"github.com/learn-decentralized-systems/toytlv"
+	"github.com/drpcorg/chotki/toytlv"
 )
 
 func Xparse(rdt byte, val string) (tlv []byte) {

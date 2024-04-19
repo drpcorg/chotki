@@ -5,8 +5,6 @@ go 1.21.4
 require (
 	github.com/cockroachdb/pebble v1.1.0
 	github.com/ergochat/readline v0.1.0
-	github.com/learn-decentralized-systems/toyqueue v0.1.5
-	github.com/learn-decentralized-systems/toytlv v0.2.1
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.8.4
 )

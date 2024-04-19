@@ -2,8 +2,8 @@ package chotki
 
 import (
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/learn-decentralized-systems/toyqueue"
-	"github.com/learn-decentralized-systems/toytlv"
+	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/toytlv"
 )
 
 const id1 = rdx.ID0 + rdx.ProInc

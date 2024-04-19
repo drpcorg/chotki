@@ -3,7 +3,7 @@ package rdx
 import (
 	"bytes"
 	"errors"
-	"github.com/learn-decentralized-systems/toytlv"
+	"github.com/drpcorg/chotki/toytlv"
 	"slices"
 	"sort"
 )

@@ -2,7 +2,7 @@ package chotki
 
 import (
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/learn-decentralized-systems/toytlv"
+	"github.com/drpcorg/chotki/toytlv"
 )
 
 func ParsePacket(pack []byte) (lit byte, id, ref rdx.ID, body []byte, err error) {

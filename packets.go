@@ -5,7 +5,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/learn-decentralized-systems/toytlv"
+	"github.com/drpcorg/chotki/toytlv"
 )
 
 func (cho *Chotki) UpdateVTree(id, ref rdx.ID, pb *pebble.Batch) (err error) {

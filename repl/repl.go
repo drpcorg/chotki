@@ -7,7 +7,7 @@ import (
 	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/ergochat/readline"
-	"github.com/learn-decentralized-systems/toytlv"
+	"github.com/drpcorg/chotki/toytlv"
 	"io"
 	"os"
 	"strings"

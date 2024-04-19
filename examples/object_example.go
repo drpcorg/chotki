@@ -4,7 +4,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/learn-decentralized-systems/toytlv"
+	"github.com/drpcorg/chotki/toytlv"
 )
 
 const ExampleName = 1
