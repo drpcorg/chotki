@@ -614,10 +614,13 @@ func (repl *REPL) CommandName(arg *rdx.RDX) (id rdx.ID, err error) {
 }
 
 func (repl *REPL) CommandValid(arg *rdx.RDX) (id rdx.ID, err error) {
-	it := repl.Host.Database().NewIter(&pebble.IterOptions{
+	it, err := repl.Host.Database().NewIter(&pebble.IterOptions{
 		LowerBound: []byte{'O'},
 		UpperBound: []byte{'P'},
 	})
+	if err != nil {
+		return rdx.BadId, err
+	}
 	key := chotki.OKey(rdx.ID0, 'A')
 	for it.SeekGE(key); it.Valid(); it.Next() {
 		id, rdt := chotki.OKeyIdRdt(it.Key())

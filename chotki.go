@@ -244,7 +244,10 @@ func (cho *Chotki) ReOpenTCP(tcp *toytlv.TCPDepot) error {
 	}
 	// ...
 	io := pebble.IterOptions{}
-	i := cho.db.NewIter(&io)
+	i, err := cho.db.NewIter(&io)
+	if err != nil {
+		return err
+	}
 	defer i.Close()
 
 	for i.SeekGE([]byte{'l'}); i.Valid() && i.Key()[0] == 'L'; i.Next() {
@@ -474,15 +477,17 @@ func (cho *Chotki) ObjectIterator(oid rdx.ID) *pebble.Iterator {
 		LowerBound: fro,
 		UpperBound: til,
 	}
-	it := cho.db.NewIter(&io)
-	if it.SeekGE(fro) {
+	it, err := cho.db.NewIter(&io)
+	if err == nil && it.SeekGE(fro) {
 		id, rdt := OKeyIdRdt(it.Key())
 		if rdt == 'O' && id == oid {
 			// An iterator is returned from a function, it cannot be closed
 			return it
 		}
 	}
-	it.Close()
+	if it != nil {
+		_ = it.Close()
+	}
 	return nil
 }
 
@@ -492,10 +497,13 @@ func (cho *Chotki) GetFieldTLV(id rdx.ID) (rdt byte, tlv []byte) {
 
 func GetFieldTLV(reader pebble.Reader, id rdx.ID) (rdt byte, tlv []byte) {
 	key := OKey(id, 'A')
-	it := reader.NewIter(&pebble.IterOptions{
+	it, err := reader.NewIter(&pebble.IterOptions{
 		LowerBound: []byte{'O'},
 		UpperBound: []byte{'P'},
 	})
+	if err != nil {
+		return 0, nil
+	}
 	defer it.Close()
 	if it.SeekGE(key) {
 		fact, r := OKeyIdRdt(it.Key())

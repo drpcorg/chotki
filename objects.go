@@ -182,7 +182,10 @@ func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) 
 		return 0, nil, ErrClosed
 	}
 
-	it := cho.db.NewIter(&pebble.IterOptions{})
+	it, err := cho.db.NewIter(&pebble.IterOptions{})
+	if err != nil {
+		return 0, nil, err
+	}
 	defer it.Close()
 
 	key := OKey(fid, 0)
