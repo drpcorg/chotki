@@ -1,0 +1,3 @@
+[submodule "pebble"]
+	path = pebble
+	url = http://github.com/learn-decentralized-systems/pebble
