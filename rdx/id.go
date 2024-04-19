@@ -135,9 +135,7 @@ func (id ID) String() string {
 	seq := id.Seq()
 	off := id.Off()
 	src := id.Src()
-	if src == 0 && seq == 0 {
-		return fmt.Sprintf("%x", off)
-	} else if off == 0 {
+	if off == 0 {
 		return fmt.Sprintf("%x-%x", src, seq)
 	} else {
 		return fmt.Sprintf("%x-%x-%x", src, seq, off)

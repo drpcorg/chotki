@@ -157,7 +157,7 @@ func (a *FIRSTIterator) Next() bool {
 	var hlen, blen, rlen int
 	a.lit, hlen, blen = toytlv.ProbeHeader(a.TLV)
 	rlen = hlen + blen
-	if len(a.TLV) < rlen {
+	if a.lit < 'A' || len(a.TLV) < rlen {
 		return false
 	}
 	a.bare = a.TLV[hlen:rlen]

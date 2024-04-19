@@ -92,7 +92,7 @@ func Xstring(rdt byte, tlv []byte) string {
 	case 'N':
 		return Nstring(tlv)
 	case 'M':
-		return ELMstring(tlv)
+		return Mstring(tlv)
 	default:
 		hex := make([]byte, len(tlv)*2)
 		hex2.Encode(hex, tlv)
