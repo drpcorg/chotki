@@ -331,7 +331,7 @@ func (cho *Chotki) SetFieldTLV(fid rdx.ID, tlve []byte) (id rdx.ID, err error) {
 
 var ErrWrongFieldType = errors.New("wrong field type")
 
-func (cho *Chotki) IncNField(fid rdx.ID) (id rdx.ID, err error) {
+func (cho *Chotki) AddToNField(fid rdx.ID, count uint64) (id rdx.ID, err error) {
 	rdt, tlv, err := cho.ObjectFieldTLV(fid)
 	if err != nil || rdt != rdx.Natural {
 		return rdx.BadId, ErrWrongFieldType
@@ -340,10 +340,14 @@ func (cho *Chotki) IncNField(fid rdx.ID) (id rdx.ID, err error) {
 	mine := rdx.Nmine(tlv, src)
 	tlvs := toyqueue.Records{
 		toytlv.Record('F', rdx.ZipUint64(fid.Off())),
-		toytlv.Record(rdx.Natural, toytlv.Record(rdx.Term, rdx.ZipUint64Pair(mine+1, src))),
+		toytlv.Record(rdx.Natural, toytlv.Record(rdx.Term, rdx.ZipUint64Pair(mine+count, src))),
 	}
 	id, err = cho.CommitPacket('E', fid.ZeroOff(), tlvs)
 	return
+}
+
+func (cho *Chotki) IncNField(fid rdx.ID) (id rdx.ID, err error) {
+	return cho.AddToNField(fid, 1)
 }
 
 func (cho *Chotki) ObjectFieldMapTermId(fid rdx.ID) (themap map[string]rdx.ID, err error) {
