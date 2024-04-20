@@ -11,7 +11,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 )
 
-replace github.com/cockroachdb/pebble => github.com/drpcorg/pebble v0.0.0-20240419104020-8295ba098910
+replace github.com/cockroachdb/pebble => github.com/drpcorg/pebble v0.0.0-20240420050940-7176ceaf0bb3
 
 require (
 	github.com/DataDog/zstd v1.5.6-0.20230824185856-869dae002e5e // indirect

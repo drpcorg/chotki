@@ -16,8 +16,8 @@ func TestCases(t *testing.T) {
 
 func TestParseID(t *testing.T) {
 	ids := []string{
-		"0",
-		"3",
+		"0-0",
+		"3-0",
 		"fa3-57",
 		"fffff-ffffffff-ffa",
 	}

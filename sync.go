@@ -158,22 +158,14 @@ func (sync *Syncer) EndGracefully(reason error) (err error) {
 func (sync *Syncer) FeedHandshake() (vv toyqueue.Records, err error) {
 	sync.oqueue = sync.Host.AddPacketHose(sync.Name)
 	sync.snap = sync.Host.db.NewSnapshot()
-	sync.vvit, err = sync.snap.NewIter(&pebble.IterOptions{
+	sync.vvit = sync.snap.NewIter(&pebble.IterOptions{
 		LowerBound: []byte{'V'},
 		UpperBound: []byte{'W'},
 	})
-	if err != nil {
-		_ = sync.Close()
-		return
-	}
-	sync.ffit, err = sync.snap.NewIter(&pebble.IterOptions{
+	sync.ffit = sync.snap.NewIter(&pebble.IterOptions{
 		LowerBound: []byte{'O'},
 		UpperBound: []byte{'P'},
 	})
-	if err != nil {
-		_ = sync.Close()
-		return
-	}
 
 	key0 := VKey(rdx.ID0)
 	ok := sync.vvit.SeekGE(key0)

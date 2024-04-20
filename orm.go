@@ -24,10 +24,7 @@ func (orm *ORM) LoadObject(id rdx.ID, blanc StoreLoader) (obj StoreLoader, err e
 		LowerBound: []byte{},
 		UpperBound: []byte{},
 	}
-	it, err := orm.Snap.NewIter(&io)
-	if err != nil {
-		return nil, err
-	}
+	it := orm.Snap.NewIter(&io)
 	orm.lock.Lock()
 	err = blanc.Load(it)
 	if err == nil {
