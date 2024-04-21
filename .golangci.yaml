@@ -26,3 +26,10 @@ issues:
     - linters:
         - staticcheck
       text: "SA1019:"
+
+    # TODO(nikolay-govorov): fix linters in toytlv
+    - path: 'toytlv\/(.+)\.go'
+      linters:
+        - staticcheck
+        - ineffassign
+        - gosimple
