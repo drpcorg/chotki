@@ -1,10 +1,11 @@
 package toytlv
 
 import (
+	"context"
 	"net"
 	"sync"
-	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/drpcorg/chotki/toyqueue"
 	"github.com/stretchr/testify/assert"
@@ -22,21 +23,24 @@ type TestConsumer struct {
 
 func (c *TestConsumer) Drain(recs toyqueue.Records) error {
 	c.mx.Lock()
+	defer c.mx.Unlock()
+
 	c.rcvd = append(c.rcvd, recs...)
-	c.co.Signal()
-	c.mx.Unlock()
+	c.co.Broadcast()
 	return nil
 }
 
-func (c *TestConsumer) Feed() (recs toyqueue.Records, err error) {
+func (c *TestConsumer) Feed() (toyqueue.Records, error) {
 	c.mx.Lock()
-	if len(c.rcvd) == 0 {
+	defer c.mx.Unlock()
+
+	for len(c.rcvd) == 0 {
 		c.co.Wait()
 	}
-	recs = c.rcvd
+
+	recs := c.rcvd
 	c.rcvd = c.rcvd[len(c.rcvd):]
-	c.mx.Unlock()
-	return
+	return recs, nil
 }
 
 func (c *TestConsumer) Close() error {
@@ -44,51 +48,64 @@ func (c *TestConsumer) Close() error {
 }
 
 func TestTCPDepot_Connect(t *testing.T) {
+	loop := "tcp://127.0.0.1:32000"
 
-	loop := "127.0.0.1:12345"
+	cert, key := "cert.pem", "key.pem"
 
-	tc := TestConsumer{}
-	tc.co.L = &tc.mx
-	depot := TCPDepot{}
-	var addr atomic.Value
-	addr.Store("")
-
-	depot.Open(func(conn net.Conn) toyqueue.FeedDrainCloser {
-		a := conn.RemoteAddr().String()
-		if a != loop {
-			addr.Store(a)
-		}
-		return &tc
+	lCon := TestConsumer{}
+	lCon.co.L = &lCon.mx
+	l := NewTransport(func(conn net.Conn) toyqueue.FeedDrainCloser {
+		return &lCon
 	})
-
-	err := depot.Listen(loop)
+	err := l.Listen(context.Background(), loop)
 	assert.Nil(t, err)
 
-	err = depot.Connect(loop)
+	l.CertFile = cert
+	l.KeyFile = key
+
+	cCon := TestConsumer{}
+	cCon.co.L = &cCon.mx
+	c := NewTransport(func(conn net.Conn) toyqueue.FeedDrainCloser {
+		return &cCon
+	})
+	err = c.Connect(context.Background(), loop)
 	assert.Nil(t, err)
+
+	c.CertFile = cert
+	c.KeyFile = key
+
+	time.Sleep(time.Second * 2) // TODO: use events
 
 	// send a record
-	recsto := toyqueue.Records{Record('M', []byte("Hi there"))}
-	err = depot.DrainTo(recsto, loop)
+	err = cCon.Drain(toyqueue.Records{Record('M', []byte("Hi there"))})
 	assert.Nil(t, err)
-	rec, err := tc.Feed()
+
+	rec, err := lCon.Feed()
 	assert.Nil(t, err)
+	assert.Greater(t, len(rec), 0)
+
 	lit, body, rest := TakeAny(rec[0])
 	assert.Equal(t, uint8('M'), lit)
 	assert.Equal(t, "Hi there", string(body))
 	assert.Equal(t, 0, len(rest))
 
 	// respond to that
-	recsback := toyqueue.Records{Record('M', []byte("Re: Hi there"))}
-	err = depot.DrainTo(recsback, addr.Load().(string))
+	err = lCon.Drain(toyqueue.Records{Record('M', []byte("Re: Hi there"))})
 	assert.Nil(t, err)
-	rerec, err := tc.Feed()
+
+	rerec, err := cCon.Feed()
 	assert.Nil(t, err)
+	assert.Greater(t, len(rerec), 0)
+
 	relit, rebody, rerest := TakeAny(rerec[0])
 	assert.Equal(t, uint8('M'), relit)
 	assert.Equal(t, "Re: Hi there", string(rebody))
 	assert.Equal(t, 0, len(rerest))
 
-	depot.Close()
+	// cleanup
+	err = c.Close()
+	assert.Nil(t, err)
 
+	err = l.Close()
+	assert.Nil(t, err)
 }

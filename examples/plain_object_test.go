@@ -11,7 +11,7 @@ import (
 func TestPlainObjectORM(t *testing.T) {
 	defer os.RemoveAll("cho10")
 
-	a, err := chotki.Open("cho10", chotki.Options{Orig: 0x10, Name: "test replica A"})
+	a, err := chotki.Open("cho10", chotki.Options{Src: 0x10, Name: "test replica A"})
 	assert.Nil(t, err)
 	orma := a.ObjectMapper()
 
@@ -36,7 +36,7 @@ func TestPlainObjectORM(t *testing.T) {
 	//a.DumpAll()
 	_ = a.Close()
 
-	a2, err := chotki.Open("cho10", chotki.Options{Orig: 0x10, Name: "test replica A"})
+	a2, err := chotki.Open("cho10", chotki.Options{Src: 0x10, Name: "test replica A"})
 	assert.Nil(t, err)
 	//a2.DumpAll()
 	orma2 := a2.ObjectMapper()

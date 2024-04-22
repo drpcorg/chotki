@@ -40,8 +40,8 @@ func (recs Records) TotalLen() (total int64) {
 
 type RecordQueue struct {
 	recs  Records
-	lock  sync.Mutex
-	cond  sync.Cond
+	mu    sync.Mutex
+	co    sync.Cond
 	Limit int
 }
 
@@ -49,20 +49,20 @@ var ErrWouldBlock = errors.New("the queue is over capacity")
 var ErrClosed = errors.New("queue is closed")
 
 func (q *RecordQueue) Drain(recs Records) error {
-	q.lock.Lock()
+	q.mu.Lock()
 	was0 := len(q.recs) == 0
 	if len(q.recs)+len(recs) > q.Limit {
-		q.lock.Unlock()
+		q.mu.Unlock()
 		if q.Limit == 0 {
 			return ErrClosed
 		}
 		return ErrWouldBlock
 	}
 	q.recs = append(q.recs, recs...)
-	if was0 && q.cond.L != nil {
-		q.cond.Broadcast()
+	if was0 && q.co.L != nil {
+		q.co.Broadcast()
 	}
-	q.lock.Unlock()
+	q.mu.Unlock()
 	return nil
 }
 
@@ -72,28 +72,28 @@ func (q *RecordQueue) Close() error {
 }
 
 func (q *RecordQueue) Feed() (recs Records, err error) {
-	q.lock.Lock()
+	q.mu.Lock()
 	if len(q.recs) == 0 {
 		err = ErrWouldBlock
 		if q.Limit == 0 {
 			err = ErrClosed
 		}
-		q.lock.Unlock()
+		q.mu.Unlock()
 		return
 	}
 	wasfull := len(q.recs) >= q.Limit
 	recs = q.recs
 	q.recs = q.recs[len(q.recs):]
-	if wasfull && q.cond.L != nil {
-		q.cond.Broadcast()
+	if wasfull && q.co.L != nil {
+		q.co.Broadcast()
 	}
-	q.lock.Unlock()
+	q.mu.Unlock()
 	return
 }
 
 func (q *RecordQueue) Blocking() FeedDrainCloser {
-	if q.cond.L == nil {
-		q.cond.L = &q.lock
+	if q.co.L == nil {
+		q.co.L = &q.mu
 	}
 	return &blockingRecordQueue{q}
 }
@@ -108,15 +108,15 @@ func (bq *blockingRecordQueue) Close() error {
 
 func (bq *blockingRecordQueue) Drain(recs Records) error {
 	q := bq.queue
-	q.lock.Lock()
+	q.mu.Lock()
 	for len(recs) > 0 {
 		was0 := len(q.recs) == 0
 		for q.Limit <= len(q.recs) {
 			if q.Limit == 0 {
-				q.lock.Unlock()
+				q.mu.Unlock()
 				return ErrClosed
 			}
-			q.cond.Wait()
+			q.co.Wait()
 		}
 		qcap := q.Limit - len(q.recs)
 		if qcap > len(recs) {
@@ -125,29 +125,29 @@ func (bq *blockingRecordQueue) Drain(recs Records) error {
 		q.recs = append(q.recs, recs[:qcap]...)
 		recs = recs[qcap:]
 		if was0 {
-			q.cond.Broadcast()
+			q.co.Broadcast()
 		}
 	}
-	q.lock.Unlock()
+	q.mu.Unlock()
 	return nil
 }
 
 func (bq *blockingRecordQueue) Feed() (recs Records, err error) {
 	q := bq.queue
-	q.lock.Lock()
+	q.mu.Lock()
 	wasfull := len(q.recs) >= q.Limit
 	for len(q.recs) == 0 {
 		if q.Limit == 0 {
-			q.lock.Unlock()
+			q.mu.Unlock()
 			return nil, ErrClosed
 		}
-		q.cond.Wait()
+		q.co.Wait()
 	}
 	recs = q.recs
 	q.recs = q.recs[len(q.recs):]
 	if wasfull {
-		q.cond.Broadcast()
+		q.co.Broadcast()
 	}
-	q.lock.Unlock()
+	q.mu.Unlock()
 	return
 }

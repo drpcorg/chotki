@@ -10,6 +10,9 @@ import (
 const CaseBit uint8 = 'a' - 'A'
 
 var (
+	ErrAddressInvalid    = errors.New("the address invalid")
+	ErrAddressDuplicated = errors.New("the address already used")
+
 	ErrIncomplete     = errors.New("incomplete data")
 	ErrBadRecord      = errors.New("bad TLV record format")
 	ErrAddressUnknown = errors.New("address unknown")
