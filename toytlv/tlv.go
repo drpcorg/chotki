@@ -3,13 +3,18 @@ package toytlv
 import (
 	"encoding/binary"
 	"errors"
+
 	"github.com/drpcorg/chotki/toyqueue"
 )
 
 const CaseBit uint8 = 'a' - 'A'
 
-var ErrIncomplete = errors.New("incomplete data")
-var ErrBadRecord = errors.New("bad TLV record format")
+var (
+	ErrIncomplete     = errors.New("incomplete data")
+	ErrBadRecord      = errors.New("bad TLV record format")
+	ErrAddressUnknown = errors.New("address unknown")
+	ErrDisconnected   = errors.New("disconnected by user")
+)
 
 // ProbeHeader probes a TLV record header. Return values:
 //   - 0  0 0 	incomplete header

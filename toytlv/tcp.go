@@ -1,20 +1,24 @@
 package toytlv
 
 import (
-	"errors"
-	"fmt"
-	"github.com/drpcorg/chotki/toyqueue"
 	"io"
+	"log/slog"
 	"net"
-	"os"
 	"sync"
 	"time"
+
+	"github.com/drpcorg/chotki/toyqueue"
 )
 
-const MaxOutQueueLen = 1 << 20 // 16MB of pointers is a lot
+const (
+	TYPICAL_MTU       = 1500
+	MAX_OUT_QUEUE_LEN = 1 << 20 // 16MB of pointers is a lot
+
+	MAX_RETRY_PERIOD = time.Minute
+	MIN_RETRY_PERIOD = time.Second / 2
+)
 
 type TCPConn struct {
-	depot     *TCPDepot
 	addr      string
 	conn      net.Conn
 	inout     toyqueue.FeedDrainCloser
@@ -22,6 +26,135 @@ type TCPConn struct {
 	outmx     sync.Mutex
 	Reconnect bool
 	KeepAlive bool
+}
+
+func (tcp *TCPConn) doRead() {
+	err := tcp.read()
+	if err != nil && err != ErrDisconnected {
+		// TODO: error handling
+		slog.Error("couldn't read from conn", "err", err)
+	}
+}
+
+func (tcp *TCPConn) read() (err error) {
+	var buf []byte
+	conn := tcp.conn
+	for conn != nil {
+		buf, err = AppendRead(buf, conn, TYPICAL_MTU)
+		if err != nil {
+			break
+		}
+		var recs toyqueue.Records
+		recs, buf, err = Split(buf)
+		if len(recs) == 0 {
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		if err != nil {
+			break
+		}
+
+		err = tcp.inout.Drain(recs)
+		if err != nil {
+			break
+		}
+
+		conn = tcp.conn
+	}
+
+	if err != nil {
+		// TODO: error handling
+		slog.Error("couldn't read from conn", "err", err)
+		tcp.Close()
+	}
+	return
+}
+
+func (tcp *TCPConn) doWrite() {
+	conn := tcp.conn
+	var err error
+	var recs toyqueue.Records
+	for conn != nil && err == nil {
+		recs, err = tcp.inout.Feed()
+		b := net.Buffers(recs)
+		for len(b) > 0 && err == nil {
+			_, err = b.WriteTo(conn)
+		}
+	}
+	if err != nil {
+		tcp.Close() // TODO err
+	}
+}
+
+// Write what we believe is a valid ToyTLV frame.
+// Provided for io.Writer compatibility
+func (tcp *TCPConn) Write(data []byte) (n int, err error) {
+	err = tcp.Drain(toyqueue.Records{data})
+	if err == nil {
+		n = len(data)
+	}
+	return
+}
+
+func (tcp *TCPConn) Drain(recs toyqueue.Records) (err error) {
+	return tcp.inout.Drain(recs)
+}
+
+func (tcp *TCPConn) Feed() (recs toyqueue.Records, err error) {
+	return tcp.inout.Feed()
+}
+
+func (tcp *TCPConn) KeepTalking() {
+	talk_backoff := MIN_RETRY_PERIOD
+	conn_backoff := MIN_RETRY_PERIOD
+
+	for {
+		conntime := time.Now()
+		go tcp.doWrite()
+		err := tcp.read()
+
+		if !tcp.Reconnect {
+			break
+		}
+
+		atLeast5min := conntime.Add(time.Minute * 5)
+		if atLeast5min.After(time.Now()) {
+			talk_backoff *= 2 // connected, tried to talk, failed => wait more
+			if talk_backoff > MAX_RETRY_PERIOD {
+				talk_backoff = MAX_RETRY_PERIOD
+			}
+		}
+
+		for tcp.conn == nil {
+			time.Sleep(conn_backoff + talk_backoff)
+			tcp.conn, err = net.Dial("tcp", tcp.addr)
+			if err != nil {
+				conn_backoff = conn_backoff * 2
+				if conn_backoff > MAX_RETRY_PERIOD/2 {
+					conn_backoff = MAX_RETRY_PERIOD
+				}
+			} else {
+				conn_backoff = MIN_RETRY_PERIOD
+			}
+		}
+	}
+}
+
+func (tcp *TCPConn) Close() error {
+	tcp.outmx.Lock()
+	defer tcp.outmx.Unlock()
+
+	// TODO writer closes on complete | 1 sec expired
+	if tcp.conn != nil {
+		if err := tcp.conn.Close(); err != nil {
+			return err
+		}
+
+		tcp.conn = nil
+		tcp.wake.Broadcast()
+	}
+
+	return nil
 }
 
 type Jack func(conn net.Conn) toyqueue.FeedDrainCloser
@@ -48,35 +181,26 @@ func (de *TCPDepot) Open(jack Jack) {
 	de.jack = jack
 }
 
-func (de *TCPDepot) Close() {
-	for _, lstn := range de.listens {
-		_ = lstn.Close()
-	}
-	de.listens = nil
-	for _, con := range de.conns {
-		con.Close()
-	}
+func (de *TCPDepot) Close() error {
 	de.conmx.Lock()
-	de.conns = make(map[string]*TCPConn)
-	de.listens = make(map[string]net.Listener)
-	de.conmx.Unlock()
-}
+	defer de.conmx.Unlock()
 
-func (tcp *TCPConn) Close() {
-	// TODO writer closes on complete | 1 sec expired
-	tcp.outmx.Lock()
-	if tcp.conn != nil {
-		_ = tcp.conn.Close()
-		tcp.conn = nil
-		tcp.wake.Broadcast()
+	for _, lstn := range de.listens {
+		if err := lstn.Close(); err != nil {
+			return err
+		}
 	}
-	tcp.outmx.Unlock()
+	clear(de.listens)
+
+	for _, con := range de.conns {
+		if err := con.Close(); err != nil {
+			return err
+		}
+	}
+	clear(de.conns)
+
+	return nil
 }
-
-var ErrAddressUnknown = errors.New("address unknown")
-
-const MAX_RETRY_PERIOD = time.Minute
-const MIN_RETRY_PERIOD = time.Second / 2
 
 // attrib?!
 func (de *TCPDepot) Connect(addr string) (err error) {
@@ -85,7 +209,6 @@ func (de *TCPDepot) Connect(addr string) (err error) {
 		return err
 	}
 	peer := TCPConn{
-		depot: de,
 		conn:  conn,
 		addr:  addr,
 		inout: de.jack(conn),
@@ -94,65 +217,10 @@ func (de *TCPDepot) Connect(addr string) (err error) {
 	de.conmx.Lock()
 	de.conns[addr] = &peer
 	de.conmx.Unlock()
+
 	go peer.KeepTalking()
+
 	return nil
-}
-
-var ErrDisconnected = errors.New("disconnected by user")
-
-func (tcp *TCPConn) KeepTalking() {
-	talk_backoff := MIN_RETRY_PERIOD
-	conn_backoff := MIN_RETRY_PERIOD
-	for {
-
-		conntime := time.Now()
-		go tcp.doWrite()
-		err := tcp.Read()
-
-		if !tcp.Reconnect {
-			break
-		}
-
-		atLeast5min := conntime.Add(time.Minute * 5)
-		if atLeast5min.After(time.Now()) {
-			talk_backoff *= 2 // connected, tried to talk, failed => wait more
-			if talk_backoff > MAX_RETRY_PERIOD {
-				talk_backoff = MAX_RETRY_PERIOD
-			}
-		}
-
-		for tcp.conn == nil {
-			time.Sleep(conn_backoff + talk_backoff)
-			tcp.conn, err = net.Dial("tcp", tcp.addr)
-			if err != nil {
-				conn_backoff = conn_backoff * 2
-				if conn_backoff > MAX_RETRY_PERIOD/2 {
-					conn_backoff = MAX_RETRY_PERIOD
-				}
-			} else {
-				conn_backoff = MIN_RETRY_PERIOD
-			}
-		}
-
-	}
-}
-
-// Write what we believe is a valid ToyTLV frame.
-// Provided for io.Writer compatibility
-func (tcp *TCPConn) Write(data []byte) (n int, err error) {
-	err = tcp.Drain(toyqueue.Records{data})
-	if err == nil {
-		n = len(data)
-	}
-	return
-}
-
-func (tcp *TCPConn) Drain(recs toyqueue.Records) (err error) {
-	return tcp.inout.Drain(recs)
-}
-
-func (tcp *TCPConn) Feed() (recs toyqueue.Records, err error) {
-	return tcp.inout.Feed()
 }
 
 func (de *TCPDepot) DrainTo(recs toyqueue.Records, addr string) error {
@@ -220,7 +288,6 @@ func (de *TCPDepot) KeepListening(addr string) {
 		}
 		addr := conn.RemoteAddr().String()
 		peer := TCPConn{
-			depot: de,
 			conn:  conn,
 			addr:  addr,
 			inout: de.jack(conn),
@@ -232,65 +299,7 @@ func (de *TCPDepot) KeepListening(addr string) {
 
 		go peer.doWrite()
 		go peer.doRead()
-
 	}
-}
-
-func (tcp *TCPConn) doRead() {
-	err := tcp.Read()
-	if err != nil && err != ErrDisconnected {
-	}
-}
-
-func (tcp *TCPConn) doWrite() {
-	conn := tcp.conn
-	var err error
-	var recs toyqueue.Records
-	for conn != nil && err == nil {
-		recs, err = tcp.inout.Feed()
-		b := net.Buffers(recs)
-		for len(b) > 0 && err == nil {
-			_, err = b.WriteTo(conn)
-		}
-	}
-	if err != nil {
-		tcp.Close() // TODO err
-	}
-}
-
-const TYPICAL_MTU = 1500
-
-func (tcp *TCPConn) Read() (err error) {
-	var buf []byte
-	conn := tcp.conn
-	for conn != nil {
-		buf, err = AppendRead(buf, conn, TYPICAL_MTU)
-		if err != nil {
-			break
-		}
-		var recs toyqueue.Records
-		recs, buf, err = Split(buf)
-		if len(recs) == 0 {
-			time.Sleep(time.Millisecond)
-			continue
-		}
-		if err != nil {
-			break
-		}
-
-		err = tcp.inout.Drain(recs)
-		if err != nil {
-			break
-		}
-
-		conn = tcp.conn
-	}
-
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, err.Error())
-		tcp.Close()
-	}
-	return
 }
 
 func ReadBuf(buf []byte, rdr io.Reader) ([]byte, error) {
