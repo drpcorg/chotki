@@ -1,11 +1,13 @@
 package toytlv
 
 import (
-	"github.com/drpcorg/chotki/toyqueue"
-	"github.com/stretchr/testify/assert"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
+
+	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/stretchr/testify/assert"
 )
 
 // 1. create a server, create a client, echo
@@ -48,11 +50,13 @@ func TestTCPDepot_Connect(t *testing.T) {
 	tc := TestConsumer{}
 	tc.co.L = &tc.mx
 	depot := TCPDepot{}
-	addr := ""
+	var addr atomic.Value
+	addr.Store("")
+
 	depot.Open(func(conn net.Conn) toyqueue.FeedDrainCloser {
 		a := conn.RemoteAddr().String()
 		if a != loop {
-			addr = a
+			addr.Store(a)
 		}
 		return &tc
 	})
@@ -76,7 +80,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 
 	// respond to that
 	recsback := toyqueue.Records{Record('M', []byte("Re: Hi there"))}
-	err = depot.DrainTo(recsback, addr)
+	err = depot.DrainTo(recsback, addr.Load().(string))
 	assert.Nil(t, err)
 	rerec, err := tc.Feed()
 	assert.Nil(t, err)

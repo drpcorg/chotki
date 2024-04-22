@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/drpcorg/chotki/toyqueue"
@@ -19,11 +20,13 @@ const (
 )
 
 type TCPConn struct {
-	addr      string
-	conn      net.Conn
-	inout     toyqueue.FeedDrainCloser
-	wake      *sync.Cond
-	outmx     sync.Mutex
+	addr  string
+	conn  atomic.Pointer[net.Conn]
+	inout toyqueue.FeedDrainCloser
+
+	wake  sync.Cond
+	outmx sync.Mutex
+
 	Reconnect bool
 	KeepAlive bool
 }
@@ -38,9 +41,13 @@ func (tcp *TCPConn) doRead() {
 
 func (tcp *TCPConn) read() (err error) {
 	var buf []byte
-	conn := tcp.conn
-	for conn != nil {
-		buf, err = AppendRead(buf, conn, TYPICAL_MTU)
+	for {
+		conn := tcp.conn.Load()
+		if conn == nil {
+			break
+		}
+
+		buf, err = AppendRead(buf, *conn, TYPICAL_MTU)
 		if err != nil {
 			break
 		}
@@ -58,8 +65,6 @@ func (tcp *TCPConn) read() (err error) {
 		if err != nil {
 			break
 		}
-
-		conn = tcp.conn
 	}
 
 	if err != nil {
@@ -71,14 +76,18 @@ func (tcp *TCPConn) read() (err error) {
 }
 
 func (tcp *TCPConn) doWrite() {
-	conn := tcp.conn
 	var err error
 	var recs toyqueue.Records
-	for conn != nil && err == nil {
+	for err == nil {
+		conn := tcp.conn.Load()
+		if conn == nil {
+			break
+		}
+
 		recs, err = tcp.inout.Feed()
 		b := net.Buffers(recs)
 		for len(b) > 0 && err == nil {
-			_, err = b.WriteTo(conn)
+			_, err = b.WriteTo(*conn)
 		}
 	}
 	if err != nil {
@@ -128,15 +137,20 @@ func (tcp *TCPConn) KeepTalking() {
 			}
 		}
 
-		for tcp.conn == nil {
+		for {
+			if conn := tcp.conn.Load(); conn == nil {
+				break
+			}
+
 			time.Sleep(conn_backoff + talk_backoff)
-			tcp.conn, err = net.Dial("tcp", tcp.addr)
+			conn, err := net.Dial("tcp", tcp.addr)
 			if err != nil {
 				conn_backoff = conn_backoff * 2
 				if conn_backoff > MAX_RETRY_PERIOD/2 {
 					conn_backoff = MAX_RETRY_PERIOD
 				}
 			} else {
+				tcp.conn.Store(&conn)
 				conn_backoff = MIN_RETRY_PERIOD
 			}
 		}
@@ -148,12 +162,11 @@ func (tcp *TCPConn) Close() error {
 	defer tcp.outmx.Unlock()
 
 	// TODO writer closes on complete | 1 sec expired
-	if tcp.conn != nil {
-		if err := tcp.conn.Close(); err != nil {
+	if conn := tcp.conn.Swap(nil); conn != nil {
+		if err := (*conn).Close(); err != nil {
 			return err
 		}
 
-		tcp.conn = nil
 		tcp.wake.Broadcast()
 	}
 
@@ -212,11 +225,12 @@ func (de *TCPDepot) Connect(addr string) (err error) {
 		return err
 	}
 	peer := TCPConn{
-		conn:  conn,
 		addr:  addr,
 		inout: de.jack(conn),
 	}
-	peer.wake = sync.NewCond(&peer.outmx)
+	peer.wake.L = &peer.outmx
+	peer.conn.Store(&conn)
+
 	de.conmx.Lock()
 	de.conns[addr] = &peer
 	de.conmx.Unlock()
@@ -282,6 +296,7 @@ func (de *TCPDepot) KeepListening(addr string) {
 		de.conmx.Lock()
 		listener, ok := de.listens[addr]
 		de.conmx.Unlock()
+
 		if !ok {
 			break
 		}
@@ -291,11 +306,12 @@ func (de *TCPDepot) KeepListening(addr string) {
 		}
 		addr := conn.RemoteAddr().String()
 		peer := TCPConn{
-			conn:  conn,
 			addr:  addr,
 			inout: de.jack(conn),
 		}
-		peer.wake = sync.NewCond(&peer.outmx)
+		peer.wake.L = &peer.outmx
+		peer.conn.Store(&conn)
+
 		de.conmx.Lock()
 		de.conns[addr] = &peer
 		de.conmx.Unlock()
