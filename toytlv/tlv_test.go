@@ -27,7 +27,7 @@ func TestTLVAppend(t *testing.T) {
 	assert.Equal(t, uint8('A'), lit)
 	assert.Equal(t, []byte{'A'}, body)
 
-	body2, buf, err2 := TakeWary('B', buf)
+	body2, _, err2 := TakeWary('B', buf)
 	assert.Nil(t, err2)
 	assert.Equal(t, []byte{'B', 'B'}, body2)
 }

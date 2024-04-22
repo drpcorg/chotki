@@ -62,7 +62,7 @@ func Incomplete(data []byte) int {
 		return 1 // get something
 	}
 	dlit := data[0]
-	bodylen := 1
+	var bodylen int
 	if dlit >= '0' && dlit <= '9' { // tiny
 		bodylen = int(dlit - '0')
 	} else if dlit >= 'a' && dlit <= 'z' { // short

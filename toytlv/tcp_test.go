@@ -66,7 +66,9 @@ func TestTCPDepot_Connect(t *testing.T) {
 	// send a record
 	recsto := toyqueue.Records{Record('M', []byte("Hi there"))}
 	err = depot.DrainTo(recsto, loop)
+	assert.Nil(t, err)
 	rec, err := tc.Feed()
+	assert.Nil(t, err)
 	lit, body, rest := TakeAny(rec[0])
 	assert.Equal(t, uint8('M'), lit)
 	assert.Equal(t, "Hi there", string(body))
@@ -75,7 +77,9 @@ func TestTCPDepot_Connect(t *testing.T) {
 	// respond to that
 	recsback := toyqueue.Records{Record('M', []byte("Re: Hi there"))}
 	err = depot.DrainTo(recsback, addr)
+	assert.Nil(t, err)
 	rerec, err := tc.Feed()
+	assert.Nil(t, err)
 	relit, rebody, rerest := TakeAny(rerec[0])
 	assert.Equal(t, uint8('M'), relit)
 	assert.Equal(t, "Re: Hi there", string(rebody))

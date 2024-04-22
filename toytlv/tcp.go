@@ -111,7 +111,10 @@ func (tcp *TCPConn) KeepTalking() {
 	for {
 		conntime := time.Now()
 		go tcp.doWrite()
+
+		// TODO: error handling
 		err := tcp.read()
+		slog.Error("couldn't read from conn", "err", err)
 
 		if !tcp.Reconnect {
 			break
