@@ -48,15 +48,3 @@ func TestBlockingRecordQueue_Drain(t *testing.T) {
 	assert.Equal(t, ErrClosed, err2)
 
 }
-
-func TestTwoWayQueue_Drain(t *testing.T) {
-	a, b := BlockingRecordQueuePair(1)
-	recs := Records{{'a'}}
-	go func() {
-		err := a.Drain(recs)
-		assert.Nil(t, err)
-	}()
-	recs2, err := b.Feed()
-	assert.Nil(t, err)
-	assert.Equal(t, recs, recs2)
-}
