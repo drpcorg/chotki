@@ -5,14 +5,6 @@ import (
 	"github.com/drpcorg/chotki/rdx"
 )
 
-var FIRSTnatives = map[byte]string{
-	'F': "float64",
-	'I': "int64",
-	'R': "rdx.ID",
-	'S': "string",
-	'T': "string",
-}
-
 var fragt = "type %s struct {\n"
 var fragf = "\t%s\t%s\n"
 var frage = `}

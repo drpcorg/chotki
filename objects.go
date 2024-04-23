@@ -21,7 +21,7 @@ func hasUnsafeChars(text string) bool {
 	return false
 }
 
-var ErrUnknownObject = errors.New("unknown object")
+var ErrObjectUnknown = errors.New("unknown object")
 var ErrTypeUnknown = errors.New("unknown object type")
 var ErrUnknownFieldInAType = errors.New("unknown field for the type")
 var ErrBadValueForAType = errors.New("bad value for the type")
@@ -48,12 +48,13 @@ func (f Field) Valid() bool {
 
 var ErrBadClass = errors.New("bad class description")
 
-func (cho *Chotki) ClassFields(tid rdx.ID) (fields Fields, err error) {
-	fields, ok := cho.types[tid]
+// todo []Field -> map[uint64]Field
+func (cho *Chotki) ClassFields(cid rdx.ID) (fields Fields, err error) {
+	fields, ok := cho.types[cid]
 	if ok {
 		return
 	}
-	okey := OKey(tid, 'C')
+	okey := OKey(cid, 'C')
 	tlv, clo, e := cho.db.Get(okey)
 	if e != nil {
 		return nil, ErrTypeUnknown
@@ -88,7 +89,7 @@ func (cho *Chotki) ClassFields(tid rdx.ID) (fields Fields, err error) {
 	}
 	_ = clo.Close()
 	cho.lock.Lock()
-	cho.types[tid] = fields
+	cho.types[cid] = fields
 	cho.lock.Unlock()
 	return
 }
@@ -96,7 +97,7 @@ func (cho *Chotki) ClassFields(tid rdx.ID) (fields Fields, err error) {
 func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, tlvs toyqueue.Records, err error) {
 	it := cho.ObjectIterator(oid)
 	if it == nil {
-		return rdx.BadId, nil, ErrUnknownObject
+		return rdx.BadId, nil, ErrObjectUnknown
 	}
 	defer it.Close()
 
@@ -122,7 +123,7 @@ func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, t
 func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact toyqueue.Records, err error) {
 	it := cho.ObjectIterator(oid)
 	if it == nil {
-		err = ErrUnknownObject
+		err = ErrObjectUnknown
 		return
 	}
 	defer it.Close()
@@ -153,7 +154,7 @@ func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact toyqu
 func (cho *Chotki) ObjectFieldsTLV(oid rdx.ID) (tid rdx.ID, tlv toyqueue.Records, err error) {
 	it := cho.ObjectIterator(oid)
 	if it == nil {
-		return rdx.BadId, nil, ErrUnknownObject
+		return rdx.BadId, nil, ErrObjectUnknown
 	}
 	defer it.Close()
 
@@ -261,7 +262,7 @@ func (cho *Chotki) EditObject(oid rdx.ID, fields ...string) (id rdx.ID, err erro
 /*func (cho *Chotki) GetObject(oid rdx.ID) (tid rdx.ID, fields []string, err error) {
 	i := cho.ObjectIterator(oid)
 	if i == nil || !i.Valid() {
-		return rdx.BadId, nil, ErrUnknownObject
+		return rdx.BadId, nil, ErrObjectUnknown
 	}
 	tid = rdx.IDFromZipBytes(i.Value())
 	for i.Next() {

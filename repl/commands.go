@@ -640,11 +640,13 @@ func (repl *REPL) CommandCompile(arg *rdx.RDX) (id rdx.ID, err error) {
 	err = HelpTell
 	id = rdx.BadId
 	var code string
+	orm := repl.Host.ObjectMapper()
 	if arg == nil {
 		return
 	} else if arg.RdxType == rdx.Reference {
 		id = rdx.IDFromText(arg.Text)
-		code, err = repl.Host.CompileClass("SomeClass", id)
+		code, err = orm.Compile("SomeClass", id)
+		//repl.Host.CompileClass("SomeClass", id)
 	} else {
 		return
 	}

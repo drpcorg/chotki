@@ -50,11 +50,11 @@ func (stud *Student) Store(i *pebble.Iterator) (changes [][]byte, err error) {
 }
 
 func (stud *Student) Group() (group *Group) {
-	if stud.group == rdx.ID0 {
+	/*if stud.group == rdx.ID0 {
 		return nil
 	}
 	var blank Group
-	obj, err := stud.host.LoadObject(stud.group, &blank)
+	obj, err := stud.host.Load(stud.group, &blank)
 	if err != nil {
 		return nil // ?
 	}
@@ -62,7 +62,8 @@ func (stud *Student) Group() (group *Group) {
 	if !ok {
 		return nil
 	}
-	return ret
+	return ret*/
+	return nil
 }
 
 type Course struct {

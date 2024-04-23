@@ -66,6 +66,8 @@ type Chotki struct {
 
 	opts Options
 
+	orm ORM
+
 	types map[rdx.ID]Fields
 }
 
@@ -462,14 +464,34 @@ func (cho *Chotki) CommitPacket(lit byte, ref rdx.ID, body toyqueue.Records) (id
 	return
 }
 
-func (cho *Chotki) ObjectKeyRange(oid rdx.ID) (fro, til []byte) {
+func ObjectKeyRange(oid rdx.ID) (fro, til []byte) {
 	oid = oid & ^rdx.OffMask
 	return OKey(oid, 'O'), OKey(oid+rdx.ProInc, 0)
 }
 
+func ObjectIterator(oid rdx.ID, snap *pebble.Snapshot) (it *pebble.Iterator, err error) {
+	fro, til := ObjectKeyRange(oid)
+	io := pebble.IterOptions{
+		LowerBound: fro,
+		UpperBound: til,
+	}
+	it = snap.NewIter(&io)
+	if it.SeekGE(fro) { // fixme
+		id, rdt := OKeyIdRdt(it.Key())
+		if rdt == 'O' && id == oid {
+			// An iterator is returned from a function, it cannot be closed
+			return it, nil
+		}
+	}
+	if it != nil {
+		_ = it.Close()
+	}
+	return nil, ErrObjectUnknown
+}
+
 // returns nil for "not found"
 func (cho *Chotki) ObjectIterator(oid rdx.ID) *pebble.Iterator {
-	fro, til := cho.ObjectKeyRange(oid)
+	fro, til := ObjectKeyRange(oid)
 	io := pebble.IterOptions{
 		LowerBound: fro,
 		UpperBound: til,
@@ -538,4 +560,14 @@ func (cho *Chotki) RemoveHook(fid rdx.ID, hook Hook) (err error) {
 	cho.hooks[fid] = list
 	cho.hlock.Unlock()
 	return
+}
+
+func (cho *Chotki) ObjectMapper() *ORM {
+	if cho.orm.Snap == nil {
+		cho.orm.Host = cho
+		cho.orm.Snap = cho.db.NewSnapshot()
+		cho.orm.objects = make(map[rdx.ID]NativeObject)
+		cho.orm.ids = make(map[NativeObject]rdx.ID)
+	}
+	return &cho.orm
 }
