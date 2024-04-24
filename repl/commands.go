@@ -111,13 +111,15 @@ func (repl *REPL) CommandDump(arg *rdx.RDX) (id rdx.ID, err error) {
 
 func (repl *REPL) CommandClose(arg *rdx.RDX) (id rdx.ID, err error) {
 	if repl.tcp != nil {
-		repl.tcp.Close()
+		_ = repl.tcp.Close()
 		repl.tcp = nil
 	}
-	err = repl.Host.Close()
-	if err == nil {
-		id = repl.Host.Last()
+	if repl.snap != nil {
+		_ = repl.snap.Close()
+		repl.snap = nil
 	}
+	id = repl.Host.Last()
+	err = repl.Host.Close()
 	return
 }
 
