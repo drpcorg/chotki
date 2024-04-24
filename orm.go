@@ -6,8 +6,8 @@ import (
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/learn-decentralized-systems/toyqueue"
 	"github.com/learn-decentralized-systems/toytlv"
-	"html/template"
 	"sync"
+	"text/template"
 )
 
 type StoreLoader interface {
@@ -30,6 +30,31 @@ type ORM struct {
 	objects map[rdx.ID]NativeObject
 	ids     map[NativeObject]rdx.ID
 	lock    sync.Mutex
+}
+
+func (orm *ORM) New(cid rdx.ID, objs ...NativeObject) (err error) {
+	fields, e := orm.Host.ClassFields(cid)
+	if e != nil {
+		return e
+	}
+	for _, obj := range objs {
+		tlv := toyqueue.Records{}
+		for i := 1; i < len(fields) && err == nil; i++ {
+			field := &fields[i]
+			var edit []byte
+			edit, err = obj.Store(uint64(i), field.RdxType, nil)
+			tlv = append(tlv, toytlv.Record(field.RdxType, edit))
+		}
+		var id rdx.ID
+		id, err = orm.Host.CommitPacket('O', cid, tlv)
+		if err == nil {
+			orm.lock.Lock()
+			orm.ids[obj] = id
+			orm.objects[id] = obj
+			orm.lock.Unlock()
+		}
+	}
+	return nil
 }
 
 // Save the object changes.
@@ -170,19 +195,37 @@ func (orm *ORM) SyncAll() (err error) {
 }
 
 func (orm *ORM) Load(id rdx.ID, blanc NativeObject) (obj NativeObject, err error) {
+	orm.lock.Lock()
+	pre, ok := orm.objects[id]
+	orm.lock.Unlock()
+	if ok {
+		return pre, nil
+	}
+	fro, til := ObjectKeyRange(id)
 	io := pebble.IterOptions{
-		LowerBound: []byte{},
-		UpperBound: []byte{},
+		LowerBound: fro,
+		UpperBound: til,
 	}
 	it := orm.Snap.NewIter(&io)
-	err = orm.UpdateObject(blanc, orm.Snap)
-	orm.lock.Lock()
-	if err == nil {
-		orm.objects[id] = blanc
+	for it.SeekGE(fro); it.Valid(); it.Next() {
+		lid, rdt := OKeyIdRdt(it.Key())
+		off := lid.Off()
+		e := blanc.Load(off, rdt, it.Value())
+		if e != nil { // the db may have garbage
+			_ = 0 // todo
+		}
 	}
-	orm.lock.Unlock()
 	_ = it.Close()
-	return
+	orm.lock.Lock()
+	pre, ok = orm.objects[id]
+	if ok {
+		orm.lock.Unlock()
+		return pre, nil
+	}
+	orm.objects[id] = blanc
+	orm.ids[blanc] = id
+	orm.lock.Unlock()
+	return blanc, nil
 }
 
 func (orm *ORM) Object(id rdx.ID) (obj NativeObject) {
@@ -203,6 +246,7 @@ func (orm *ORM) FindID(obj NativeObject) rdx.ID {
 }
 
 type templateState struct {
+	CId     rdx.ID
 	Name    string
 	Fields  Fields
 	Natives map[byte]string
@@ -213,13 +257,15 @@ func (orm *ORM) Compile(name string, cid rdx.ID) (code string, err error) {
 	if e != nil {
 		return "", e
 	}
-	var state templateState
+	state := templateState{
+		CId:     cid,
+		Natives: FIRSTnatives,
+		Name:    name,
+	}
 	state.Fields, err = orm.Host.ClassFields(cid)
 	if err != nil {
 		return
 	}
-	state.Natives = FIRSTnatives
-	state.Name = name
 	buf := bytes.Buffer{}
 	err = class.Execute(&buf, state)
 	if err == nil {
@@ -234,39 +280,52 @@ var FIRSTnatives = map[byte]string{
 	'R': "rdx.ID",
 	'S': "string",
 	'T': "string",
+	'N': "uint64",
+	'Z': "int64",
 }
 
+// todo RDX formula
 var ClassTemplate = `
-{{$n := .Natives}}
+{{$nat := .Natives}}
 type {{ .Name }} struct {
-	{{ range .Fields }}
-	{{ .Name }} {{ index $n .RdxType }}
+	{{ range $n, $f := .Fields }}
+		{{ if eq $n 0 }} {{continue}} {{end }}
+		{{ $f.Name }} {{ index $nat $f.RdxType }}
 	{{ end }}
 }
+
+var {{.Name}}ClassId = rdx.IDFromString("{{.CId.String}}")
 
 func (o *{{.Name}}) Load(off uint64, rdt byte, tlv []byte) error {
 	switch (off) {
 	{{ range $n, $f := .Fields }}
+	{{ if eq $n 0 }} {{continue}} {{end }}
     case {{$n}}:
-		if rdt != {{$f.RdxType}} { break }
-		o.{{$f.Name}} = rdx.{{printf "%cnative" $f.RdxType }}(tlv)
+		{{ $rdt := printf "%c" $f.RdxType  }}
+		if rdt != '{{$rdt}}' { break }
+		o.{{$f.Name}} = rdx.{{$rdt}}native(tlv)
 	{{ end }}
-	default: return ErrUnknownFieldInAType
+	default: return chotki.ErrUnknownFieldInAType
 	}
 	return nil
 }
 
-func (o *{{.Name}}) Store(off uint64, rdt byte, old []byte) (changes []byte, err error) {
+func (o *{{.Name}}) Store(off uint64, rdt byte, old []byte) (bare []byte, err error) {
 	switch (off) {
 	{{ range $n, $f := .Fields }}
+	{{ if eq $n 0 }} {{continue}} {{end }}
     case {{$n}}:
-		if rdt != {{$f.RdxType}} { break }
-		d := rdx.{{printf "%cdelta" $f.RdxType }}(i.Value(), o.{{$f.Name}})
-		delta = append(delta, chotki.EditTLV({{$n}}, {{$f.RdxType}}, d))
+		{{ $rdt := printf "%c" $f.RdxType  }}
+		if rdt != '{{$rdt}}' { break }
+		if old == nil {
+            bare = rdx.{{$rdt}}tlv(o.{{$f.Name}})
+		} else {
+			bare = rdx.{{$rdt}}delta(old, o.{{$f.Name}})
+		}
 	{{ end }}
-	default: return ErrUnknownFieldInAType
+	default: return nil, chotki.ErrUnknownFieldInAType
 	}
-    return nil
+	return 
 }
 `
 

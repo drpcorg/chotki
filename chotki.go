@@ -429,6 +429,7 @@ func (cho *Chotki) Close() error {
 		cho.lock.Unlock()
 		return ErrClosed
 	}
+	_ = cho.orm.Close()
 	if err := cho.db.Close(); err != nil {
 		return err
 	}

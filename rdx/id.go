@@ -178,6 +178,8 @@ func (id ID) String583() string {
 	return string(id.Hex583())
 }
 
+func (id ID) UInt64() uint64 { return uint64(id) }
+
 func UnHex(hex []byte) (num uint64) {
 	for len(hex) > 0 {
 		c := hex[0]

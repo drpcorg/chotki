@@ -41,7 +41,7 @@ type is named by a letter.
 
 The format and the merge rules are as follows.
 
-### `FIRST`
+### `FIRST` Float, Integer, Reference, String, Term
 
 The last-write-wins register is the simplest data type to
 implement. For each LWW field, we only need the latest "winner"
@@ -80,7 +80,7 @@ Merge rules for LWW are straighforward:
  2. in case of a tie, higher value wins (like bytes.Compare())
  3. in case of a tie, who cares, but higher replica id wins
 
-### `NZ`
+### `NZ` Counters
 
 `N` are increment-only counters. Their TLV state is a sequence
 of `T` records containing zipped uint64 pairs {val,src}, the
@@ -96,7 +96,7 @@ described in the `FIRST` section. One record corresponds to one
 source, per-source merge rules are same as LWW. The native value
 is the sum of all `I` values.
 
-### `E`
+### `E` Eulerian
 
 Generic sets containing any `FIRST` elements. The TLV format is
 a sequence of enveloped FIRST records. It can contain records
@@ -118,7 +118,7 @@ like [mergesort][m] works.
 The string value for a set is like `{1,2,3}` where `1,2,3` are
 `FIRST` elements of the set.
 
-### `M`
+### `M` Mapping
 
 Generic maps, mapping any `FIRST` value to any other `FIRST`
 value. The TLV format is a sequence of enveloped key-value op
@@ -134,7 +134,7 @@ and the value ops are merged according to the LWW rules. As with
 
 The string value for a map is like `{4:null, "key":"value"}`
 
-### `L`
+### `L` Linear
 
 Generic arrays store any `FIRST` elements. Internally, `L` are
 Causal Trees (also known as Replicated Growable Arrays, RGAs).

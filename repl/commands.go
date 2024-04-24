@@ -634,19 +634,31 @@ func (repl *REPL) CommandValid(arg *rdx.RDX) (id rdx.ID, err error) {
 	return rdx.ID0, nil
 }
 
-var HelpCompile = errors.New("compile ClassName, compile b0b-2")
+var HelpCompile = errors.New("choc ClassName, choc b0b-2, choc {ClassName:b0b-2}")
 
 func (repl *REPL) CommandCompile(arg *rdx.RDX) (id rdx.ID, err error) {
-	err = HelpTell
-	id = rdx.BadId
+	id = rdx.ID0
 	var code string
 	orm := repl.Host.ObjectMapper()
 	if arg == nil {
-		return
+		return rdx.BadId, HelpCompile
 	} else if arg.RdxType == rdx.Reference {
 		id = rdx.IDFromText(arg.Text)
 		code, err = orm.Compile("SomeClass", id)
 		//repl.Host.CompileClass("SomeClass", id)
+	} else if arg.RdxType == rdx.Mapping {
+		m := arg.Nested
+		for i := 0; i+1 < len(m) && err == nil; i += 2 {
+			name := &m[i]
+			cidx := &m[i+1]
+			if name.RdxType != rdx.Term || cidx.RdxType != rdx.Reference {
+				return rdx.BadId, HelpCompile
+			}
+			cid := rdx.IDFromText(cidx.Text)
+			c := ""
+			c, err = orm.Compile(string(name.Text), cid)
+			code = code + c
+		}
 	} else {
 		return
 	}
