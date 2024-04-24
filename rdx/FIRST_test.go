@@ -3,7 +3,7 @@ package rdx
 import (
 	"testing"
 
-	"github.com/learn-decentralized-systems/toyqueue"
+	"github.com/drpcorg/chotki/toyqueue"
 	"github.com/stretchr/testify/assert"
 )
 

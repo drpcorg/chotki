@@ -1,7 +1,7 @@
 package rdx
 
 import (
-	"github.com/learn-decentralized-systems/toytlv"
+	"github.com/drpcorg/chotki/toytlv"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )

@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/learn-decentralized-systems/toyqueue"
+	"github.com/drpcorg/chotki/toyqueue"
 
-	"github.com/learn-decentralized-systems/toytlv"
+	"github.com/drpcorg/chotki/toytlv"
 )
 
 // Common LWW functions

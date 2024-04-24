@@ -2,7 +2,7 @@ package chotki
 
 import (
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/learn-decentralized-systems/toytlv"
+	"github.com/drpcorg/chotki/toytlv"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )

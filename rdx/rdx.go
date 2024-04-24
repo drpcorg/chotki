@@ -2,7 +2,7 @@ package rdx
 
 import (
 	"errors"
-	"github.com/learn-decentralized-systems/toyqueue"
+	"github.com/drpcorg/chotki/toyqueue"
 )
 
 const (

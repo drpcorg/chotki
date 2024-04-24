@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/learn-decentralized-systems/toyqueue"
-	"github.com/learn-decentralized-systems/toytlv"
+	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/toytlv"
 	"github.com/pkg/errors"
 	"unicode/utf8"
 )
