@@ -15,7 +15,7 @@ func TestORMExample(t *testing.T) {
 	defer os.RemoveAll("cho1e")
 	defer os.RemoveAll("cho1f")
 
-	a, err := chotki.Open("cho1e", chotki.Options{Orig: 0x1e, Name: "test replica"})
+	a, err := chotki.Open("cho1e", chotki.Options{Src: 0x1e, Name: "test replica"})
 	assert.Nil(t, err)
 	tid, err := a.NewClass(rdx.ID0,
 		chotki.Field{Name: "Name", RdxType: rdx.String},
@@ -31,7 +31,7 @@ func TestORMExample(t *testing.T) {
 	err = a.Close()
 	assert.Nil(t, err)
 
-	a, err = chotki.Open("cho1e", chotki.Options{Orig: 0x1e, Name: "test replica"})
+	a, err = chotki.Open("cho1e", chotki.Options{Src: 0x1e, Name: "test replica"})
 	assert.Nil(t, err)
 
 	var exa Example
@@ -45,7 +45,7 @@ func TestORMExample(t *testing.T) {
 	exa.Score = 103
 	// todo save the object
 
-	b, err := chotki.Open("cho1f", chotki.Options{Orig: 0x1f, Name: "another test replica"})
+	b, err := chotki.Open("cho1f", chotki.Options{Src: 0x1f, Name: "another test replica"})
 	assert.Nil(t, err)
 
 	syncera := chotki.Syncer{Host: a, Mode: chotki.SyncRW}

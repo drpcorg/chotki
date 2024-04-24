@@ -1,6 +1,7 @@
 package chotki
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -23,10 +24,11 @@ type Batch [][]byte
 type Options struct {
 	pebble.Options
 
-	Orig         uint64
-	Name         string
-	RelaxedOrder bool
-	MaxLogLen    int64
+	Src            uint64
+	Name           string
+	MaxLogLen      int64
+	RelaxedOrder   bool
+	RestoreNetwork bool
 }
 
 func (o *Options) SetDefaults() {
@@ -51,24 +53,20 @@ type Chotki struct {
 	last rdx.ID
 	src  uint64
 
-	db  *pebble.DB
-	dir string
-
-	syncs map[rdx.ID]*pebble.Batch
-	hooks map[rdx.ID][]Hook
-	hlock sync.Mutex
-
-	// queues to broadcast all new packets
-	outq map[string]toyqueue.DrainCloser
-
-	outlock sync.Mutex
-	lock    sync.Mutex
-
+	db   *pebble.DB
+	net  *toytlv.Transport
+	dir  string
 	opts Options
 
 	orm ORM
 
-	types map[rdx.ID]Fields
+	outq    map[string]toyqueue.DrainCloser // queues to broadcast all new packets
+	syncs   map[rdx.ID]*pebble.Batch
+	hooks   map[rdx.ID][]Hook
+	types   map[rdx.ID]Fields
+	lock    sync.Mutex
+	hlock   sync.Mutex
+	outlock sync.Mutex
 }
 
 var (
@@ -188,9 +186,9 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		return nil, err
 	}
 
-	conn := Chotki{
+	cho := Chotki{
 		db:    db,
-		src:   opts.Orig,
+		src:   opts.Src,
 		dir:   dirname,
 		opts:  opts,
 		types: make(map[rdx.ID]Fields),
@@ -199,8 +197,16 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		outq:  make(map[string]toyqueue.DrainCloser),
 	}
 
+	cho.net = toytlv.NewTransport(func(conn net.Conn) toyqueue.FeedDrainCloser {
+		return &Syncer{
+			Host: &cho,
+			Mode: SyncRWLive,
+			Name: conn.RemoteAddr().String(),
+		}
+	})
+
 	if !exists {
-		id0 := rdx.IDFromSrcSeqOff(opts.Orig, 0, 0)
+		id0 := rdx.IDFromSrcSeqOff(opts.Src, 0, 0)
 
 		init := append(toyqueue.Records(nil), Log0...)
 		init = append(init, toytlv.Record('Y',
@@ -209,61 +215,52 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			toytlv.Record('S', rdx.Stlv(opts.Name)),
 		))
 
-		if err = conn.Drain(init); err != nil {
+		if err = cho.Drain(init); err != nil {
 			return nil, err
 		}
 	}
 
-	vv, err := conn.VersionVector()
+	vv, err := cho.VersionVector()
 	if err != nil {
 		return nil, err
 	}
 
-	conn.last = vv.GetID(conn.src)
+	cho.last = vv.GetID(cho.src)
 
-	return &conn, nil
+	return &cho, nil
 }
 
-func (cho *Chotki) OpenTCP(tcp *toytlv.TCPDepot) error {
-	if cho.db == nil {
-		return ErrDbClosed
-	}
-
-	tcp.Open(func(conn net.Conn) toyqueue.FeedDrainCloser {
-		return &Syncer{Host: cho, Name: conn.RemoteAddr().String(), Mode: SyncRWLive}
-	})
-
-	return nil
-}
-
-func (cho *Chotki) ReOpenTCP(tcp *toytlv.TCPDepot) error {
-	if cho.db == nil {
-		return ErrDbClosed
-	}
-
-	if err := cho.OpenTCP(tcp); err != nil {
-		return err
-	}
-	// ...
-	io := pebble.IterOptions{}
-	i := cho.db.NewIter(&io)
+func (cho *Chotki) RestoreNet(ctx context.Context) error {
+	i := cho.db.NewIter(&pebble.IterOptions{})
 	defer i.Close()
 
 	for i.SeekGE([]byte{'l'}); i.Valid() && i.Key()[0] == 'L'; i.Next() {
 		address := string(i.Key()[1:])
-		err := tcp.Listen(address)
-		if err != nil {
-			_, _ = fmt.Fprintln(os.Stderr, err.Error())
-		}
+		_ = cho.net.Listen(ctx, address)
 	}
+
 	for i.SeekGE([]byte{'c'}); i.Valid() && i.Key()[0] == 'C'; i.Next() {
 		address := string(i.Key()[1:])
-		err := tcp.Connect(address)
-		if err != nil {
-			_, _ = fmt.Fprintln(os.Stderr, err.Error())
-		}
+		_ = cho.net.Connect(ctx, address)
 	}
+
 	return nil
+}
+
+func (cho *Chotki) Listen(ctx context.Context, addr string) error {
+	return cho.net.Listen(ctx, addr)
+}
+
+func (cho *Chotki) Unlisten(addr string) error {
+	return cho.net.Unlisten(addr)
+}
+
+func (cho *Chotki) Connect(ctx context.Context, addr string) error {
+	return cho.net.Connect(ctx, addr)
+}
+
+func (cho *Chotki) Disconnect(addr string) error {
+	return cho.net.Disconnect(addr)
 }
 
 func (cho *Chotki) AddPacketHose(name string) (feed toyqueue.FeedCloser) {
@@ -425,18 +422,31 @@ func (cho *Chotki) Snapshot() pebble.Reader {
 
 func (cho *Chotki) Close() error {
 	cho.lock.Lock()
-	if cho.db == nil {
-		cho.lock.Unlock()
-		return ErrClosed
+	defer cho.lock.Unlock()
+
+	if cho.net != nil {
+		if err := cho.net.Close(); err != nil {
+			return err
+		}
 	}
+
 	_ = cho.orm.Close()
-	if err := cho.db.Close(); err != nil {
-		return err
+
+	if cho.db != nil {
+		if err := cho.db.Close(); err != nil {
+			return err
+		}
 	}
+
+	clear(cho.outq)
+	clear(cho.syncs)
+	clear(cho.hooks)
+	clear(cho.types)
+
 	cho.db = nil
-	// todo
+	cho.src = 0
 	cho.last = rdx.ID0
-	cho.lock.Unlock()
+
 	return nil
 }
 

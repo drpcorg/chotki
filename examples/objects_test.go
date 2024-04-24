@@ -13,7 +13,7 @@ import (
 func TestTypes(t *testing.T) {
 	defer os.RemoveAll("cho1a")
 
-	a, err := chotki.Open("cho1a", chotki.Options{Orig: 0x1a, Name: "test replica A"})
+	a, err := chotki.Open("cho1a", chotki.Options{Src: 0x1a, Name: "test replica A"})
 	assert.Nil(t, err)
 
 	var tid, oid rdx.ID

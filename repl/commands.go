@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -56,7 +57,7 @@ func (repl *REPL) CommandCreate(arg *rdx.RDX) (id rdx.ID, err error) {
 
 	dirname := chotki.ReplicaDirName(src.Src())
 	repl.Host, err = chotki.Open(dirname, chotki.Options{
-		Orig:    src.Src(),
+		Src:    src.Src(),
 		Name:    name,
 		Options: pebble.Options{ErrorIfExists: true},
 	})
@@ -78,7 +79,7 @@ func (repl *REPL) CommandOpen(arg *rdx.RDX) (rdx.ID, error) {
 
 	var err error
 	repl.Host, err = chotki.Open(dirname, chotki.Options{
-		Orig:    src0.Src(),
+		Src:    src0.Src(),
 		Options: pebble.Options{ErrorIfNotExists: true},
 	})
 	if err != nil {
@@ -110,10 +111,6 @@ func (repl *REPL) CommandDump(arg *rdx.RDX) (id rdx.ID, err error) {
 }
 
 func (repl *REPL) CommandClose(arg *rdx.RDX) (id rdx.ID, err error) {
-	if repl.tcp != nil {
-		repl.tcp.Close()
-		repl.tcp = nil
-	}
 	err = repl.Host.Close()
 	if err == nil {
 		id = repl.Host.Last()
@@ -320,11 +317,7 @@ func (repl *REPL) CommandListen(arg *rdx.RDX) (id rdx.ID, err error) {
 	}
 	addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
 	if err == nil {
-		if repl.tcp == nil {
-			repl.tcp = &toytlv.TCPDepot{}
-			repl.Host.OpenTCP(repl.tcp)
-		}
-		err = repl.tcp.Listen(addr)
+		err = repl.Host.Listen(context.Background(), addr)
 	}
 	return
 }
@@ -337,11 +330,7 @@ func (repl *REPL) CommandConnect(arg *rdx.RDX) (id rdx.ID, err error) {
 	}
 	addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
 	if err == nil {
-		if repl.tcp == nil {
-			repl.tcp = &toytlv.TCPDepot{}
-			repl.Host.OpenTCP(repl.tcp)
-		}
-		err = repl.tcp.Connect(addr)
+		err = repl.Host.Connect(context.Background(), addr)
 	}
 	return
 }
