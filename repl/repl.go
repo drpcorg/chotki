@@ -6,7 +6,6 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toytlv"
 	"github.com/ergochat/readline"
 	"io"
 	"os"
@@ -16,7 +15,6 @@ import (
 // REPL per se.
 type REPL struct {
 	Host *chotki.Chotki
-	tcp  *toytlv.TCPDepot
 	rl   *readline.Instance
 	snap pebble.Reader
 }

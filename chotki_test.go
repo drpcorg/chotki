@@ -44,7 +44,7 @@ func TestChotki_Create(t *testing.T) {
 	defer cancel()
 
 	a, err := Open(dirs[0], Options{
-		Orig:    0x1a,
+		Src:     0x1a,
 		Name:    "test replica",
 		Options: pebble.Options{ErrorIfExists: true},
 	})
@@ -62,9 +62,9 @@ func TestChotki_Sync(t *testing.T) {
 	dirs, clear := testdirs(0xa, 0xb)
 	defer clear()
 
-	a, err := Open(dirs[0], Options{Orig: 0xa, Name: "test replica A"})
+	a, err := Open(dirs[0], Options{Src: 0xa, Name: "test replica A"})
 	assert.Nil(t, err)
-	b, err := Open(dirs[1], Options{Orig: 0xb, Name: "test replica B"})
+	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B"})
 	assert.Nil(t, err)
 
 	synca := Syncer{Host: a, Mode: SyncRW, Name: "a"}

@@ -4,7 +4,7 @@ import "io"
 
 // Records (a batch of) as a very universal primitive, especially
 // for database/network op/packet processing. Batching allows
-// for writev() and other performance optimizations. ALso, if
+// for writev() and other performance optimizations. Also, if
 // you have cryptography, blobs are way handier than structs.
 // Records converts easily to net.Buffers.
 type Records [][]byte
@@ -37,14 +37,14 @@ type Drainer interface {
 	Drain(recs Records) error
 }
 
-type DrainSeeker interface {
-	Drainer
-	io.Seeker
-}
-
 type DrainCloser interface {
 	Drainer
 	io.Closer
+}
+
+type DrainSeeker interface {
+	Drainer
+	io.Seeker
 }
 
 type DrainSeekCloser interface {
