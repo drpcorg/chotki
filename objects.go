@@ -348,7 +348,7 @@ func (cho *Chotki) IncNField(fid rdx.ID) (id rdx.ID, err error) {
 	return cho.AddToNField(fid, 1)
 }
 
-func (cho *Chotki) ObjectFieldMapTermId(fid rdx.ID) (themap map[string]rdx.ID, err error) {
+func (cho *Chotki) ObjectFieldMapTermId(fid rdx.ID) (themap rdx.MapTR, err error) {
 	rdt, tlv, e := cho.ObjectFieldTLV(fid)
 	if e != nil {
 		return nil, e

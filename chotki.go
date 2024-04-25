@@ -26,6 +26,7 @@ type Options struct {
 
 	Src            uint64
 	Name           string
+	Log1           toyqueue.Records
 	MaxLogLen      int64
 	RelaxedOrder   bool
 	RestoreNetwork bool
@@ -214,6 +215,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		id0 := rdx.IDFromSrcSeqOff(opts.Src, 0, 0)
 
 		init := append(toyqueue.Records(nil), Log0...)
+		init = append(init, opts.Log1...)
 		init = append(init, toytlv.Record('Y',
 			toytlv.Record('I', id0.ZipBytes()),
 			toytlv.Record('R', rdx.ID0.ZipBytes()),
