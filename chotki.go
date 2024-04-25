@@ -29,6 +29,9 @@ type Options struct {
 	MaxLogLen      int64
 	RelaxedOrder   bool
 	RestoreNetwork bool
+
+	TlsCertFile string
+	TlsKeyFile  string
 }
 
 func (o *Options) SetDefaults() {
@@ -204,6 +207,8 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			Name: conn.RemoteAddr().String(),
 		}
 	})
+	cho.net.CertFile = opts.TlsCertFile
+	cho.net.KeyFile = opts.TlsKeyFile
 
 	if !exists {
 		id0 := rdx.IDFromSrcSeqOff(opts.Src, 0, 0)

@@ -47,7 +47,7 @@ type Transport struct {
 	closed atomic.Bool
 
 	wg   sync.WaitGroup
-	jack Jack
+	Jack Jack
 
 	conns   sync.Map // *Peer
 	listens sync.Map // net.Listener
@@ -57,7 +57,7 @@ type Transport struct {
 }
 
 func NewTransport(jack Jack) *Transport {
-	return &Transport{jack: jack}
+	return &Transport{Jack: jack}
 }
 
 func (t *Transport) Close() error {
@@ -182,7 +182,7 @@ func (t *Transport) KeepConnecting(ctx context.Context, addr string) {
 
 		connBackoff = MIN_RETRY_PERIOD
 
-		peer := &Peer{inout: t.jack(conn)}
+		peer := &Peer{inout: t.Jack(conn)}
 		peer.conn.Store(&conn)
 
 		t.conns.Store(addr, peer)
@@ -214,7 +214,7 @@ func (t *Transport) KeepListening(ctx context.Context, addr string) {
 		}
 
 		addr := conn.RemoteAddr().String()
-		peer := &Peer{inout: t.jack(conn)}
+		peer := &Peer{inout: t.Jack(conn)}
 		peer.conn.Store(&conn)
 
 		t.conns.Store(addr, peer)
