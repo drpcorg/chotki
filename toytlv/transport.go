@@ -65,7 +65,7 @@ func (t *Transport) Close() error {
 
 	t.conns.Range(func(k, v any) bool {
 		if err := v.(*Peer).Close(); err != nil {
-			slog.Error("couldn't close connection")
+			slog.Error("[chotki] couldn't close connection")
 		}
 		t.conns.Delete(k)
 		return true
@@ -73,7 +73,7 @@ func (t *Transport) Close() error {
 
 	t.listens.Range(func(k, v any) bool {
 		if err := v.(net.Listener).Close(); err != nil {
-			slog.Error("couldn't close listener")
+			slog.Error("[chotki] couldn't close listener")
 		}
 		t.listens.Delete(k)
 		return true
@@ -175,7 +175,7 @@ func (t *Transport) KeepConnecting(ctx context.Context, addr string) {
 
 		conn, err := t.createDialConnect(ctx, addr)
 		if err != nil {
-			slog.Error("couldn't connect", "addr", addr, "err", err)
+			slog.Error("[chotki] couldn't connect", "addr", addr, "err", err)
 			connBackoff = min(MAX_RETRY_PERIOD, connBackoff*2)
 			continue
 		}
@@ -209,7 +209,7 @@ func (t *Transport) KeepListening(ctx context.Context, addr string) {
 		conn, err := listener.(net.Listener).Accept()
 		if err != nil {
 			// reconnects are the client's responsibility, just skip
-			slog.Error("couldn't accept connect request", "err", err)
+			slog.Error("[chotki] couldn't accept connect request", "err", err)
 			continue
 		}
 
@@ -247,12 +247,12 @@ func (t *Transport) keepPeer(ctx context.Context, addr string, peer *Peer) error
 	select {
 	case err := <-rerrch:
 		if err != nil {
-			slog.Error("couldn't read from peer", "addr", addr, "err", err)
+			slog.Error("[chotki] couldn't read from peer", "addr", addr, "err", err)
 			return t.closePeer(addr)
 		}
 	case err := <-werrch:
 		if err != nil {
-			slog.Error("couldn't write to peer", "addr", addr, "err", err)
+			slog.Error("[chotki] couldn't write to peer", "addr", addr, "err", err)
 			return t.closePeer(addr)
 		}
 	}
