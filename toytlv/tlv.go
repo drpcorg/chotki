@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 )
 
 const CaseBit uint8 = 'a' - 'A'
@@ -94,7 +94,7 @@ func Incomplete(data []byte) int {
 	}
 }
 
-func Split(data []byte) (recs toyqueue.Records, rest []byte, err error) {
+func Split(data []byte) (recs utils.Records, rest []byte, err error) {
 	rest = data
 	for len(rest) > 0 {
 		lit, hlen, blen := ProbeHeader(rest)
@@ -280,14 +280,14 @@ func TinyRecord(lit byte, body []byte) (tiny []byte) {
 	return AppendTiny(data[:0], lit, body)
 }
 
-func Join(records ...[]byte) (ret toyqueue.Records) {
+func Join(records ...[]byte) (ret utils.Records) {
 	for _, rec := range records {
 		ret = append(ret, rec)
 	}
 	return
 }
 
-func Records(lit byte, bodies ...[]byte) (recs toyqueue.Records) {
+func Records(lit byte, bodies ...[]byte) (recs utils.Records) {
 	for _, body := range bodies {
 		recs = append(recs, Record(lit, body))
 	}

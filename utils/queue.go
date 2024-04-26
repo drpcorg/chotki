@@ -1,9 +1,45 @@
-package toyqueue
+package utils
 
 import (
 	"errors"
+	"io"
 	"sync"
 )
+
+type Feeder interface {
+	// Feed reads and returns records.
+	// The EoF convention follows that of io.Reader:
+	// can either return `records, EoF` or
+	// `records, nil` followed by `nil/{}, EoF`
+	Feed() (recs Records, err error)
+}
+
+type FeedCloser interface {
+	Feeder
+	io.Closer
+}
+
+type Drainer interface {
+	Drain(recs Records) error
+}
+
+type DrainCloser interface {
+	Drainer
+	io.Closer
+}
+
+type FeedDrainCloser interface {
+	Feeder
+	Drainer
+	io.Closer
+}
+
+// Records (a batch of) as a very universal primitive, especially
+// for database/network op/packet processing. Batching allows
+// for writev() and other performance optimizations. Also, if
+// you have cryptography, blobs are way handier than structs.
+// Records converts easily to net.Buffers.
+type Records [][]byte
 
 func (recs Records) recrem(total int64) (prelen int, prerem int64) {
 	for len(recs) > prelen && int64(len(recs[prelen])) <= total {
@@ -50,9 +86,9 @@ var ErrClosed = errors.New("queue is closed")
 
 func (q *RecordQueue) Drain(recs Records) error {
 	q.mu.Lock()
+	defer q.mu.Unlock()
 	was0 := len(q.recs) == 0
 	if len(q.recs)+len(recs) > q.Limit {
-		q.mu.Unlock()
 		if q.Limit == 0 {
 			return ErrClosed
 		}
@@ -62,7 +98,6 @@ func (q *RecordQueue) Drain(recs Records) error {
 	if was0 && q.co.L != nil {
 		q.co.Broadcast()
 	}
-	q.mu.Unlock()
 	return nil
 }
 
@@ -73,12 +108,12 @@ func (q *RecordQueue) Close() error {
 
 func (q *RecordQueue) Feed() (recs Records, err error) {
 	q.mu.Lock()
+	defer q.mu.Unlock()
 	if len(q.recs) == 0 {
 		err = ErrWouldBlock
 		if q.Limit == 0 {
 			err = ErrClosed
 		}
-		q.mu.Unlock()
 		return
 	}
 	wasfull := len(q.recs) >= q.Limit
@@ -87,7 +122,6 @@ func (q *RecordQueue) Feed() (recs Records, err error) {
 	if wasfull && q.co.L != nil {
 		q.co.Broadcast()
 	}
-	q.mu.Unlock()
 	return
 }
 
@@ -109,11 +143,11 @@ func (bq *blockingRecordQueue) Close() error {
 func (bq *blockingRecordQueue) Drain(recs Records) error {
 	q := bq.queue
 	q.mu.Lock()
+	defer q.mu.Unlock()
 	for len(recs) > 0 {
 		was0 := len(q.recs) == 0
 		for q.Limit <= len(q.recs) {
 			if q.Limit == 0 {
-				q.mu.Unlock()
 				return ErrClosed
 			}
 			q.co.Wait()
@@ -128,17 +162,16 @@ func (bq *blockingRecordQueue) Drain(recs Records) error {
 			q.co.Broadcast()
 		}
 	}
-	q.mu.Unlock()
 	return nil
 }
 
 func (bq *blockingRecordQueue) Feed() (recs Records, err error) {
 	q := bq.queue
 	q.mu.Lock()
+	defer q.mu.Unlock()
 	wasfull := len(q.recs) >= q.Limit
 	for len(q.recs) == 0 {
 		if q.Limit == 0 {
-			q.mu.Unlock()
 			return nil, ErrClosed
 		}
 		q.co.Wait()
@@ -148,6 +181,50 @@ func (bq *blockingRecordQueue) Feed() (recs Records, err error) {
 	if wasfull {
 		q.co.Broadcast()
 	}
-	q.mu.Unlock()
 	return
+}
+
+func Relay(feeder Feeder, drainer Drainer) error {
+	recs, err := feeder.Feed()
+	if err != nil {
+		if len(recs) > 0 {
+			_ = drainer.Drain(recs)
+		}
+		return err
+	}
+	err = drainer.Drain(recs)
+	return err
+}
+
+func Pump(feeder Feeder, drainer Drainer) (err error) {
+	for err == nil {
+		err = Relay(feeder, drainer)
+	}
+	return
+}
+
+func PumpN(feeder Feeder, drainer Drainer, n int) (err error) {
+	for err == nil && n > 0 {
+		err = Relay(feeder, drainer)
+		n--
+	}
+	return
+}
+
+func PumpThenClose(feed FeedCloser, drain DrainCloser) error {
+	var ferr, derr error
+	for ferr == nil && derr == nil {
+		var recs Records
+		recs, ferr = feed.Feed()
+		if len(recs) > 0 { // e.g. Feed() may return data AND EOF
+			derr = drain.Drain(recs)
+		}
+	}
+	_ = feed.Close()
+	_ = drain.Close()
+	if ferr != nil {
+		return ferr
+	} else {
+		return derr
+	}
 }

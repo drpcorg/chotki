@@ -10,7 +10,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 	"github.com/drpcorg/chotki/toytlv"
 )
 
@@ -166,7 +166,7 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 	id = rdx.BadId
 	err = HelpNew
 	tid := rdx.ID0
-	tlvs := toyqueue.Records{}
+	tlvs := utils.Records{}
 	if arg == nil {
 		return
 	} else if arg.RdxType == rdx.Linear {
@@ -182,7 +182,7 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 		if err != nil {
 			return
 		}
-		tmp := make(toyqueue.Records, len(fields))
+		tmp := make(utils.Records, len(fields))
 
 		for i := 0; i+1 < len(pairs); i += 2 {
 			if pairs[i].RdxType != rdx.Term {
@@ -374,7 +374,7 @@ func KeepOddEven(oddeven uint64, cho *chotki.Chotki, fid rdx.ID) error {
 	mine := rdx.Nmine(tlv, src)
 	sum := rdx.Nnative(tlv)
 	if (sum & 1) != oddeven {
-		tlvs := toyqueue.Records{
+		tlvs := utils.Records{
 			toytlv.Record('F', rdx.ZipUint64(fid.Off())),
 			toytlv.Record(rdx.Natural, toytlv.Record(rdx.Term, rdx.ZipUint64Pair(mine+1, src))),
 		}
@@ -499,7 +499,7 @@ func (repl *REPL) doSinc(fid rdx.ID, delay time.Duration, count int64, mine uint
 	til := rdx.ID0
 	for c := count; c > 0 && err == nil; c-- {
 		mine++
-		tlvs := toyqueue.Records{
+		tlvs := utils.Records{
 			toytlv.Record('F', rdx.ZipUint64(fid.Off())),
 			toytlv.Record(rdx.Natural, toytlv.Record(rdx.Term, rdx.ZipUint64Pair(mine, src))),
 		}

@@ -7,7 +7,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 	"github.com/drpcorg/chotki/toytlv"
 	"github.com/puzpuzpuz/xsync/v3"
 )
@@ -50,7 +50,7 @@ func (orm *ORM) New(cid rdx.ID, objs ...NativeObject) (err error) {
 		return e
 	}
 	for _, obj := range objs {
-		tlv := toyqueue.Records{}
+		tlv := utils.Records{}
 		for i := 1; i < len(fields) && err == nil; i++ {
 			field := &fields[i]
 			var edit []byte
@@ -85,7 +85,7 @@ func (orm *ORM) Save(objs ...NativeObject) (err error) {
 		if e != nil {
 			return e
 		}
-		var changes toyqueue.Records
+		var changes utils.Records
 		flags := [64]bool{}
 		for it.Next() {
 			lid, rdt := OKeyIdRdt(it.Key())

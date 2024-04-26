@@ -7,7 +7,7 @@ import (
 
 	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -50,9 +50,9 @@ func TestORMExample(t *testing.T) {
 
 	syncera := chotki.Syncer{Host: a, Mode: chotki.SyncRW}
 	syncerb := chotki.Syncer{Host: b, Mode: chotki.SyncRW}
-	err = toyqueue.Relay(&syncerb, &syncera)
+	err = utils.Relay(&syncerb, &syncera)
 	assert.Nil(t, err)
-	err = toyqueue.Pump(&syncera, &syncerb)
+	err = utils.Pump(&syncera, &syncerb)
 	assert.Equal(t, io.EOF, err)
 
 	itb := b.ObjectIterator(rdx.IDFromString("1e-2"))

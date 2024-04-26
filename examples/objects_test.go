@@ -6,7 +6,7 @@ import (
 
 	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -50,7 +50,7 @@ func TestTypes(t *testing.T) {
 	i2 := a.ObjectIterator(oid)
 	assert.NotNil(t, i2)
 	ex.Score = 44
-	var changes toyqueue.Records
+	var changes utils.Records
 	changes, err = ex.Store(i2)
 	assert.Nil(t, err)
 	var eid rdx.ID

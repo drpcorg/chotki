@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 	"github.com/drpcorg/chotki/toytlv"
 	"io"
 	"os"
@@ -27,7 +27,7 @@ type Syncer struct {
 	snaplast   rdx.ID
 	feedState  int
 	drainState int
-	oqueue     toyqueue.FeedCloser
+	oqueue     utils.FeedCloser
 	myvv       rdx.VV
 	peervv     rdx.VV
 	lock       sync.Mutex
@@ -68,7 +68,7 @@ func (sync *Syncer) Close() error {
 	defer sync.lock.Unlock()
 
 	if sync.Host == nil {
-		return toyqueue.ErrClosed
+		return utils.ErrClosed
 	}
 
 	if sync.snap != nil {
@@ -97,7 +97,7 @@ func (sync *Syncer) Close() error {
 	return nil
 }
 
-func (sync *Syncer) Feed() (recs toyqueue.Records, err error) {
+func (sync *Syncer) Feed() (recs utils.Records, err error) {
 	switch sync.feedState {
 	case SendHandshake:
 		recs, err = sync.FeedHandshake()
@@ -119,7 +119,7 @@ func (sync *Syncer) Feed() (recs toyqueue.Records, err error) {
 		}
 	case SendLive:
 		recs, err = sync.oqueue.Feed()
-		if err == toyqueue.ErrClosed {
+		if err == utils.ErrClosed {
 			sync.SetFeedState(SendEOF)
 			err = nil
 		}
@@ -128,7 +128,7 @@ func (sync *Syncer) Feed() (recs toyqueue.Records, err error) {
 		if sync.reason != nil {
 			reason = []byte(sync.reason.Error())
 		}
-		recs = toyqueue.Records{toytlv.Record('B',
+		recs = utils.Records{toytlv.Record('B',
 			toytlv.TinyRecord('T', sync.snaplast.ZipBytes()),
 			reason,
 		)}
@@ -155,7 +155,7 @@ func (sync *Syncer) EndGracefully(reason error) (err error) {
 	return
 }
 
-func (sync *Syncer) FeedHandshake() (vv toyqueue.Records, err error) {
+func (sync *Syncer) FeedHandshake() (vv utils.Records, err error) {
 	sync.oqueue = sync.Host.AddPacketHose(sync.Name)
 	sync.snap = sync.Host.db.NewSnapshot()
 	sync.vvit = sync.snap.NewIter(&pebble.IterOptions{
@@ -190,10 +190,10 @@ func (sync *Syncer) FeedHandshake() (vv toyqueue.Records, err error) {
 		toytlv.Record('V', sync.vvit.Value()),
 	)
 
-	return toyqueue.Records{hs}, nil
+	return utils.Records{hs}, nil
 }
 
-func (sync *Syncer) FeedBlockDiff() (diff toyqueue.Records, err error) {
+func (sync *Syncer) FeedBlockDiff() (diff utils.Records, err error) {
 	if !sync.vvit.Next() {
 		return nil, io.EOF
 	}
@@ -213,7 +213,7 @@ func (sync *Syncer) FeedBlockDiff() (diff toyqueue.Records, err error) {
 		}
 	}
 	if !hasChanges {
-		return toyqueue.Records{}, nil
+		return utils.Records{}, nil
 	}
 	block := VKeyId(sync.vvit.Key()).ZeroOff()
 	key := OKey(block, 0)
@@ -244,10 +244,10 @@ func (sync *Syncer) FeedBlockDiff() (diff toyqueue.Records, err error) {
 		toytlv.Record('R', block.ZipBytes()),
 		sync.vvit.Value()) // todo brief
 	sync.vpack = append(sync.vpack, v...)
-	return toyqueue.Records{parcel}, err
+	return utils.Records{parcel}, err
 }
 
-func (sync *Syncer) FeedDiffVV() (vv toyqueue.Records, err error) {
+func (sync *Syncer) FeedDiffVV() (vv utils.Records, err error) {
 	toytlv.CloseHeader(sync.vpack, 5)
 	vv = append(vv, sync.vpack)
 	sync.vpack = nil
@@ -287,14 +287,14 @@ func (sync *Syncer) WaitDrainState(state int) (ds int) {
 	return
 }
 
-func LastLit(recs toyqueue.Records) byte {
+func LastLit(recs utils.Records) byte {
 	if len(recs) == 0 {
 		return 0
 	}
 	return toytlv.Lit(recs[len(recs)-1])
 }
 
-func (sync *Syncer) Drain(recs toyqueue.Records) (err error) {
+func (sync *Syncer) Drain(recs utils.Records) (err error) {
 	if len(recs) == 0 {
 		return nil
 	}
@@ -372,7 +372,7 @@ func ParseHandshake(body []byte) (mode uint64, vv rdx.VV, err error) {
 	return
 }
 
-func (sync *Syncer) DrainHandshake(recs toyqueue.Records) (err error) {
+func (sync *Syncer) DrainHandshake(recs utils.Records) (err error) {
 	lit, id, _, body, e := ParsePacket(recs[0])
 	if lit != 'H' || e != nil {
 		return ErrBadHPacket

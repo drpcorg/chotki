@@ -2,7 +2,7 @@ package chotki
 
 import (
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 	"github.com/drpcorg/chotki/toytlv"
 )
 
@@ -19,7 +19,7 @@ const (
 )
 
 // FORMAT: replica creation packet
-var Log0 = toyqueue.Records{
+var Log0 = utils.Records{
 	toytlv.Record('Y',
 		toytlv.Record('I', rdx.ID0.ZipBytes()), // identifier, `src-0`
 		toytlv.Record('R', rdx.ID0.ZipBytes()), // reference, `0-0`

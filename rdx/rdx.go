@@ -2,7 +2,7 @@ package rdx
 
 import (
 	"errors"
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 )
 
 const (
@@ -65,7 +65,7 @@ func (rdx *RDX) String() string {
 	return string(by)
 }
 
-func (rdx *RDX) Feed() (recs toyqueue.Records, err error) {
+func (rdx *RDX) Feed() (recs utils.Records, err error) {
 	switch rdx.RdxType {
 	case None:
 	case Float:

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,12 +16,12 @@ import (
 // 3. create a server, client, conn, stop the serv, relaunch, reconnect
 
 type TestConsumer struct {
-	rcvd toyqueue.Records
+	rcvd utils.Records
 	mx   sync.Mutex
 	co   sync.Cond
 }
 
-func (c *TestConsumer) Drain(recs toyqueue.Records) error {
+func (c *TestConsumer) Drain(recs utils.Records) error {
 	c.mx.Lock()
 	defer c.mx.Unlock()
 
@@ -30,7 +30,7 @@ func (c *TestConsumer) Drain(recs toyqueue.Records) error {
 	return nil
 }
 
-func (c *TestConsumer) Feed() (toyqueue.Records, error) {
+func (c *TestConsumer) Feed() (utils.Records, error) {
 	c.mx.Lock()
 	defer c.mx.Unlock()
 
@@ -54,7 +54,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 
 	lCon := TestConsumer{}
 	lCon.co.L = &lCon.mx
-	l := NewTransport(func(conn net.Conn) toyqueue.FeedDrainCloser {
+	l := NewTransport(func(conn net.Conn) utils.FeedDrainCloser {
 		return &lCon
 	})
 	err := l.Listen(context.Background(), loop)
@@ -65,7 +65,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 
 	cCon := TestConsumer{}
 	cCon.co.L = &cCon.mx
-	c := NewTransport(func(conn net.Conn) toyqueue.FeedDrainCloser {
+	c := NewTransport(func(conn net.Conn) utils.FeedDrainCloser {
 		return &cCon
 	})
 	err = c.Connect(context.Background(), loop)
@@ -77,7 +77,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 	time.Sleep(time.Second * 2) // TODO: use events
 
 	// send a record
-	err = cCon.Drain(toyqueue.Records{Record('M', []byte("Hi there"))})
+	err = cCon.Drain(utils.Records{Record('M', []byte("Hi there"))})
 	assert.Nil(t, err)
 
 	rec, err := lCon.Feed()
@@ -90,7 +90,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 	assert.Equal(t, 0, len(rest))
 
 	// respond to that
-	err = lCon.Drain(toyqueue.Records{Record('M', []byte("Re: Hi there"))})
+	err = lCon.Drain(utils.Records{Record('M', []byte("Re: Hi there"))})
 	assert.Nil(t, err)
 
 	rerec, err := cCon.Feed()

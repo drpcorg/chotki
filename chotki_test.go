@@ -7,7 +7,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -69,9 +69,9 @@ func TestChotki_Sync(t *testing.T) {
 
 	synca := Syncer{Host: a, Mode: SyncRW, Name: "a"}
 	syncb := Syncer{Host: b, Mode: SyncRW, Name: "b"}
-	err = toyqueue.Relay(&syncb, &synca)
+	err = utils.Relay(&syncb, &synca)
 	assert.Nil(t, err)
-	err = toyqueue.Pump(&synca, &syncb)
+	err = utils.Pump(&synca, &syncb)
 	assert.Equal(t, io.EOF, err)
 
 	bvv, err := b.VersionVector()

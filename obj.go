@@ -15,7 +15,7 @@ var ErrUnsupportedType = errors.New("unsupported field type")
 
 
 func CreateObjectFromList(chotki *chotki.Chotki, list []interface{}) (id chotki.ID, err error) {
-	packet := toyqueue.Records{}
+	packet := utils.Records{}
 	// todo ref type json
 	// todo add id, ref
 	for _, f := range list {

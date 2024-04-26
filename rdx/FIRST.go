@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 
 	"github.com/drpcorg/chotki/toytlv"
 )
@@ -199,7 +199,7 @@ func FIRSTrdxs2tlv(a []RDX) (tlv []byte) {
 	return
 }
 
-func FIRSTrdxs2tlvs(a []RDX) (tlv toyqueue.Records) {
+func FIRSTrdxs2tlvs(a []RDX) (tlv utils.Records) {
 	for i := 0; i < len(a); i++ {
 		if !a[i].FIRST() {
 			return nil

@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 	"github.com/puzpuzpuz/xsync/v3"
 	"golang.org/x/exp/constraints"
 )
@@ -35,7 +35,7 @@ const (
 	MIN_RETRY_PERIOD = time.Second / 2
 )
 
-type Jack func(conn net.Conn) toyqueue.FeedDrainCloser
+type Jack func(conn net.Conn) utils.FeedDrainCloser
 
 // A TCP/TLS/QUIC server/client for the use case of real-time async communication.
 // Differently from the case of request-response (like HTTP), we do not

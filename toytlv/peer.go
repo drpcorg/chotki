@@ -8,18 +8,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 )
 
 type Peer struct {
 	conn  atomic.Pointer[net.Conn]
-	inout toyqueue.FeedDrainCloser
+	inout utils.FeedDrainCloser
 }
 
 func (p *Peer) KeepRead(ctx context.Context) error {
 	var err error
 	var buf []byte
-	var recs toyqueue.Records
+	var recs utils.Records
 
 	for {
 		select {

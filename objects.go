@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 	"github.com/drpcorg/chotki/toytlv"
 	"github.com/pkg/errors"
 	"unicode/utf8"
@@ -92,7 +92,7 @@ func (cho *Chotki) ClassFields(cid rdx.ID) (fields Fields, err error) {
 	return
 }
 
-func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, tlvs toyqueue.Records, err error) {
+func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, tlvs utils.Records, err error) {
 	it := cho.ObjectIterator(oid)
 	if it == nil {
 		return rdx.BadId, nil, ErrObjectUnknown
@@ -118,7 +118,7 @@ func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, t
 	return
 }
 
-func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact toyqueue.Records, err error) {
+func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact utils.Records, err error) {
 	it := cho.ObjectIterator(oid)
 	if it == nil {
 		err = ErrObjectUnknown
@@ -149,7 +149,7 @@ func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact toyqu
 	return
 }
 
-func (cho *Chotki) ObjectFieldsTLV(oid rdx.ID) (tid rdx.ID, tlv toyqueue.Records, err error) {
+func (cho *Chotki) ObjectFieldsTLV(oid rdx.ID) (tid rdx.ID, tlv utils.Records, err error) {
 	it := cho.ObjectIterator(oid)
 	if it == nil {
 		return rdx.BadId, nil, ErrObjectUnknown
@@ -198,7 +198,7 @@ func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) 
 }
 
 func (cho *Chotki) NewClass(parent rdx.ID, fields ...Field) (id rdx.ID, err error) {
-	var fspecs toyqueue.Records
+	var fspecs utils.Records
 	//fspecs = append(fspecs, toytlv.Record('A', parent.ZipBytes()))
 	for _, field := range fields {
 		if !field.Valid() {
@@ -219,7 +219,7 @@ func (cho *Chotki) NewObject(tid rdx.ID, fields ...string) (id rdx.ID, err error
 	if len(fields) > len(form) {
 		return rdx.BadId, ErrUnknownFieldInAType
 	}
-	var packet toyqueue.Records
+	var packet utils.Records
 	for i := 0; i < len(fields); i++ {
 		rdt := form[i+1].RdxType
 		tlv := rdx.Xparse(rdt, fields[i])
@@ -244,7 +244,7 @@ func (cho *Chotki) EditObject(oid rdx.ID, fields ...string) (id rdx.ID, err erro
 		return rdx.BadId, err
 	}
 	// fetch type desc
-	var packet toyqueue.Records
+	var packet utils.Records
 	for i := 0; i < len(fields); i++ {
 		rdt := byte(formula[i].RdxType)
 		tlv := rdx.X2string(rdt, obj[i], fields[i], cho.src)
@@ -291,12 +291,12 @@ func (cho *Chotki) ObjectString(oid rdx.ID) (txt string, err error) {
 }
 
 func (cho *Chotki) EditObjectRDX(oid rdx.ID, pairs []rdx.RDX) (id rdx.ID, err error) {
-	tlvs := toyqueue.Records{}
+	tlvs := utils.Records{}
 	_, form, fact, e := cho.ObjectFields(oid)
 	if e != nil {
 		return rdx.BadId, e
 	}
-	tmp := make(toyqueue.Records, len(fact))
+	tmp := make(utils.Records, len(fact))
 	for i := 0; i+1 < len(pairs); i += 2 {
 		if pairs[i].RdxType != rdx.Term {
 			return
@@ -322,7 +322,7 @@ func (cho *Chotki) EditObjectRDX(oid rdx.ID, pairs []rdx.RDX) (id rdx.ID, err er
 func (cho *Chotki) SetFieldTLV(fid rdx.ID, tlve []byte) (id rdx.ID, err error) {
 	oid := fid.ZeroOff()
 	f := toytlv.Record('F', rdx.ZipUint64(uint64(fid.Off())))
-	return cho.CommitPacket('E', oid, toyqueue.Records{f, tlve})
+	return cho.CommitPacket('E', oid, utils.Records{f, tlve})
 }
 
 var ErrWrongFieldType = errors.New("wrong field type")
@@ -334,7 +334,7 @@ func (cho *Chotki) AddToNField(fid rdx.ID, count uint64) (id rdx.ID, err error) 
 	}
 	src := cho.Source()
 	mine := rdx.Nmine(tlv, src)
-	tlvs := toyqueue.Records{
+	tlvs := utils.Records{
 		toytlv.Record('F', rdx.ZipUint64(fid.Off())),
 		toytlv.Record(rdx.Natural, toytlv.Record(rdx.Term, rdx.ZipUint64Pair(mine+count, src))),
 	}
@@ -365,7 +365,7 @@ func EditTLV(off uint64, rdt byte, tlv []byte) (edit []byte) {
 }
 
 func (cho *Chotki) EditFieldTLV(fid rdx.ID, delta []byte) (id rdx.ID, err error) {
-	tlvs := toyqueue.Records{}
+	tlvs := utils.Records{}
 	tlvs = append(tlvs, toytlv.TinyRecord('F', rdx.ZipUint64(fid.Off())))
 	tlvs = append(tlvs, delta)
 	id, err = cho.CommitPacket('E', fid.ZeroOff(), tlvs)
