@@ -3,6 +3,7 @@ package chotki
 import (
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/drpcorg/chotki/toytlv"
+	"github.com/drpcorg/chotki/utils"
 )
 
 type Counter64 int64
@@ -36,15 +37,14 @@ func ProbeI(input []byte) rdx.ID {
 
 // I id C int
 func CMerge(inputs [][]byte) (merged []byte) {
-	var _heap [32]uint64
-	heap := Uint64Heap(_heap[0:0])
+	heap := utils.Heap[uint64]{}
 	for i, in := range inputs { // fixme 4096
 		id := ProbeI(in)
 		reid := rdx.IDFromSrcSeqOff(id.Src(), id.Seq(), uint16(i)) // todo i order
 		heap.Push(^uint64(reid))
 	}
 	prev := uint64(0)
-	for len(heap) > 0 {
+	for heap.Len() > 0 {
 		id := rdx.ID(^heap.Pop())
 		//fmt.Printf("picked %s\n", id.String())
 		i := int(id.Off())

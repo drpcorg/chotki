@@ -20,15 +20,10 @@ func (ih *ItHeap[T]) Len() int {
 }
 
 func (ih *ItHeap[T]) Push(x T) {
-	if !x.Next() {
-		return
+	if x.Next() {
+		(*ih) = append(*ih, x)
+		ih.up(ih.Len() - 1)
 	}
-	ih.push(x)
-}
-
-func (ih *ItHeap[T]) push(x T) {
-	(*ih) = append(*ih, x)
-	ih.up(ih.Len() - 1)
 }
 
 func (ih *ItHeap[T]) Next() (next []byte) {
@@ -36,13 +31,9 @@ func (ih *ItHeap[T]) Next() (next []byte) {
 	next = x.Value()
 	for ih.Len() > 0 && x.Merge((*ih)[0]) == MergeA {
 		y := ih.Pop()
-		if y.Next() {
-			ih.push(y)
-		}
+		ih.Push(y)
 	}
-	if x.Next() {
-		ih.push(x)
-	}
+	ih.Push(x)
 	return
 }
 

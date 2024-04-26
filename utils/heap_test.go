@@ -1,4 +1,4 @@
-package chotki
+package utils
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 )
 
 func TestUint64Heap_Pop(t *testing.T) {
-	h := Uint64Heap{}
+	h := Heap[uint64]{}
 	for i := uint64(0); i < 64; i++ {
 		h.Push(i ^ 17)
 	}
