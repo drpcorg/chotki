@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 	"golang.org/x/exp/constraints"
 )
 
@@ -49,8 +50,8 @@ type Transport struct {
 	wg   sync.WaitGroup
 	Jack Jack
 
-	conns   sync.Map // *Peer
-	listens sync.Map // net.Listener
+	conns   utils.CMap[string, *Peer]
+	listens utils.CMap[string, net.Listener]
 
 	CertFile, KeyFile string
 	ClientCertFiles   []string
@@ -63,16 +64,16 @@ func NewTransport(jack Jack) *Transport {
 func (t *Transport) Close() error {
 	t.closed.Store(true)
 
-	t.conns.Range(func(k, v any) bool {
-		if err := v.(*Peer).Close(); err != nil {
+	t.conns.Range(func(k string, v *Peer) bool {
+		if err := v.Close(); err != nil {
 			slog.Error("[chotki] couldn't close connection")
 		}
 		t.conns.Delete(k)
 		return true
 	})
 
-	t.listens.Range(func(k, v any) bool {
-		if err := v.(net.Listener).Close(); err != nil {
+	t.listens.Range(func(k string, v net.Listener) bool {
+		if err := v.Close(); err != nil {
 			slog.Error("[chotki] couldn't close listener")
 		}
 		t.listens.Delete(k)
@@ -103,7 +104,7 @@ func (de *Transport) Disconnect(addr string) (err error) {
 		return ErrAddressUnknown
 	}
 
-	conn.(*Peer).Close()
+	conn.Close()
 	return nil
 }
 
@@ -158,7 +159,7 @@ func (de *Transport) Unlisten(addr string) error {
 		return ErrAddressUnknown
 	}
 
-	return listener.(net.Listener).Close()
+	return listener.Close()
 }
 
 func (t *Transport) KeepConnecting(ctx context.Context, addr string) {
@@ -206,7 +207,7 @@ func (t *Transport) KeepListening(ctx context.Context, addr string) {
 			// continue
 		}
 
-		conn, err := listener.(net.Listener).Accept()
+		conn, err := listener.Accept()
 		if err != nil {
 			// reconnects are the client's responsibility, just skip
 			slog.Error("[chotki] couldn't accept connect request", "err", err)
@@ -224,7 +225,7 @@ func (t *Transport) KeepListening(ctx context.Context, addr string) {
 
 func (t *Transport) closePeer(addr string) error {
 	if peer, ok := t.conns.LoadAndDelete(addr); ok {
-		return peer.(*Peer).Close()
+		return peer.Close()
 	}
 
 	return nil

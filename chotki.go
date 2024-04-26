@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/drpcorg/chotki/toyqueue"
 	"github.com/drpcorg/chotki/toytlv"
+	"github.com/drpcorg/chotki/utils"
 )
 
 type Packet []byte
@@ -57,6 +59,7 @@ type Chotki struct {
 	last rdx.ID
 	src  uint64
 
+	lock sync.Mutex
 	db   *pebble.DB
 	net  *toytlv.Transport
 	dir  string
@@ -64,13 +67,10 @@ type Chotki struct {
 
 	orm ORM
 
-	outq    map[string]toyqueue.DrainCloser // queues to broadcast all new packets
-	syncs   map[rdx.ID]*pebble.Batch
-	hooks   map[rdx.ID][]Hook
-	types   map[rdx.ID]Fields
-	lock    sync.Mutex
-	hlock   sync.Mutex
-	outlock sync.Mutex
+	outq  utils.CMap[string, toyqueue.DrainCloser] // queues to broadcast all new packets
+	syncs utils.CMap[rdx.ID, *pebble.Batch]
+	hooks utils.CMap[rdx.ID, []Hook]
+	types utils.CMap[rdx.ID, Fields]
 }
 
 var (
@@ -191,14 +191,10 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 	}
 
 	cho := Chotki{
-		db:    db,
-		src:   opts.Src,
-		dir:   dirname,
-		opts:  opts,
-		types: make(map[rdx.ID]Fields),
-		hooks: make(map[rdx.ID][]Hook),
-		syncs: make(map[rdx.ID]*pebble.Batch),
-		outq:  make(map[string]toyqueue.DrainCloser),
+		db:   db,
+		src:  opts.Src,
+		dir:  dirname,
+		opts: opts,
 	}
 
 	cho.net = toytlv.NewTransport(func(conn net.Conn) toyqueue.FeedDrainCloser {
@@ -271,42 +267,38 @@ func (cho *Chotki) Disconnect(addr string) error {
 }
 
 func (cho *Chotki) AddPacketHose(name string) (feed toyqueue.FeedCloser) {
-	queue := toyqueue.RecordQueue{Limit: SyncOutQueueLimit}
-	cho.outlock.Lock()
-	q := cho.outq[name]
-	cho.outq[name] = &queue
-	cho.outlock.Unlock()
-	if q != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "closing the old conn to %s\n", name)
-		_ = q.Close()
+	if q, deleted := cho.outq.LoadAndDelete(name); deleted && q != nil {
+		slog.Warn(fmt.Sprintf("[chotki] closing the old conn to %s", name))
+		if err := q.Close(); err != nil {
+			slog.Error(fmt.Sprintf("[chotki] couldn't close conn %s", name), "err", err)
+		}
 	}
+
+	queue := toyqueue.RecordQueue{Limit: SyncOutQueueLimit}
+	cho.outq.Store(name, &queue)
 	return queue.Blocking()
 }
 
 func (cho *Chotki) RemovePacketHose(name string) error {
-	cho.outlock.Lock()
-	q := cho.outq[name]
-	delete(cho.outq, name)
-	cho.outlock.Unlock()
-	if q != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "closing the conn to %s\n", name)
-		_ = q.Close()
+	if q, deleted := cho.outq.LoadAndDelete(name); deleted && q != nil {
+		slog.Warn(fmt.Sprintf("[chotki] closing the old conn to %s", name))
+		if err := q.Close(); err != nil {
+			slog.Error(fmt.Sprintf("[chotki] couldn't close conn %s", name), "err", err)
+		}
 	}
 	return nil
 }
 
 func (cho *Chotki) Broadcast(records toyqueue.Records, except string) {
-	cho.outlock.Lock()
-	for name, hose := range cho.outq {
-		if name == except {
-			continue
+	cho.outq.Range(func(name string, hose toyqueue.DrainCloser) bool {
+		if name != except {
+			if err := hose.Drain(records); err != nil {
+				cho.outq.Delete(name)
+			}
 		}
-		err := hose.Drain(records)
-		if err != nil {
-			delete(cho.outq, name)
-		}
-	}
-	cho.outlock.Unlock()
+
+		return true
+	})
 }
 
 func (cho *Chotki) warn(format string, a ...any) {
@@ -336,48 +328,56 @@ func (cho *Chotki) Drain(recs toyqueue.Records) (err error) {
 		switch lit {
 		case 'C':
 			err = cho.ApplyC(id, ref, body, &pb)
+
 		case 'O': // create object
 			if ref == rdx.ID0 {
 				return ErrBadLPacket
 			}
 			err = cho.ApplyOY('O', id, ref, body, &pb)
+
 		case 'Y': // create replica log
 			if ref != rdx.ID0 {
 				return ErrBadLPacket
 			}
 			err = cho.ApplyOY('Y', id, ref, body, &pb)
+
 		case 'E':
 			if ref == rdx.ID0 {
 				return ErrBadLPacket
 			}
 			err = cho.ApplyE(id, ref, body, &pb, &calls)
+
 		case 'H':
 			fmt.Printf("H sync session %s\n", id.String())
 			d := cho.db.NewBatch()
-			cho.syncs[id] = d
+			cho.syncs.Store(id, d)
 			err = cho.ApplyH(id, ref, body, d)
+
 		case 'D':
 			fmt.Printf("D sync session %s\n", id.String())
-			d, ok := cho.syncs[id]
+			d, ok := cho.syncs.Load(id)
 			if !ok {
 				return ErrSyncUnknown
 			}
 			err = cho.ApplyD(id, ref, body, d)
 			yvh = true
+
 		case 'V':
 			fmt.Printf("V sync session %s\n", id.String())
-			d, ok := cho.syncs[id]
+			d, ok := cho.syncs.Load(id)
 			if !ok {
 				return ErrSyncUnknown
 			}
 			err = cho.ApplyV(id, ref, body, d)
 			if err == nil {
 				err = cho.db.Apply(d, &WriteOptions)
-				delete(cho.syncs, id)
+				cho.syncs.Delete(id)
 			}
 			yvh = true
+
 		case 'B': // bye dear
-			delete(cho.syncs, id)
+			cho.syncs.Delete(id)
+
 		default:
 			return fmt.Errorf("unsupported packet type %c", lit)
 		}
@@ -444,11 +444,6 @@ func (cho *Chotki) Close() error {
 			return err
 		}
 	}
-
-	clear(cho.outq)
-	clear(cho.syncs)
-	clear(cho.hooks)
-	clear(cho.types)
 
 	cho.db = nil
 	cho.src = 0
@@ -550,22 +545,27 @@ func GetFieldTLV(reader pebble.Reader, id rdx.ID) (rdt byte, tlv []byte) {
 }
 
 func (cho *Chotki) AddHook(fid rdx.ID, hook Hook) {
-	cho.hlock.Lock()
-	list := cho.hooks[fid]
+	cho.lock.Lock()
+	defer cho.lock.Unlock()
+
+	list, _ := cho.hooks.Load(fid)
 	list = append(list, hook)
-	cho.hooks[fid] = list
-	cho.hlock.Unlock()
+	cho.hooks.Store(fid, list)
 }
 
 func (cho *Chotki) RemoveAllHooks(fid rdx.ID) {
-	cho.hlock.Lock()
-	delete(cho.hooks, fid)
-	cho.hlock.Unlock()
+	cho.hooks.Delete(fid)
 }
 
 func (cho *Chotki) RemoveHook(fid rdx.ID, hook Hook) (err error) {
-	cho.hlock.Lock()
-	list := cho.hooks[fid]
+	cho.lock.Lock()
+	defer cho.lock.Unlock()
+
+	list, ok := cho.hooks.Load(fid)
+	if !ok {
+		return ErrHookNotFound
+	}
+
 	new_list := make([]Hook, 0, len(list))
 	for _, h := range list {
 		if &h != &hook {
@@ -575,8 +575,7 @@ func (cho *Chotki) RemoveHook(fid rdx.ID, hook Hook) (err error) {
 	if len(new_list) == len(list) {
 		err = ErrHookNotFound
 	}
-	cho.hooks[fid] = list
-	cho.hlock.Unlock()
+	cho.hooks.Store(fid, list)
 	return
 }
 

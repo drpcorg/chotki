@@ -145,9 +145,7 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls 
 			fkey,
 			rebar,
 			&WriteOptions)
-		cho.hlock.Lock()
-		hook, ok := cho.hooks[fid]
-		cho.hlock.Unlock()
+		hook, ok := cho.hooks.Load(fid)
 		if ok {
 			for _, h := range hook {
 				(*calls) = append((*calls), CallHook{h, fid})

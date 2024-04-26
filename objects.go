@@ -50,7 +50,7 @@ var ErrBadClass = errors.New("bad class description")
 
 // todo []Field -> map[uint64]Field
 func (cho *Chotki) ClassFields(cid rdx.ID) (fields Fields, err error) {
-	fields, ok := cho.types[cid]
+	fields, ok := cho.types.Load(cid)
 	if ok {
 		return
 	}
@@ -88,9 +88,7 @@ func (cho *Chotki) ClassFields(cid rdx.ID) (fields Fields, err error) {
 		})
 	}
 	_ = clo.Close()
-	cho.lock.Lock()
-	cho.types[cid] = fields
-	cho.lock.Unlock()
+	cho.types.Store(cid, fields)
 	return
 }
 
