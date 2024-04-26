@@ -15,7 +15,7 @@ import (
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/drpcorg/chotki/toyqueue"
 	"github.com/drpcorg/chotki/toytlv"
-	"github.com/drpcorg/chotki/utils"
+	"github.com/puzpuzpuz/xsync/v3"
 )
 
 type Packet []byte
@@ -61,16 +61,15 @@ type Chotki struct {
 
 	lock sync.Mutex
 	db   *pebble.DB
+	orm  *ORM
 	net  *toytlv.Transport
 	dir  string
 	opts Options
 
-	orm ORM
-
-	outq  utils.CMap[string, toyqueue.DrainCloser] // queues to broadcast all new packets
-	syncs utils.CMap[rdx.ID, *pebble.Batch]
-	hooks utils.CMap[rdx.ID, []Hook]
-	types utils.CMap[rdx.ID, Fields]
+	outq  *xsync.MapOf[string, toyqueue.DrainCloser] // queues to broadcast all new packets
+	syncs *xsync.MapOf[rdx.ID, *pebble.Batch]
+	hooks *xsync.MapOf[rdx.ID, []Hook]
+	types *xsync.MapOf[rdx.ID, Fields]
 }
 
 var (
@@ -195,6 +194,11 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		src:  opts.Src,
 		dir:  dirname,
 		opts: opts,
+
+		outq:  xsync.NewMapOf[string, toyqueue.DrainCloser](),
+		syncs: xsync.NewMapOf[rdx.ID, *pebble.Batch](),
+		hooks: xsync.NewMapOf[rdx.ID, []Hook](),
+		types: xsync.NewMapOf[rdx.ID, Fields](),
 	}
 
 	cho.net = toytlv.NewTransport(func(conn net.Conn) toyqueue.FeedDrainCloser {
@@ -206,6 +210,8 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 	})
 	cho.net.CertFile = opts.TlsCertFile
 	cho.net.KeyFile = opts.TlsKeyFile
+
+	cho.orm = NewORM(&cho, db.NewSnapshot())
 
 	if !exists {
 		id0 := rdx.IDFromSrcSeqOff(opts.Src, 0, 0)
@@ -433,19 +439,33 @@ func (cho *Chotki) Close() error {
 
 	if cho.net != nil {
 		if err := cho.net.Close(); err != nil {
-			return err
+			slog.Error("[chotki] couldn't close network", "err", err)
 		}
+	
+		cho.net = nil
 	}
 
-	_ = cho.orm.Close()
+	if cho.orm != nil {
+		if err := cho.orm.Close(); err != nil {
+			slog.Error("[chotki] couldn't close ORM", "err", err)
+		}
+
+		cho.orm = nil
+	}
 
 	if cho.db != nil {
 		if err := cho.db.Close(); err != nil {
-			return err
+			slog.Error("[chotki] couldn't close Pebble", "err", err)
 		}
+
+		cho.db = nil
 	}
 
-	cho.db = nil
+	cho.outq.Clear()
+	cho.syncs.Clear()
+	cho.hooks.Clear()
+	cho.types.Clear()
+
 	cho.src = 0
 	cho.last = rdx.ID0
 
@@ -580,11 +600,5 @@ func (cho *Chotki) RemoveHook(fid rdx.ID, hook Hook) (err error) {
 }
 
 func (cho *Chotki) ObjectMapper() *ORM {
-	if cho.orm.Snap == nil {
-		cho.orm.Host = cho
-		cho.orm.Snap = cho.db.NewSnapshot()
-		cho.orm.objects = make(map[rdx.ID]NativeObject)
-		cho.orm.ids = make(map[NativeObject]rdx.ID)
-	}
-	return &cho.orm
+	return cho.orm
 }

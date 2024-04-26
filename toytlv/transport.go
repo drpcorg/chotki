@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/drpcorg/chotki/toyqueue"
-	"github.com/drpcorg/chotki/utils"
+	"github.com/puzpuzpuz/xsync/v3"
 	"golang.org/x/exp/constraints"
 )
 
@@ -48,17 +48,21 @@ type Transport struct {
 	closed atomic.Bool
 
 	wg   sync.WaitGroup
-	Jack Jack
+	jack Jack
 
-	conns   utils.CMap[string, *Peer]
-	listens utils.CMap[string, net.Listener]
+	conns   *xsync.MapOf[string, *Peer]
+	listens *xsync.MapOf[string, net.Listener]
 
 	CertFile, KeyFile string
 	ClientCertFiles   []string
 }
 
 func NewTransport(jack Jack) *Transport {
-	return &Transport{Jack: jack}
+	return &Transport{
+		jack:    jack,
+		conns:   xsync.NewMapOf[string, *Peer](),
+		listens: xsync.NewMapOf[string, net.Listener](),
+	}
 }
 
 func (t *Transport) Close() error {
@@ -68,7 +72,6 @@ func (t *Transport) Close() error {
 		if err := v.Close(); err != nil {
 			slog.Error("[chotki] couldn't close connection")
 		}
-		t.conns.Delete(k)
 		return true
 	})
 
@@ -76,11 +79,14 @@ func (t *Transport) Close() error {
 		if err := v.Close(); err != nil {
 			slog.Error("[chotki] couldn't close listener")
 		}
-		t.listens.Delete(k)
 		return true
 	})
 
+	t.conns.Clear()
+	t.listens.Clear()
+
 	t.wg.Wait()
+
 	return nil
 }
 
@@ -183,7 +189,7 @@ func (t *Transport) KeepConnecting(ctx context.Context, addr string) {
 
 		connBackoff = MIN_RETRY_PERIOD
 
-		peer := &Peer{inout: t.Jack(conn)}
+		peer := &Peer{inout: t.jack(conn)}
 		peer.conn.Store(&conn)
 
 		t.conns.Store(addr, peer)
@@ -215,7 +221,7 @@ func (t *Transport) KeepListening(ctx context.Context, addr string) {
 		}
 
 		addr := conn.RemoteAddr().String()
-		peer := &Peer{inout: t.Jack(conn)}
+		peer := &Peer{inout: t.jack(conn)}
 		peer.conn.Store(&conn)
 
 		t.conns.Store(addr, peer)

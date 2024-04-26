@@ -2,12 +2,14 @@ package chotki
 
 import (
 	"bytes"
+	"sync"
+	"text/template"
+
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/drpcorg/chotki/toyqueue"
 	"github.com/drpcorg/chotki/toytlv"
-	"sync"
-	"text/template"
+	"github.com/puzpuzpuz/xsync/v3"
 )
 
 type StoreLoader interface {
@@ -27,9 +29,19 @@ type NativeObject interface {
 type ORM struct {
 	Host    *Chotki
 	Snap    *pebble.Snapshot
-	objects map[rdx.ID]NativeObject
-	ids     map[NativeObject]rdx.ID
+	objects *xsync.MapOf[rdx.ID, NativeObject]
+	ids     *xsync.MapOf[NativeObject, rdx.ID]
 	lock    sync.Mutex
+}
+
+func NewORM(host *Chotki, snap *pebble.Snapshot) *ORM {
+	return &ORM{
+		Host: host,
+		Snap: snap,
+
+		ids:     xsync.NewMapOf[NativeObject, rdx.ID](),
+		objects: xsync.NewMapOf[rdx.ID, NativeObject](),
+	}
 }
 
 func (orm *ORM) New(cid rdx.ID, objs ...NativeObject) (err error) {
@@ -48,10 +60,8 @@ func (orm *ORM) New(cid rdx.ID, objs ...NativeObject) (err error) {
 		var id rdx.ID
 		id, err = orm.Host.CommitPacket('O', cid, tlv)
 		if err == nil {
-			orm.lock.Lock()
-			orm.ids[obj] = id
-			orm.objects[id] = obj
-			orm.lock.Unlock()
+			orm.ids.Store(obj, id)
+			orm.objects.Store(id, obj)
 		}
 	}
 	return nil
@@ -110,41 +120,38 @@ func (orm *ORM) Save(objs ...NativeObject) (err error) {
 
 // SaveAll the changed fields; this will re-scan the objects in the database.
 func (orm *ORM) SaveAll() (err error) {
-	orm.lock.Lock()
-	for _, obj := range orm.objects {
+	orm.objects.Range(func(_ rdx.ID, obj NativeObject) bool {
 		err = orm.Save(obj)
-		if err != nil {
-			break
-		}
-	}
-	orm.lock.Unlock()
+		return err == nil
+	})
+
 	return
 }
 
 // Clear forgets all the objects loaded; all the unsaved changes discarded
 func (orm *ORM) Clear() error {
 	orm.lock.Lock()
+	defer orm.lock.Unlock()
+
 	if orm.Host == nil {
-		orm.lock.Unlock()
 		return ErrClosed
 	}
-	orm.objects = make(map[rdx.ID]NativeObject)
+	orm.objects.Clear()
 	orm.Snap = orm.Host.Database().NewSnapshot()
-	orm.lock.Unlock()
 	return nil
 }
 
 func (orm *ORM) Close() error {
 	orm.lock.Lock()
+	defer orm.lock.Unlock()
+
 	if orm.Host == nil {
-		orm.lock.Unlock()
 		return ErrClosed
 	}
-	orm.objects = nil
+	orm.objects.Clear()
 	orm.Host = nil
 	_ = orm.Snap.Close()
 	orm.Snap = nil
-	orm.lock.Unlock()
 	return nil
 }
 
@@ -174,14 +181,10 @@ func (orm *ORM) UpdateObject(obj NativeObject, snap *pebble.Snapshot) error {
 
 func (orm *ORM) UpdateAll() (err error) {
 	snap := orm.Host.Database().NewSnapshot()
-	orm.lock.Lock()
-	for _, obj := range orm.objects {
+	orm.objects.Range(func(_ rdx.ID, obj NativeObject) bool {
 		err = orm.UpdateObject(obj, snap)
-		if err != nil {
-			break
-		}
-	}
-	orm.lock.Unlock()
+		return err == nil
+	})
 	return
 }
 
@@ -195,9 +198,7 @@ func (orm *ORM) SyncAll() (err error) {
 }
 
 func (orm *ORM) Load(id rdx.ID, blanc NativeObject) (obj NativeObject, err error) {
-	orm.lock.Lock()
-	pre, ok := orm.objects[id]
-	orm.lock.Unlock()
+	pre, ok := orm.objects.Load(id)
 	if ok {
 		return pre, nil
 	}
@@ -216,29 +217,22 @@ func (orm *ORM) Load(id rdx.ID, blanc NativeObject) (obj NativeObject, err error
 		}
 	}
 	_ = it.Close()
-	orm.lock.Lock()
-	pre, ok = orm.objects[id]
+	pre, ok = orm.objects.Load(id)
 	if ok {
-		orm.lock.Unlock()
 		return pre, nil
 	}
-	orm.objects[id] = blanc
-	orm.ids[blanc] = id
-	orm.lock.Unlock()
+	orm.objects.Store(id, blanc)
+	orm.ids.Store(blanc, id)
 	return blanc, nil
 }
 
 func (orm *ORM) Object(id rdx.ID) (obj NativeObject) {
-	orm.lock.Lock()
-	obj = orm.objects[id]
-	orm.lock.Unlock()
+	obj, _ = orm.objects.Load(id)
 	return // todo
 }
 
 func (orm *ORM) FindID(obj NativeObject) rdx.ID {
-	orm.lock.Lock()
-	id, ok := orm.ids[obj]
-	orm.lock.Unlock()
+	id, ok := orm.ids.Load(obj)
 	if !ok {
 		id = rdx.BadId
 	}
