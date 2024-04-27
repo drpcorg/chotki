@@ -2,6 +2,7 @@ package toytlv
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"sync"
 	"testing"
@@ -50,11 +51,12 @@ func (c *TestConsumer) Close() error {
 func TestTCPDepot_Connect(t *testing.T) {
 	loop := "tcp://127.0.0.1:32000"
 
-	cert, key := "cert.pem", "key.pem"
+	cert, key := "testonly_cert.pem", "testonly_key.pem"
+	log := utils.NewDefaultLogger(slog.LevelDebug)
 
 	lCon := TestConsumer{}
 	lCon.co.L = &lCon.mx
-	l := NewTransport(func(conn net.Conn) utils.FeedDrainCloser {
+	l := NewTransport(log, func(conn net.Conn) utils.FeedDrainCloser {
 		return &lCon
 	})
 	err := l.Listen(context.Background(), loop)
@@ -65,7 +67,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 
 	cCon := TestConsumer{}
 	cCon.co.L = &cCon.mx
-	c := NewTransport(func(conn net.Conn) utils.FeedDrainCloser {
+	c := NewTransport(log, func(conn net.Conn) utils.FeedDrainCloser {
 		return &cCon
 	})
 	err = c.Connect(context.Background(), loop)

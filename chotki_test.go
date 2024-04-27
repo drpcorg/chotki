@@ -1,7 +1,9 @@
 package chotki
 
 import (
+	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"testing"
 
@@ -15,7 +17,7 @@ func testdirs(origs ...uint64) ([]string, func()) {
 	dirs := make([]string, len(origs))
 
 	for i, orig := range origs {
-		dirs[i] = ReplicaDirName(orig)
+		dirs[i] = fmt.Sprintf("cho%x", orig)
 		os.RemoveAll(dirs[i])
 	}
 
@@ -67,8 +69,8 @@ func TestChotki_Sync(t *testing.T) {
 	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B"})
 	assert.Nil(t, err)
 
-	synca := Syncer{Host: a, Mode: SyncRW, Name: "a"}
-	syncb := Syncer{Host: b, Mode: SyncRW, Name: "b"}
+	synca := Syncer{Host: a, Mode: SyncRW, Name: "a", Log: utils.NewDefaultLogger(slog.LevelDebug)}
+	syncb := Syncer{Host: b, Mode: SyncRW, Name: "b", Log: utils.NewDefaultLogger(slog.LevelDebug)}
 	err = utils.Relay(&syncb, &synca)
 	assert.Nil(t, err)
 	err = utils.Pump(&synca, &syncb)

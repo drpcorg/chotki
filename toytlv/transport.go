@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -49,6 +48,7 @@ type Transport struct {
 
 	wg   sync.WaitGroup
 	jack Jack
+	log  utils.Logger
 
 	conns   *xsync.MapOf[string, *Peer]
 	listens *xsync.MapOf[string, net.Listener]
@@ -57,8 +57,9 @@ type Transport struct {
 	ClientCertFiles   []string
 }
 
-func NewTransport(jack Jack) *Transport {
+func NewTransport(log utils.Logger, jack Jack) *Transport {
 	return &Transport{
+		log:     log,
 		jack:    jack,
 		conns:   xsync.NewMapOf[string, *Peer](),
 		listens: xsync.NewMapOf[string, net.Listener](),
@@ -70,14 +71,14 @@ func (t *Transport) Close() error {
 
 	t.conns.Range(func(k string, v *Peer) bool {
 		if err := v.Close(); err != nil {
-			slog.Error("[chotki] couldn't close connection")
+			t.log.Error("couldn't close connection")
 		}
 		return true
 	})
 
 	t.listens.Range(func(k string, v net.Listener) bool {
 		if err := v.Close(); err != nil {
-			slog.Error("[chotki] couldn't close listener")
+			t.log.Error("couldn't close listener")
 		}
 		return true
 	})
@@ -182,7 +183,7 @@ func (t *Transport) KeepConnecting(ctx context.Context, addr string) {
 
 		conn, err := t.createDialConnect(ctx, addr)
 		if err != nil {
-			slog.Error("[chotki] couldn't connect", "addr", addr, "err", err)
+			t.log.Error("couldn't connect", "addr", addr, "err", err)
 			connBackoff = min(MAX_RETRY_PERIOD, connBackoff*2)
 			continue
 		}
@@ -216,7 +217,7 @@ func (t *Transport) KeepListening(ctx context.Context, addr string) {
 		conn, err := listener.Accept()
 		if err != nil {
 			// reconnects are the client's responsibility, just skip
-			slog.Error("[chotki] couldn't accept connect request", "err", err)
+			t.log.Error("couldn't accept connect request", "err", err)
 			continue
 		}
 
@@ -254,12 +255,12 @@ func (t *Transport) keepPeer(ctx context.Context, addr string, peer *Peer) error
 	select {
 	case err := <-rerrch:
 		if err != nil {
-			slog.Error("[chotki] couldn't read from peer", "addr", addr, "err", err)
+			t.log.Error("couldn't read from peer", "addr", addr, "err", err)
 			return t.closePeer(addr)
 		}
 	case err := <-werrch:
 		if err != nil {
-			slog.Error("[chotki] couldn't write to peer", "addr", addr, "err", err)
+			t.log.Error("couldn't write to peer", "addr", addr, "err", err)
 			return t.closePeer(addr)
 		}
 	}

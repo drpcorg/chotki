@@ -46,21 +46,18 @@ func CMerge(inputs [][]byte) (merged []byte) {
 	prev := uint64(0)
 	for heap.Len() > 0 {
 		id := rdx.ID(^heap.Pop())
-		//fmt.Printf("picked %s\n", id.String())
 		i := int(id.Off())
 		iclen := toytlv.ProbeHeaders("IC", inputs[i])
 		if iclen == -1 {
 			continue //?!
 		}
 		if id.Src() != prev {
-			//fmt.Println("accepted")
 			merged = append(merged, inputs[i][:iclen]...)
 			prev = id.Src()
 		}
 		inputs[i] = inputs[i][iclen:]
 		if len(inputs[i]) != 0 {
 			id := ProbeI(inputs[i])
-			//fmt.Printf("queued %s\n", id.String())
 			reid := rdx.IDFromSrcSeqOff(id.Src(), id.Seq(), uint16(i)) // todo i order
 			heap.Push(^uint64(reid))
 		}

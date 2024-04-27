@@ -2,15 +2,14 @@ package chotki
 
 import (
 	"bytes"
-	"fmt"
-	"github.com/cockroachdb/pebble"
-	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/utils"
-	"github.com/drpcorg/chotki/toytlv"
 	"io"
-	"os"
 	"sync"
 	"time"
+
+	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/rdx"
+	"github.com/drpcorg/chotki/toytlv"
+	"github.com/drpcorg/chotki/utils"
 )
 
 const SyncBlockBits = 28
@@ -22,6 +21,7 @@ type Syncer struct {
 	Host       *Chotki
 	Mode       uint64
 	Name       string
+	Log        utils.Logger
 	peert      rdx.ID
 	snap       *pebble.Snapshot
 	snaplast   rdx.ID
@@ -92,7 +92,7 @@ func (sync *Syncer) Close() error {
 
 	_ = sync.Host.RemovePacketHose(sync.Name)
 	sync.SetFeedState(SendNone) //fixme
-	_, _ = fmt.Fprintf(os.Stderr, "connection %s closed: %v\n", sync.Name, sync.reason)
+	sync.Log.Error("connection %s closed: %v\n", sync.Name, sync.reason)
 
 	return nil
 }
@@ -259,12 +259,13 @@ func (sync *Syncer) FeedDiffVV() (vv utils.Records, err error) {
 }
 
 func (sync *Syncer) SetFeedState(state int) {
-	fmt.Printf("%s feed state %s\n", sync.Name, SendStates[state])
+	sync.Log.Debug("feed state", "name", sync.Name, "state", SendStates[state])
 	sync.feedState = state
 }
 
 func (sync *Syncer) SetDrainState(state int) {
-	fmt.Printf("%s drain state %s\n", sync.Name, SendStates[state])
+	sync.Log.Debug("drain state", "name", sync.Name, "state", SendStates[state])
+
 	sync.lock.Lock()
 	sync.drainState = state
 	if sync.cond.L == nil {

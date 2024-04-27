@@ -2,6 +2,7 @@ package examples
 
 import (
 	"io"
+	"log/slog"
 	"os"
 	"testing"
 
@@ -111,8 +112,8 @@ func TestObjectExamleWithORM(t *testing.T) {
 	b, err := chotki.Open("cho1f", chotki.Options{Src: 0x1f, Name: "another test replica"})
 	assert.Nil(t, err)
 
-	syncera := chotki.Syncer{Host: a, Mode: chotki.SyncRW}
-	syncerb := chotki.Syncer{Host: b, Mode: chotki.SyncRW}
+	syncera := chotki.Syncer{Host: a, Mode: chotki.SyncRW, Log: utils.NewDefaultLogger(slog.LevelDebug)}
+	syncerb := chotki.Syncer{Host: b, Mode: chotki.SyncRW, Log: utils.NewDefaultLogger(slog.LevelDebug)}
 	err = utils.Relay(&syncerb, &syncera)
 	assert.Nil(t, err)
 	err = utils.Pump(&syncera, &syncerb)

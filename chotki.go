@@ -13,25 +13,22 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/utils"
 	"github.com/drpcorg/chotki/toytlv"
+	"github.com/drpcorg/chotki/utils"
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
 type Packet []byte
-
-// Batch of packets
-type Batch [][]byte
+type Batch []Packet
 
 type Options struct {
 	pebble.Options
 
-	Src            uint64
-	Name           string
-	Log1           utils.Records
-	MaxLogLen      int64
-	RelaxedOrder   bool
-	RestoreNetwork bool
+	Src          uint64
+	Name         string
+	Log1         utils.Records
+	MaxLogLen    int64
+	RelaxedOrder bool
 
 	TlsCertFile string
 	TlsKeyFile  string
@@ -65,6 +62,7 @@ type Chotki struct {
 	net  *toytlv.Transport
 	dir  string
 	opts Options
+	log  utils.Logger
 
 	outq  *xsync.MapOf[string, utils.DrainCloser] // queues to broadcast all new packets
 	syncs *xsync.MapOf[rdx.ID, *pebble.Batch]
@@ -133,10 +131,6 @@ func (cho *Chotki) Source() uint64 {
 	return cho.src
 }
 
-func ReplicaDirName(rno uint64) string {
-	return fmt.Sprintf("cho%x", rno)
-}
-
 func merger(key, value []byte) (pebble.ValueMerger, error) {
 	/*if len(key) != 10 {
 		return nil, nil
@@ -195,17 +189,20 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		dir:  dirname,
 		opts: opts,
 
+		log: utils.NewDefaultLogger(slog.LevelWarn),
+
 		outq:  xsync.NewMapOf[string, utils.DrainCloser](),
 		syncs: xsync.NewMapOf[rdx.ID, *pebble.Batch](),
 		hooks: xsync.NewMapOf[rdx.ID, []Hook](),
 		types: xsync.NewMapOf[rdx.ID, Fields](),
 	}
 
-	cho.net = toytlv.NewTransport(func(conn net.Conn) utils.FeedDrainCloser {
+	cho.net = toytlv.NewTransport(cho.log, func(conn net.Conn) utils.FeedDrainCloser {
 		return &Syncer{
 			Host: &cho,
 			Mode: SyncRWLive,
 			Name: conn.RemoteAddr().String(),
+			Log:  cho.log,
 		}
 	})
 	cho.net.CertFile = opts.TlsCertFile
@@ -274,9 +271,9 @@ func (cho *Chotki) Disconnect(addr string) error {
 
 func (cho *Chotki) AddPacketHose(name string) (feed utils.FeedCloser) {
 	if q, deleted := cho.outq.LoadAndDelete(name); deleted && q != nil {
-		slog.Warn(fmt.Sprintf("[chotki] closing the old conn to %s", name))
+		cho.log.Warn(fmt.Sprintf("closing the old conn to %s", name))
 		if err := q.Close(); err != nil {
-			slog.Error(fmt.Sprintf("[chotki] couldn't close conn %s", name), "err", err)
+			cho.log.Error(fmt.Sprintf("couldn't close conn %s", name), "err", err)
 		}
 	}
 
@@ -287,9 +284,9 @@ func (cho *Chotki) AddPacketHose(name string) (feed utils.FeedCloser) {
 
 func (cho *Chotki) RemovePacketHose(name string) error {
 	if q, deleted := cho.outq.LoadAndDelete(name); deleted && q != nil {
-		slog.Warn(fmt.Sprintf("[chotki] closing the old conn to %s", name))
+		cho.log.Warn(fmt.Sprintf("closing the old conn to %s", name))
 		if err := q.Close(); err != nil {
-			slog.Error(fmt.Sprintf("[chotki] couldn't close conn %s", name), "err", err)
+			cho.log.Error(fmt.Sprintf("couldn't close conn %s", name), "err", err)
 		}
 	}
 	return nil
@@ -307,10 +304,6 @@ func (cho *Chotki) Broadcast(records utils.Records, except string) {
 	})
 }
 
-func (cho *Chotki) warn(format string, a ...any) {
-	_, _ = fmt.Fprintf(os.Stderr, format, a...)
-}
-
 func (cho *Chotki) Drain(recs utils.Records) (err error) {
 	rest := recs
 	var calls []CallHook
@@ -320,7 +313,7 @@ func (cho *Chotki) Drain(recs utils.Records) (err error) {
 		rest = rest[1:]
 		lit, id, ref, body, parse_err := ParsePacket(packet)
 		if parse_err != nil {
-			cho.warn("bad packet: %s", parse_err.Error())
+			cho.log.Warn("bad packet", "err", parse_err)
 			return parse_err
 		}
 		if id.Src() == cho.src && id > cho.last {
@@ -333,34 +326,38 @@ func (cho *Chotki) Drain(recs utils.Records) (err error) {
 		pb := pebble.Batch{}
 		switch lit {
 		case 'C':
+			cho.log.Debug("C sync session", "id", id.String())
 			err = cho.ApplyC(id, ref, body, &pb)
 
 		case 'O': // create object
+			cho.log.Debug("O sync session", "id", id.String())
 			if ref == rdx.ID0 {
 				return ErrBadLPacket
 			}
 			err = cho.ApplyOY('O', id, ref, body, &pb)
 
 		case 'Y': // create replica log
+			cho.log.Debug("Y sync session", "id", id.String())
 			if ref != rdx.ID0 {
 				return ErrBadLPacket
 			}
 			err = cho.ApplyOY('Y', id, ref, body, &pb)
 
 		case 'E':
+			cho.log.Debug("E sync session", "id", id.String())
 			if ref == rdx.ID0 {
 				return ErrBadLPacket
 			}
 			err = cho.ApplyE(id, ref, body, &pb, &calls)
 
 		case 'H':
-			fmt.Printf("H sync session %s\n", id.String())
+			cho.log.Debug("H sync session", "id", id.String())
 			d := cho.db.NewBatch()
 			cho.syncs.Store(id, d)
 			err = cho.ApplyH(id, ref, body, d)
 
 		case 'D':
-			fmt.Printf("D sync session %s\n", id.String())
+			cho.log.Debug("D sync session", "id", id.String())
 			d, ok := cho.syncs.Load(id)
 			if !ok {
 				return ErrSyncUnknown
@@ -369,7 +366,7 @@ func (cho *Chotki) Drain(recs utils.Records) (err error) {
 			yvh = true
 
 		case 'V':
-			fmt.Printf("V sync session %s\n", id.String())
+			cho.log.Debug("V sync session", "id", id.String())
 			d, ok := cho.syncs.Load(id)
 			if !ok {
 				return ErrSyncUnknown
@@ -439,15 +436,15 @@ func (cho *Chotki) Close() error {
 
 	if cho.net != nil {
 		if err := cho.net.Close(); err != nil {
-			slog.Error("[chotki] couldn't close network", "err", err)
+			cho.log.Error("couldn't close network", "err", err)
 		}
-	
+
 		cho.net = nil
 	}
 
 	if cho.orm != nil {
 		if err := cho.orm.Close(); err != nil {
-			slog.Error("[chotki] couldn't close ORM", "err", err)
+			cho.log.Error("couldn't close ORM", "err", err)
 		}
 
 		cho.orm = nil
@@ -455,7 +452,7 @@ func (cho *Chotki) Close() error {
 
 	if cho.db != nil {
 		if err := cho.db.Close(); err != nil {
-			slog.Error("[chotki] couldn't close Pebble", "err", err)
+			cho.log.Error("couldn't close Pebble", "err", err)
 		}
 
 		cho.db = nil

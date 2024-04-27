@@ -14,6 +14,10 @@ import (
 	"github.com/drpcorg/chotki/toytlv"
 )
 
+func replicaDirName(rno uint64) string {
+	return fmt.Sprintf("cho%x", rno)
+}
+
 var HelpCreate = errors.New("create zone/1 {Name:\"Name\",Description:\"long text\"}")
 
 func (repl *REPL) CommandCreate(arg *rdx.RDX) (id rdx.ID, err error) {
@@ -55,7 +59,7 @@ func (repl *REPL) CommandCreate(arg *rdx.RDX) (id rdx.ID, err error) {
 		return
 	}
 
-	dirname := chotki.ReplicaDirName(src.Src())
+	dirname := replicaDirName(src.Src())
 	repl.Host, err = chotki.Open(dirname, chotki.Options{
 		Src:     src.Src(),
 		Name:    name,
@@ -75,7 +79,7 @@ func (repl *REPL) CommandOpen(arg *rdx.RDX) (rdx.ID, error) {
 	}
 
 	src0 := rdx.IDFromText(arg.Text)
-	dirname := chotki.ReplicaDirName(src0.Src())
+	dirname := replicaDirName(src0.Src())
 
 	var err error
 	repl.Host, err = chotki.Open(dirname, chotki.Options{
