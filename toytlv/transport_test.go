@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net"
-	"sync"
 	"testing"
 	"time"
 
@@ -16,48 +15,15 @@ import (
 // 2. create a server, client, connect, disconn, reconnect
 // 3. create a server, client, conn, stop the serv, relaunch, reconnect
 
-type TestConsumer struct {
-	rcvd utils.Records
-	mx   sync.Mutex
-	co   sync.Cond
-}
-
-func (c *TestConsumer) Drain(recs utils.Records) error {
-	c.mx.Lock()
-	defer c.mx.Unlock()
-
-	c.rcvd = append(c.rcvd, recs...)
-	c.co.Broadcast()
-	return nil
-}
-
-func (c *TestConsumer) Feed() (utils.Records, error) {
-	c.mx.Lock()
-	defer c.mx.Unlock()
-
-	for len(c.rcvd) == 0 {
-		c.co.Wait()
-	}
-
-	recs := c.rcvd
-	c.rcvd = c.rcvd[len(c.rcvd):]
-	return recs, nil
-}
-
-func (c *TestConsumer) Close() error {
-	return nil
-}
-
 func TestTCPDepot_Connect(t *testing.T) {
 	loop := "tcp://127.0.0.1:32000"
 
 	cert, key := "testonly_cert.pem", "testonly_key.pem"
 	log := utils.NewDefaultLogger(slog.LevelDebug)
 
-	lCon := TestConsumer{}
-	lCon.co.L = &lCon.mx
+	lCon := utils.NewRecordQueue(0, time.Millisecond)
 	l := NewTransport(log, func(conn net.Conn) utils.FeedDrainCloser {
-		return &lCon
+		return lCon
 	})
 	err := l.Listen(context.Background(), loop)
 	assert.Nil(t, err)
@@ -65,10 +31,9 @@ func TestTCPDepot_Connect(t *testing.T) {
 	l.CertFile = cert
 	l.KeyFile = key
 
-	cCon := TestConsumer{}
-	cCon.co.L = &cCon.mx
+	cCon := utils.NewRecordQueue(0, time.Millisecond)
 	c := NewTransport(log, func(conn net.Conn) utils.FeedDrainCloser {
-		return &cCon
+		return cCon
 	})
 	err = c.Connect(context.Background(), loop)
 	assert.Nil(t, err)
@@ -76,7 +41,8 @@ func TestTCPDepot_Connect(t *testing.T) {
 	c.CertFile = cert
 	c.KeyFile = key
 
-	time.Sleep(time.Second * 2) // TODO: use events
+	// Wait connection, todo use events
+	time.Sleep(time.Second * 2)
 
 	// send a record
 	err = cCon.Drain(utils.Records{Record('M', []byte("Hi there"))})

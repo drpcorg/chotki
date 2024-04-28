@@ -9,6 +9,7 @@ require (
 	github.com/puzpuzpuz/xsync/v3 v3.1.0
 	github.com/stretchr/testify v1.8.4
 	golang.org/x/exp v0.0.0-20230626212559-97b1e661b5df
+	golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4
 )
 
 replace github.com/cockroachdb/pebble => github.com/drpcorg/pebble v0.0.0-20240420050940-7176ceaf0bb3

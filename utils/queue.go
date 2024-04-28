@@ -3,7 +3,8 @@ package utils
 import (
 	"errors"
 	"io"
-	"sync"
+	"sync/atomic"
+	"time"
 )
 
 type Feeder interface {
@@ -32,156 +33,6 @@ type FeedDrainCloser interface {
 	Feeder
 	Drainer
 	io.Closer
-}
-
-// Records (a batch of) as a very universal primitive, especially
-// for database/network op/packet processing. Batching allows
-// for writev() and other performance optimizations. Also, if
-// you have cryptography, blobs are way handier than structs.
-// Records converts easily to net.Buffers.
-type Records [][]byte
-
-func (recs Records) recrem(total int64) (prelen int, prerem int64) {
-	for len(recs) > prelen && int64(len(recs[prelen])) <= total {
-		total -= int64(len(recs[prelen]))
-		prelen++
-	}
-	prerem = total
-	return
-}
-
-func (recs Records) WholeRecordPrefix(limit int64) (prefix Records, remainder int64) {
-	prelen, remainder := recs.recrem(limit)
-	prefix = recs[:prelen]
-	return
-}
-
-func (recs Records) ExactSuffix(total int64) (suffix Records) {
-	prelen, prerem := recs.recrem(total)
-	suffix = recs[prelen:]
-	if prerem != 0 { // damages the original, hence copy
-		edited := make(Records, 1, len(suffix))
-		edited[0] = suffix[0][prerem:]
-		suffix = append(edited, suffix[1:]...)
-	}
-	return
-}
-
-func (recs Records) TotalLen() (total int64) {
-	for _, r := range recs {
-		total += int64(len(r))
-	}
-	return
-}
-
-type RecordQueue struct {
-	recs  Records
-	mu    sync.Mutex
-	co    sync.Cond
-	Limit int
-}
-
-var ErrWouldBlock = errors.New("the queue is over capacity")
-var ErrClosed = errors.New("queue is closed")
-
-func (q *RecordQueue) Drain(recs Records) error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	was0 := len(q.recs) == 0
-	if len(q.recs)+len(recs) > q.Limit {
-		if q.Limit == 0 {
-			return ErrClosed
-		}
-		return ErrWouldBlock
-	}
-	q.recs = append(q.recs, recs...)
-	if was0 && q.co.L != nil {
-		q.co.Broadcast()
-	}
-	return nil
-}
-
-func (q *RecordQueue) Close() error {
-	q.Limit = 0
-	return nil
-}
-
-func (q *RecordQueue) Feed() (recs Records, err error) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if len(q.recs) == 0 {
-		err = ErrWouldBlock
-		if q.Limit == 0 {
-			err = ErrClosed
-		}
-		return
-	}
-	wasfull := len(q.recs) >= q.Limit
-	recs = q.recs
-	q.recs = q.recs[len(q.recs):]
-	if wasfull && q.co.L != nil {
-		q.co.Broadcast()
-	}
-	return
-}
-
-func (q *RecordQueue) Blocking() FeedDrainCloser {
-	if q.co.L == nil {
-		q.co.L = &q.mu
-	}
-	return &blockingRecordQueue{q}
-}
-
-type blockingRecordQueue struct {
-	queue *RecordQueue
-}
-
-func (bq *blockingRecordQueue) Close() error {
-	return bq.queue.Close()
-}
-
-func (bq *blockingRecordQueue) Drain(recs Records) error {
-	q := bq.queue
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	for len(recs) > 0 {
-		was0 := len(q.recs) == 0
-		for q.Limit <= len(q.recs) {
-			if q.Limit == 0 {
-				return ErrClosed
-			}
-			q.co.Wait()
-		}
-		qcap := q.Limit - len(q.recs)
-		if qcap > len(recs) {
-			qcap = len(recs)
-		}
-		q.recs = append(q.recs, recs[:qcap]...)
-		recs = recs[qcap:]
-		if was0 {
-			q.co.Broadcast()
-		}
-	}
-	return nil
-}
-
-func (bq *blockingRecordQueue) Feed() (recs Records, err error) {
-	q := bq.queue
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	wasfull := len(q.recs) >= q.Limit
-	for len(q.recs) == 0 {
-		if q.Limit == 0 {
-			return nil, ErrClosed
-		}
-		q.co.Wait()
-	}
-	recs = q.recs
-	q.recs = q.recs[len(q.recs):]
-	if wasfull {
-		q.co.Broadcast()
-	}
-	return
 }
 
 func Relay(feeder Feeder, drainer Drainer) error {
@@ -226,5 +77,54 @@ func PumpThenClose(feed FeedCloser, drain DrainCloser) error {
 		return ferr
 	} else {
 		return derr
+	}
+}
+
+type RecordQueue struct {
+	closed  atomic.Bool
+	timeout time.Duration
+	ch      chan []byte
+}
+
+var ErrClosed = errors.New("[chotki] records queue is closed")
+
+func NewRecordQueue(limit int, timeout time.Duration) *RecordQueue {
+	return &RecordQueue{
+		timeout: timeout,
+		ch:      make(chan []byte, limit),
+	}
+}
+
+func (q *RecordQueue) Close() error {
+	q.closed.Store(true)
+	close(q.ch)
+	return nil
+}
+
+func (q *RecordQueue) Drain(recs Records) error {
+	if closed := q.closed.Load(); closed {
+		return ErrClosed
+	}
+	for _, pkg := range recs {
+		q.ch <- pkg
+	}
+	return nil
+}
+
+func (q *RecordQueue) Feed() (recs Records, err error) {
+	if closed := q.closed.Load(); closed {
+		return nil, ErrClosed
+	}
+
+	select {
+	case <-time.After(q.timeout):
+		return Records{}, nil
+	case pkg := <-q.ch:
+		recs := Records{pkg}
+		for ok := false; ok; {
+			pkg, ok = <-q.ch
+			recs = append(recs, pkg)
+		}
+		return recs, nil
 	}
 }

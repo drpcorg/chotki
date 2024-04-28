@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -12,16 +13,19 @@ import (
 )
 
 type Peer struct {
-	conn  atomic.Pointer[net.Conn]
+	closed atomic.Bool
+	wg     sync.WaitGroup
+
+	conn  net.Conn
 	inout utils.FeedDrainCloser
 }
 
-func (p *Peer) KeepRead(ctx context.Context) error {
+func (p *Peer) keepRead(ctx context.Context) error {
 	var err error
 	var buf []byte
 	var recs utils.Records
 
-	for {
+	for !p.closed.Load() {
 		select {
 		case <-ctx.Done():
 			break
@@ -29,12 +33,7 @@ func (p *Peer) KeepRead(ctx context.Context) error {
 			// continue
 		}
 
-		conn := p.conn.Load()
-		if conn == nil {
-			break
-		}
-
-		if buf, err = appendRead(buf, *conn, TYPICAL_MTU); err != nil {
+		if buf, err = appendRead(buf, p.conn, TYPICAL_MTU); err != nil {
 			if errors.Is(err, io.EOF) {
 				time.Sleep(time.Millisecond)
 				continue
@@ -46,11 +45,11 @@ func (p *Peer) KeepRead(ctx context.Context) error {
 		recs, buf, err = Split(buf)
 		if err != nil {
 			return err
-		} else if len(recs) == 0 {
+		}
+		if len(recs) == 0 {
 			time.Sleep(time.Millisecond)
 			continue
 		}
-
 		if err = p.inout.Drain(recs); err != nil {
 			return err
 		}
@@ -59,18 +58,13 @@ func (p *Peer) KeepRead(ctx context.Context) error {
 	return nil
 }
 
-func (p *Peer) KeepWrite(ctx context.Context) error {
-	for {
+func (p *Peer) keepWrite(ctx context.Context) error {
+	for !p.closed.Load() {
 		select {
 		case <-ctx.Done():
 			break
 		default:
 			// continue
-		}
-
-		conn := p.conn.Load()
-		if conn == nil {
-			break
 		}
 
 		recs, err := p.inout.Feed()
@@ -80,8 +74,7 @@ func (p *Peer) KeepWrite(ctx context.Context) error {
 
 		b := net.Buffers(recs)
 		for len(b) > 0 && err == nil {
-			// TODO: consider the number of bytes written
-			if _, err = b.WriteTo(*conn); err != nil {
+			if _, err = b.WriteTo(p.conn); err != nil {
 				return err
 			}
 		}
@@ -90,15 +83,45 @@ func (p *Peer) KeepWrite(ctx context.Context) error {
 	return nil
 }
 
-func (p *Peer) Close() error {
-	// TODO writer closes on complete | 1 sec expired
-	if conn := p.conn.Swap(nil); conn != nil {
-		if err := (*conn).Close(); err != nil {
-			return err
-		}
+func (p *Peer) Keep(ctx context.Context) (rerr, werr, cerr error) {
+	p.wg.Add(2) // read & write
+	defer p.wg.Add(-2)
+
+	if p.closed.Load() {
+		return nil, nil, nil
 	}
 
-	return nil
+	readErrCh, writeErrCh := make(chan error, 1), make(chan error, 1)
+	go func() { readErrCh <- p.keepRead(ctx) }()
+	go func() { writeErrCh <- p.keepWrite(ctx) }()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case rerr = <-readErrCh:
+			if errors.Is(rerr, net.ErrClosed) {
+				// That's ok, we probably close it ourselves.
+				rerr = nil
+			}
+		case werr = <-writeErrCh:
+			// You can't close it before it's written, but you can close it before it's read.
+			// Close after the writing thread has finished, this will cancel all reading threads.
+			cerr = p.conn.Close()
+		}
+
+		p.closed.Store(true)
+	}
+	p.conn = nil
+	return
+}
+
+func (p *Peer) Close() {
+	p.closed.Store(true)
+	p.wg.Wait()
+
+	if p.conn != nil {
+		p.conn.Close()
+		p.conn = nil
+	}
 }
 
 func roundPage(l int) int {

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
@@ -277,9 +278,9 @@ func (cho *Chotki) AddPacketHose(name string) (feed utils.FeedCloser) {
 		}
 	}
 
-	queue := utils.RecordQueue{Limit: SyncOutQueueLimit}
-	cho.outq.Store(name, &queue)
-	return queue.Blocking()
+	queue := utils.NewRecordQueue(SyncOutQueueLimit, time.Millisecond)
+	cho.outq.Store(name, queue)
+	return queue
 }
 
 func (cho *Chotki) RemovePacketHose(name string) error {

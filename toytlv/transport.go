@@ -69,30 +69,26 @@ func NewTransport(log utils.Logger, jack Jack) *Transport {
 func (t *Transport) Close() error {
 	t.closed.Store(true)
 
-	t.conns.Range(func(k string, v *Peer) bool {
-		if err := v.Close(); err != nil {
-			t.log.Error("couldn't close connection")
-		}
+	t.listens.Range(func(_ string, v net.Listener) bool {
+		v.Close()
 		return true
 	})
-
-	t.listens.Range(func(k string, v net.Listener) bool {
-		if err := v.Close(); err != nil {
-			t.log.Error("couldn't close listener")
-		}
-		return true
-	})
-
-	t.conns.Clear()
 	t.listens.Clear()
 
-	t.wg.Wait()
+	t.conns.Range(func(_ string, p *Peer) bool {
+		p.Close()
+		return true
+	})
+	t.conns.Clear()
 
+	t.wg.Wait()
 	return nil
 }
 
 func (t *Transport) Connect(ctx context.Context, addr string) (err error) {
-	if _, ok := t.conns.Load(addr); ok {
+	// nil is needed so that Connect cannot be called
+	// while KeepConnecting is connects
+	if _, ok := t.conns.LoadOrStore(addr, nil); ok {
 		return ErrAddressDuplicated
 	}
 
@@ -116,40 +112,20 @@ func (de *Transport) Disconnect(addr string) (err error) {
 }
 
 func (t *Transport) Listen(ctx context.Context, addr string) error {
-	connType, address, err := parseAddr(addr)
-	if err != nil {
-		return err
-	}
-
-	var listener net.Listener
-	switch connType {
-	case TCP:
-		config := net.ListenConfig{}
-		if listener, err = config.Listen(ctx, "tcp", address); err != nil {
-			return err
-		}
-
-	case TLS:
-		config := net.ListenConfig{}
-		if listener, err = config.Listen(ctx, "tcp", address); err != nil {
-			return err
-		}
-
-		tlsConfig, err := t.tlsConfig()
-		if err != nil {
-			return err
-		}
-
-		listener = tls.NewListener(listener, tlsConfig)
-
-	case QUIC:
-		return errors.New("QUIC unimplemented")
-	}
-
-	if _, ok := t.listens.LoadOrStore(addr, listener); ok {
-		listener.Close()
+	// nil is needed so that Listen cannot be called
+	// while creating listener
+	if _, ok := t.listens.LoadOrStore(addr, nil); ok {
 		return ErrAddressDuplicated
 	}
+
+	listener, err := t.createListener(ctx, addr)
+	if err != nil {
+		t.listens.Delete(addr)
+		return err
+	}
+	t.listens.Store(addr, listener)
+
+	t.log.Debug("tlv: listening", "addr", addr)
 
 	t.wg.Add(1)
 	go func() {
@@ -170,105 +146,129 @@ func (de *Transport) Unlisten(addr string) error {
 }
 
 func (t *Transport) KeepConnecting(ctx context.Context, addr string) {
-	conntime := time.Now()
-	talkBackoff := MIN_RETRY_PERIOD
 	connBackoff := MIN_RETRY_PERIOD
 
-	if atLeast5min := conntime.Add(time.Minute * 5); atLeast5min.After(time.Now()) {
-		talkBackoff = min(MAX_RETRY_PERIOD, talkBackoff*2)
-	}
-
 	for !t.closed.Load() {
-		time.Sleep(connBackoff + talkBackoff)
+		select {
+		case <-ctx.Done():
+			break
+		default:
+			// continue
+		}
 
-		conn, err := t.createDialConnect(ctx, addr)
+		conn, err := t.createConn(ctx, addr)
 		if err != nil {
 			t.log.Error("couldn't connect", "addr", addr, "err", err)
+
+			time.Sleep(connBackoff)
 			connBackoff = min(MAX_RETRY_PERIOD, connBackoff*2)
+
 			continue
 		}
 
+		t.log.Debug("tlv: connected", "addr", addr)
+
 		connBackoff = MIN_RETRY_PERIOD
-
-		peer := &Peer{inout: t.jack(conn)}
-		peer.conn.Store(&conn)
-
-		t.conns.Store(addr, peer)
-		t.keepPeer(ctx, addr, peer)
+		t.keepPeer(ctx, addr, conn)
 	}
 }
 
 func (t *Transport) KeepListening(ctx context.Context, addr string) {
 	for !t.closed.Load() {
+		select {
+		case <-ctx.Done():
+			break
+		default:
+			// continue
+		}
+
 		listener, ok := t.listens.Load(addr)
 		if !ok {
 			break
 		}
 
-		select {
-		case <-ctx.Done():
-			t.Close()
-			break
-
-		default:
-			// continue
-		}
-
 		conn, err := listener.Accept()
 		if err != nil {
-			// reconnects are the client's responsibility, just skip
-			t.log.Error("couldn't accept connect request", "err", err)
+			if errors.Is(err, net.ErrClosed) {
+				break
+			}
+
+			// reconnects are the client's problem, just continue
+			t.log.Error("tlv: couldn't accept request", "addr", addr, "err", err)
 			continue
 		}
 
-		addr := conn.RemoteAddr().String()
-		peer := &Peer{inout: t.jack(conn)}
-		peer.conn.Store(&conn)
+		remoteAddr := conn.RemoteAddr().String()
+		t.log.Debug("tlv: accept connection", "addr", addr, "remoteAddr", remoteAddr)
 
-		t.conns.Store(addr, peer)
-		go t.keepPeer(ctx, addr, peer)
-	}
-}
-
-func (t *Transport) closePeer(addr string) error {
-	if peer, ok := t.conns.LoadAndDelete(addr); ok {
-		return peer.Close()
+		t.wg.Add(1)
+		go func() {
+			t.keepPeer(ctx, remoteAddr, conn)
+			defer t.wg.Done()
+		}()
 	}
 
-	return nil
-}
-
-func (t *Transport) keepPeer(ctx context.Context, addr string, peer *Peer) error {
-	t.wg.Add(1)
-	defer t.wg.Done()
-
-	rerrch := make(chan error)
-	werrch := make(chan error)
-
-	go func() {
-		rerrch <- peer.KeepRead(ctx)
-	}()
-	go func() {
-		werrch <- peer.KeepWrite(ctx)
-	}()
-
-	select {
-	case err := <-rerrch:
-		if err != nil {
-			t.log.Error("couldn't read from peer", "addr", addr, "err", err)
-			return t.closePeer(addr)
-		}
-	case err := <-werrch:
-		if err != nil {
-			t.log.Error("couldn't write to peer", "addr", addr, "err", err)
-			return t.closePeer(addr)
+	if l, ok := t.listens.LoadAndDelete(addr); ok {
+		if err := l.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.log.Error("tlv: couldn't correct close listener", "addr", addr, "err", err)
 		}
 	}
 
-	return nil
+	t.log.Debug("tlv: listener closed", "addr", addr)
 }
 
-func (t *Transport) createDialConnect(ctx context.Context, addr string) (net.Conn, error) {
+func (t *Transport) keepPeer(ctx context.Context, addr string, conn net.Conn) {
+	peer := &Peer{inout: t.jack(conn), conn: conn}
+	t.conns.Store(addr, peer)
+	defer t.conns.Delete(addr)
+
+	readErr, wrireErr, closeErr := peer.Keep(ctx)
+	if readErr != nil {
+		t.log.Error("tlv: couldn't read from peer", "addr", addr, "err", readErr)
+	}
+	if wrireErr != nil {
+		t.log.Error("tlv: couldn't write to peer", "addr", addr, "err", wrireErr)
+	}
+	if closeErr != nil {
+		t.log.Error("tlv: couldn't correct close peer", "addr", addr, "err", closeErr)
+	}
+}
+
+func (t *Transport) createListener(ctx context.Context, addr string) (net.Listener, error) {
+	connType, address, err := parseAddr(addr)
+	if err != nil {
+		return nil, err
+	}
+
+	var listener net.Listener
+	switch connType {
+	case TCP:
+		config := net.ListenConfig{}
+		if listener, err = config.Listen(ctx, "tcp", address); err != nil {
+			return nil, err
+		}
+
+	case TLS:
+		config := net.ListenConfig{}
+		if listener, err = config.Listen(ctx, "tcp", address); err != nil {
+			return nil, err
+		}
+
+		tlsConfig, err := t.tlsConfig()
+		if err != nil {
+			return nil, err
+		}
+
+		listener = tls.NewListener(listener, tlsConfig)
+
+	case QUIC:
+		return nil, errors.New("QUIC unimplemented")
+	}
+
+	return listener, nil
+}
+
+func (t *Transport) createConn(ctx context.Context, addr string) (net.Conn, error) {
 	connType, address, err := parseAddr(addr)
 	if err != nil {
 		return nil, err
@@ -277,7 +277,7 @@ func (t *Transport) createDialConnect(ctx context.Context, addr string) (net.Con
 	var conn net.Conn
 	switch connType {
 	case TCP:
-		var d net.Dialer
+		d := net.Dialer{Timeout: time.Minute}
 		if conn, err = d.DialContext(ctx, "tcp", address); err != nil {
 			return nil, err
 		}
@@ -287,7 +287,6 @@ func (t *Transport) createDialConnect(ctx context.Context, addr string) (net.Con
 		if d.Config, err = t.tlsConfig(); err != nil {
 			return nil, err
 		}
-
 		if conn, err = d.DialContext(ctx, "tcp", address); err != nil {
 			return nil, err
 		}

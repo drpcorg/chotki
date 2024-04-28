@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -12,8 +13,7 @@ func TestBlockingRecordQueue_Drain(t *testing.T) {
 	const N = 1 << 10 // 8K
 	const K = 1 << 4  // 16
 
-	orig := RecordQueue{Limit: 1024}
-	queue := orig.Blocking()
+	queue := NewRecordQueue(1024, time.Millisecond)
 
 	for k := 0; k < K; k++ {
 		go func(k int) {
