@@ -1,6 +1,7 @@
 package toytlv
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -21,9 +22,7 @@ type Peer struct {
 }
 
 func (p *Peer) keepRead(ctx context.Context) error {
-	var err error
-	var buf []byte
-	var recs utils.Records
+	var buf bytes.Buffer
 
 	for !p.closed.Load() {
 		select {
@@ -33,16 +32,23 @@ func (p *Peer) keepRead(ctx context.Context) error {
 			// continue
 		}
 
-		if buf, err = appendRead(buf, p.conn, TYPICAL_MTU); err != nil {
+		if buf.Available() < TYPICAL_MTU {
+			buf.Grow(TYPICAL_MTU)
+		}
+
+		idle := buf.AvailableBuffer()[:buf.Available()]
+		if n, err := p.conn.Read(idle); err != nil {
 			if errors.Is(err, io.EOF) {
 				time.Sleep(time.Millisecond)
 				continue
 			}
 
 			return err
+		} else {
+			buf.Write(idle[:n])
 		}
 
-		recs, buf, err = Split(buf)
+		recs, err := Split(&buf)
 		if err != nil {
 			return err
 		}
@@ -122,34 +128,4 @@ func (p *Peer) Close() {
 		p.conn.Close()
 		p.conn = nil
 	}
-}
-
-func roundPage(l int) int {
-	if (l & 0xfff) != 0 {
-		l = (l & ^0xfff) + 0x1000
-	}
-	return l
-}
-
-// appendRead reads data from io.Reader into the *spare space* of the provided buffer,
-// i.e. those cap(buf)-len(buf) vacant bytes. If the spare space is smaller than
-// lenHint, allocates (as reading less bytes might be unwise).
-func appendRead(buf []byte, rdr io.Reader, lenHint int) ([]byte, error) {
-	avail := cap(buf) - len(buf)
-	if avail < lenHint {
-		want := roundPage(len(buf) + lenHint)
-		newbuf := make([]byte, want)
-		copy(newbuf[:], buf)
-		buf = newbuf[:len(buf)]
-	}
-	idle := buf[len(buf):cap(buf)]
-	n, err := rdr.Read(idle)
-	if err != nil {
-		return buf, err
-	}
-	if n == 0 {
-		return buf, io.EOF
-	}
-	buf = buf[:len(buf)+n]
-	return buf, nil
 }

@@ -1,6 +1,7 @@
 package toytlv
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 
@@ -94,25 +95,32 @@ func Incomplete(data []byte) int {
 	}
 }
 
-func Split(data []byte) (recs utils.Records, rest []byte, err error) {
-	rest = data
-	for len(rest) > 0 {
-		lit, hlen, blen := ProbeHeader(rest)
-		if lit == '-' {
+func Split(data *bytes.Buffer) (recs utils.Records, err error) {
+	for data.Len() > 0 {
+		lit, hlen, blen := ProbeHeader(data.Bytes())
+		if lit == '-' { // bad format
 			if len(recs) == 0 {
 				err = ErrBadRecord
 			}
 			return
 		}
-		if lit == 0 {
+		if lit == 0 { // incomplete header
 			return
 		}
-		if hlen+blen > len(rest) {
-			break
+		if hlen+blen > data.Len() { // incomplete package received
+			return
 		}
-		recs = append(recs, rest[:hlen+blen])
-		rest = rest[hlen+blen:]
+
+		record := make([]byte, hlen+blen)
+		if n, err := data.Read(record); err != nil {
+			return recs, err
+		} else if n != hlen+blen {
+			panic("impossible buffer reading")
+		}
+
+		recs = append(recs, record)
 	}
+
 	return
 }
 
