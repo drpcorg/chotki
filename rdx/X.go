@@ -2,7 +2,7 @@ package rdx
 
 import (
 	hex2 "encoding/hex"
-	"github.com/drpcorg/chotki/toytlv"
+	"github.com/drpcorg/chotki/protocol"
 )
 
 func Xparse(rdt byte, val string) (tlv []byte) {
@@ -28,15 +28,15 @@ func Xparse(rdt byte, val string) (tlv []byte) {
 func FIRSTparsee(rdt byte, val string) (tlv []byte) {
 	switch rdt {
 	case 'F':
-		tlv = toytlv.Record(rdt, Fparse(val))
+		tlv = protocol.Record(rdt, Fparse(val))
 	case 'I':
-		tlv = toytlv.Record(rdt, Iparse(val))
+		tlv = protocol.Record(rdt, Iparse(val))
 	case 'R':
-		tlv = toytlv.Record(rdt, Rparse(val))
+		tlv = protocol.Record(rdt, Rparse(val))
 	case 'S':
-		tlv = toytlv.Record(rdt, Sparse(val))
+		tlv = protocol.Record(rdt, Sparse(val))
 	case 'T':
-		tlv = toytlv.Record(rdt, Tparse(val))
+		tlv = protocol.Record(rdt, Tparse(val))
 	}
 	return
 }
@@ -148,7 +148,7 @@ func Xvalid(rdt byte, bare []byte) bool {
 }
 
 func Xvalide(tlve []byte) bool {
-	rdt, hlen, blen := toytlv.ProbeHeader(tlve)
+	rdt, hlen, blen := protocol.ProbeHeader(tlve)
 	if len(tlve) != hlen+blen {
 		return false
 	}
@@ -207,7 +207,7 @@ func OYstring(tlv []byte) string {
 }
 
 func NoMerge(inputs [][]byte) []byte {
-	ret := make([]byte, 0, toytlv.TotalLen(inputs))
+	ret := make([]byte, 0, protocol.TotalLen(inputs))
 	for _, input := range inputs {
 		ret = append(ret, input...)
 	}

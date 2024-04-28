@@ -2,7 +2,7 @@ package chotki
 
 import (
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toytlv"
+	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/utils"
 )
 
@@ -18,16 +18,16 @@ func (c Counter64) Diff(id rdx.ID, state []byte) (changes []byte) {
 	if sum != int64(c) {
 		d := int64(c) - sum
 		new_own := mine + d
-		changes = toytlv.Concat(
-			toytlv.Record('I', id.ZipBytes()),
-			toytlv.Record('C', rdx.ZipUint64(rdx.ZigZagInt64(new_own))),
+		changes = protocol.Concat(
+			protocol.Record('I', id.ZipBytes()),
+			protocol.Record('C', rdx.ZipUint64(rdx.ZigZagInt64(new_own))),
 		)
 	}
 	return
 }
 
 func ProbeID(lit byte, input []byte) rdx.ID {
-	idbody, _ := toytlv.Take(lit, input)
+	idbody, _ := protocol.Take(lit, input)
 	return rdx.IDFromZipBytes(idbody)
 }
 
@@ -47,7 +47,7 @@ func CMerge(inputs [][]byte) (merged []byte) {
 	for heap.Len() > 0 {
 		id := rdx.ID(^heap.Pop())
 		i := int(id.Off())
-		iclen := toytlv.ProbeHeaders("IC", inputs[i])
+		iclen := protocol.ProbeHeaders("IC", inputs[i])
 		if iclen == -1 {
 			continue //?!
 		}
@@ -66,7 +66,7 @@ func CMerge(inputs [][]byte) (merged []byte) {
 }
 
 func CState(sum int64) []byte {
-	return toytlv.Record('C', rdx.ZipZagInt64(sum))
+	return protocol.Record('C', rdx.ZipZagInt64(sum))
 }
 
 func parseC(state []byte, src uint64) (sum, mine int64) {
@@ -79,7 +79,7 @@ func parseC(state []byte, src uint64) (sum, mine int64) {
 		if err != nil {
 			return
 		}
-		cbody, rest = toytlv.Take('C', rest)
+		cbody, rest = protocol.Take('C', rest)
 		inc := rdx.ZagZigUint64(rdx.UnzipUint64(cbody))
 		if id.Src() == src {
 			mine = inc

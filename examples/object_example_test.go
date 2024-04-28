@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/drpcorg/chotki"
+	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/drpcorg/chotki/utils"
 	"github.com/stretchr/testify/assert"
@@ -52,7 +53,7 @@ func TestObjectExample(t *testing.T) {
 	i2 := a.ObjectIterator(oid)
 	assert.NotNil(t, i2)
 	ex.Score = 44
-	var changes utils.Records
+	var changes protocol.Records
 	changes, err = ex.Store(i2)
 	assert.Nil(t, err)
 	var eid rdx.ID
@@ -114,9 +115,9 @@ func TestObjectExamleWithORM(t *testing.T) {
 
 	syncera := chotki.Syncer{Host: a, Mode: chotki.SyncRW, Log: utils.NewDefaultLogger(slog.LevelDebug)}
 	syncerb := chotki.Syncer{Host: b, Mode: chotki.SyncRW, Log: utils.NewDefaultLogger(slog.LevelDebug)}
-	err = utils.Relay(&syncerb, &syncera)
+	err = protocol.Relay(&syncerb, &syncera)
 	assert.Nil(t, err)
-	err = utils.Pump(&syncera, &syncerb)
+	err = protocol.Pump(&syncera, &syncerb)
 	assert.Equal(t, io.EOF, err)
 
 	itb := b.ObjectIterator(rdx.IDFromString("1e-2"))

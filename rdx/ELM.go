@@ -3,9 +3,10 @@ package rdx
 import (
 	"bytes"
 	"errors"
-	"github.com/drpcorg/chotki/toytlv"
 	"slices"
 	"sort"
+
+	"github.com/drpcorg/chotki/protocol"
 )
 
 type Time struct {
@@ -40,8 +41,8 @@ func TimeFromZipBytes(zip []byte) (t Time) {
 var ErrBadFIRST = errors.New("bad FIRST record")
 
 func MelAppend(to []byte, lit byte, t Time, body []byte) []byte {
-	tb := toytlv.TinyRecord('T', t.ZipBytes())
-	return toytlv.Append(to, lit, tb, body)
+	tb := protocol.TinyRecord('T', t.ZipBytes())
+	return protocol.Append(to, lit, tb, body)
 }
 
 func MelReSource(first []byte, src uint64) (ret []byte, err error) {
@@ -127,13 +128,13 @@ func Eparse(txt string) (tlv []byte) {
 func appendParsedFirstTlv(tlv []byte, n *RDX) []byte {
 	switch n.RdxType {
 	case Float:
-		return append(tlv, toytlv.Record('F', Fparse(string(n.Text)))...)
+		return append(tlv, protocol.Record('F', Fparse(string(n.Text)))...)
 	case Integer:
-		return append(tlv, toytlv.Record('I', Iparse(string(n.Text)))...)
+		return append(tlv, protocol.Record('I', Iparse(string(n.Text)))...)
 	case Reference:
-		return append(tlv, toytlv.Record('R', Rparse(string(n.Text)))...)
+		return append(tlv, protocol.Record('R', Rparse(string(n.Text)))...)
 	case String:
-		return append(tlv, toytlv.Record('S', Sparse(string(n.Text)))...)
+		return append(tlv, protocol.Record('S', Sparse(string(n.Text)))...)
 	case Term:
 		//ret = append(ret, Tstring(it.val)...) fixme
 		return tlv
@@ -350,13 +351,13 @@ func MdeltaTR(tlv []byte, changes MapTR) (tlv_delta []byte) {
 			new_rev = -new_rev
 		}
 		new_rev++
-		tlv_delta = append(tlv_delta, toytlv.Record(Term, FIRSTtlv(new_rev, 0, it.val))...)
-		tlv_delta = append(tlv_delta, toytlv.Record(Reference, FIRSTtlv(new_rev, 0, change.ZipBytes()))...)
+		tlv_delta = append(tlv_delta, protocol.Record(Term, FIRSTtlv(new_rev, 0, it.val))...)
+		tlv_delta = append(tlv_delta, protocol.Record(Reference, FIRSTtlv(new_rev, 0, change.ZipBytes()))...)
 		delete(changes, string(it.val))
 	}
 	for key, val := range changes {
-		tlv_delta = append(tlv_delta, toytlv.Record(Term, Ttlv(key))...)
-		tlv_delta = append(tlv_delta, toytlv.Record(Reference, Rtlv(val))...)
+		tlv_delta = append(tlv_delta, protocol.Record(Term, Ttlv(key))...)
+		tlv_delta = append(tlv_delta, protocol.Record(Reference, Rtlv(val))...)
 	}
 	return
 }
@@ -426,8 +427,8 @@ func Lstring(tlv []byte) (txt string) {
 	rest := tlv
 	for len(rest) > 0 {
 		var sub []byte
-		sub, rest = toytlv.Take('B', rest)
-		_, subb := toytlv.Take('T', sub)
+		sub, rest = protocol.Take('B', rest)
+		_, subb := protocol.Take('T', sub)
 		it := LIterator{FIRSTIterator{TLV: subb}}
 		for it.Next() {
 			if ZagZigUint64(it.revz) < 0 {
@@ -449,7 +450,7 @@ func Lstring(tlv []byte) (txt string) {
 // parse a text form into a TLV value
 func Lparse(txt string) (tlv []byte) {
 	bm := 0
-	bm, tlv = toytlv.OpenHeader(tlv, 'B')
+	bm, tlv = protocol.OpenHeader(tlv, 'B')
 	tlv = append(tlv, '0')
 	rdx, err := ParseRDX([]byte(txt))
 	if err != nil || rdx == nil || rdx.RdxType != Linear {
@@ -459,7 +460,7 @@ func Lparse(txt string) (tlv []byte) {
 		n := &rdx.Nested[i]
 		tlv = appendParsedFirstTlvt(tlv, n, Time{int64(i) + 1, 0})
 	}
-	toytlv.CloseHeader(tlv, bm)
+	protocol.CloseHeader(tlv, bm)
 	return
 }
 
@@ -485,7 +486,7 @@ func appendParsedFirstTlvt(tlv []byte, n *RDX, t Time) []byte {
 	default:
 		return nil
 	}
-	return append(tlv, toytlv.Record(rdt, SetTimeFIRST(untimed, t))...)
+	return append(tlv, protocol.Record(rdt, SetTimeFIRST(untimed, t))...)
 }
 
 // merge TLV values
@@ -496,8 +497,8 @@ func Lmerge(tlvs [][]byte) (merged []byte) {
 		rest := input
 		for len(rest) > 0 {
 			var sub []byte
-			sub, rest = toytlv.Take('B', rest)
-			ref, bare := toytlv.Take('T', sub)
+			sub, rest = protocol.Take('B', rest)
+			ref, bare := protocol.Take('T', sub)
 			t := TimeFromZipBytes(ref)
 			loc := t.Time64()
 			pre, ok := ins[loc]
@@ -523,8 +524,8 @@ func Lmerge(tlvs [][]byte) (merged []byte) {
 			ins = nil
 		}
 		bm := 0
-		bm, merged = toytlv.OpenHeader(merged, 'B')
-		merged = toytlv.AppendTiny(merged, 'T', ID(into).ZipBytes())
+		bm, merged = protocol.OpenHeader(merged, 'B')
+		merged = protocol.AppendTiny(merged, 'T', ID(into).ZipBytes())
 		pileUp(&ih, bares)
 		for ih.Len() > 0 {
 			key := Time64FromRevzSrc(ih[0].revz, ih[0].src)
@@ -541,7 +542,7 @@ func Lmerge(tlvs [][]byte) (merged []byte) {
 				}
 			}
 		}
-		toytlv.CloseHeader(merged, bm)
+		protocol.CloseHeader(merged, bm)
 	}
 
 	return

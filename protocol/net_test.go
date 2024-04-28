@@ -1,4 +1,4 @@
-package toytlv
+package protocol
 
 import (
 	"context"
@@ -21,8 +21,8 @@ func TestTCPDepot_Connect(t *testing.T) {
 	cert, key := "testonly_cert.pem", "testonly_key.pem"
 	log := utils.NewDefaultLogger(slog.LevelDebug)
 
-	lCon := utils.NewRecordQueue(0, time.Millisecond)
-	l := NewTransport(log, func(conn net.Conn) utils.FeedDrainCloser {
+	lCon := utils.NewFDQueue[Records](16, time.Millisecond)
+	l := NewNet(log, func(conn net.Conn) FeedDrainCloser {
 		return lCon
 	})
 	err := l.Listen(context.Background(), loop)
@@ -31,8 +31,8 @@ func TestTCPDepot_Connect(t *testing.T) {
 	l.CertFile = cert
 	l.KeyFile = key
 
-	cCon := utils.NewRecordQueue(0, time.Millisecond)
-	c := NewTransport(log, func(conn net.Conn) utils.FeedDrainCloser {
+	cCon := utils.NewFDQueue[Records](16, time.Millisecond)
+	c := NewNet(log, func(conn net.Conn) FeedDrainCloser {
 		return cCon
 	})
 	err = c.Connect(context.Background(), loop)
@@ -41,11 +41,10 @@ func TestTCPDepot_Connect(t *testing.T) {
 	c.CertFile = cert
 	c.KeyFile = key
 
-	// Wait connection, todo use events
-	time.Sleep(time.Second * 2)
+	time.Sleep(time.Second) // Wait connection, todo use events
 
 	// send a record
-	err = cCon.Drain(utils.Records{Record('M', []byte("Hi there"))})
+	err = cCon.Drain(Records{Record('M', []byte("Hi there"))})
 	assert.Nil(t, err)
 
 	rec, err := lCon.Feed()
@@ -58,7 +57,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 	assert.Equal(t, 0, len(rest))
 
 	// respond to that
-	err = lCon.Drain(utils.Records{Record('M', []byte("Re: Hi there"))})
+	err = lCon.Drain(Records{Record('M', []byte("Re: Hi there"))})
 	assert.Nil(t, err)
 
 	rerec, err := cCon.Feed()

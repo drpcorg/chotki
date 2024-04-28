@@ -9,7 +9,6 @@ require (
 	github.com/puzpuzpuz/xsync/v3 v3.1.0
 	github.com/stretchr/testify v1.8.4
 	golang.org/x/exp v0.0.0-20230626212559-97b1e661b5df
-	golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4
 )
 
 replace github.com/cockroachdb/pebble => github.com/drpcorg/pebble v0.0.0-20240420050940-7176ceaf0bb3
@@ -36,6 +35,7 @@ require (
 	github.com/prometheus/common v0.32.1 // indirect
 	github.com/prometheus/procfs v0.7.3 // indirect
 	github.com/rogpeppe/go-internal v1.9.0 // indirect
+	golang.org/x/sync v0.7.0 // indirect
 	golang.org/x/sys v0.18.0 // indirect
 	golang.org/x/text v0.9.0 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect

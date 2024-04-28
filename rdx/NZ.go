@@ -2,7 +2,7 @@ package rdx
 
 import (
 	"fmt"
-	"github.com/drpcorg/chotki/toytlv"
+	"github.com/drpcorg/chotki/protocol"
 )
 
 // N is an increment-only uint64 counter
@@ -23,7 +23,7 @@ func Nparse(txt string) (tlv []byte) {
 
 // convert a native golang value into TLV
 func Ntlv(u uint64) (tlv []byte) {
-	return toytlv.Record(Term, ZipUint64Pair(u, 0))
+	return protocol.Record(Term, ZipUint64Pair(u, 0))
 }
 
 // convert a TLV value to a native golang value
@@ -31,7 +31,7 @@ func Nnative(tlv []byte) (sum uint64) {
 	rest := tlv
 	for len(rest) > 0 {
 		var one []byte
-		one, rest = toytlv.Take(Term, rest)
+		one, rest = protocol.Take(Term, rest)
 		inc, _ := UnzipUint64Pair(one)
 		sum += inc
 	}
@@ -125,7 +125,7 @@ func (a *NIterator) Next() bool {
 	if len(a.tlv) == 0 {
 		return false
 	}
-	_, hlen, blen := toytlv.ProbeHeader(a.tlv)
+	_, hlen, blen := protocol.ProbeHeader(a.tlv)
 	rlen := hlen + blen
 	a.inc, a.src = UnzipUint64Pair(a.tlv[hlen:rlen])
 	a.one = a.tlv[:rlen]
@@ -168,8 +168,8 @@ func Zparse(txt string) (tlv []byte) {
 
 // convert a native golang value into TLV
 func Ztlv(i int64) (tlv []byte) {
-	return toytlv.Record('I',
-		toytlv.TinyRecord('T', ZipIntUint64Pair(0, 0)),
+	return protocol.Record('I',
+		protocol.TinyRecord('T', ZipIntUint64Pair(0, 0)),
 		ZipInt64(i),
 	)
 }
@@ -179,8 +179,8 @@ func Znative(tlv []byte) (sum int64) {
 	rest := tlv
 	for len(rest) > 0 {
 		var one []byte
-		one, rest = toytlv.Take('I', rest)
-		_, body := toytlv.Take('T', one)
+		one, rest = protocol.Take('I', rest)
+		_, body := protocol.Take('T', one)
 		inc := UnzipInt64(body)
 		sum += inc
 	}

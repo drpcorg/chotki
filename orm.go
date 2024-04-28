@@ -6,9 +6,8 @@ import (
 	"text/template"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/utils"
-	"github.com/drpcorg/chotki/toytlv"
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
@@ -50,12 +49,12 @@ func (orm *ORM) New(cid rdx.ID, objs ...NativeObject) (err error) {
 		return e
 	}
 	for _, obj := range objs {
-		tlv := utils.Records{}
+		tlv := protocol.Records{}
 		for i := 1; i < len(fields) && err == nil; i++ {
 			field := &fields[i]
 			var edit []byte
 			edit, err = obj.Store(uint64(i), field.RdxType, nil)
-			tlv = append(tlv, toytlv.Record(field.RdxType, edit))
+			tlv = append(tlv, protocol.Record(field.RdxType, edit))
 		}
 		var id rdx.ID
 		id, err = orm.Host.CommitPacket('O', cid, tlv)
@@ -85,7 +84,7 @@ func (orm *ORM) Save(objs ...NativeObject) (err error) {
 		if e != nil {
 			return e
 		}
-		var changes utils.Records
+		var changes protocol.Records
 		flags := [64]bool{}
 		for it.Next() {
 			lid, rdt := OKeyIdRdt(it.Key())
@@ -96,8 +95,8 @@ func (orm *ORM) Save(objs ...NativeObject) (err error) {
 				_ = 0 // todo
 			}
 			if len(change) > 0 {
-				changes = append(changes, toytlv.Record('F', rdx.ZipUint64(off)))
-				changes = append(changes, toytlv.Record(rdt, change))
+				changes = append(changes, protocol.Record('F', rdx.ZipUint64(off)))
+				changes = append(changes, protocol.Record(rdt, change))
 			}
 		}
 		for off := 1; off < len(fields); off++ {
@@ -106,8 +105,8 @@ func (orm *ORM) Save(objs ...NativeObject) (err error) {
 			}
 			change, _ := obj.Store(uint64(off), fields[off].RdxType, nil)
 			if change != nil {
-				changes = append(changes, toytlv.Record('F', rdx.ZipUint64(uint64(off))))
-				changes = append(changes, toytlv.Record(fields[off].RdxType, change))
+				changes = append(changes, protocol.Record('F', rdx.ZipUint64(uint64(off))))
+				changes = append(changes, protocol.Record(fields[off].RdxType, change))
 			}
 		}
 		_ = it.Close()

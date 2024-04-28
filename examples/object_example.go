@@ -4,7 +4,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toytlv"
+	"github.com/drpcorg/chotki/protocol"
 )
 
 const ExampleName = 1
@@ -45,8 +45,8 @@ func (x *Example) Store(i *pebble.Iterator) (changes [][]byte, err error) {
 	if id.Off() == ExampleName && rdt == 'S' {
 		delta := rdx.Sdelta(i.Value(), x.Name)
 		if delta != nil {
-			changes = append(changes, toytlv.Record('F', rdx.ZipUint64(ExampleName)))
-			changes = append(changes, toytlv.Record('S', delta))
+			changes = append(changes, protocol.Record('F', rdx.ZipUint64(ExampleName)))
+			changes = append(changes, protocol.Record('S', delta))
 		}
 		if !i.Next() {
 			return nil, nil
@@ -56,8 +56,8 @@ func (x *Example) Store(i *pebble.Iterator) (changes [][]byte, err error) {
 	if id.Off() == ExampleScore && rdt == 'I' {
 		delta := rdx.Idelta(i.Value(), x.Score)
 		if delta != nil {
-			changes = append(changes, toytlv.Record('F', rdx.ZipUint64(ExampleScore)))
-			changes = append(changes, toytlv.Record('I', delta))
+			changes = append(changes, protocol.Record('F', rdx.ZipUint64(ExampleScore)))
+			changes = append(changes, protocol.Record('I', delta))
 		}
 		if !i.Next() {
 			return

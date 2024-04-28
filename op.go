@@ -2,17 +2,17 @@ package chotki
 
 import (
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toytlv"
+	"github.com/drpcorg/chotki/protocol"
 )
 
 func ParsePacket(pack []byte) (lit byte, id, ref rdx.ID, body []byte, err error) {
-	lit, hlen, blen := toytlv.ProbeHeader(pack)
+	lit, hlen, blen := protocol.ProbeHeader(pack)
 	if lit == 0 || lit == '-' || hlen+blen > len(pack) {
 		err = rdx.ErrBadPacket
 		return
 	}
 	body = pack[hlen : hlen+blen]
-	i, ihlen, iblen := toytlv.ProbeHeader(body)
+	i, ihlen, iblen := protocol.ProbeHeader(body)
 	if lit != 'D' && lit != 'V' && lit != 'H' {
 		if i != 'I' && i != '0' {
 			err = rdx.ErrBadPacket
@@ -26,7 +26,7 @@ func ParsePacket(pack []byte) (lit byte, id, ref rdx.ID, body []byte, err error)
 	}
 	id = rdx.IDFromZipBytes(body[ihlen : ihlen+iblen])
 	body = body[ihlen+iblen:]
-	r, rhlen, rblen := toytlv.ProbeHeader(body)
+	r, rhlen, rblen := protocol.ProbeHeader(body)
 	if r == 'R' {
 		ref = rdx.IDFromZipBytes(body[rhlen : rhlen+rblen])
 		body = body[rhlen+rblen:]
@@ -37,11 +37,11 @@ func ParsePacket(pack []byte) (lit byte, id, ref rdx.ID, body []byte, err error)
 // PacketSeqSrc picks the I field from the packet.
 // Returns 0,0 if nothing found.
 func PacketSrcSeq(pack []byte) (src, seq uint32) { // FIXME offset
-	lit, hlen, blen := toytlv.ProbeHeader(pack)
+	lit, hlen, blen := protocol.ProbeHeader(pack)
 	if lit == 0 || hlen+blen > len(pack) {
 		return
 	}
-	v, vhlen, vblen := toytlv.ProbeHeader(pack[hlen:])
+	v, vhlen, vblen := protocol.ProbeHeader(pack[hlen:])
 	if v != 'V' || vhlen+vblen > len(pack)-blen {
 		return
 	}
@@ -52,11 +52,11 @@ func PacketSrcSeq(pack []byte) (src, seq uint32) { // FIXME offset
 }
 
 func PacketID(pack []byte) rdx.ID {
-	lit, hlen, blen := toytlv.ProbeHeader(pack)
+	lit, hlen, blen := protocol.ProbeHeader(pack)
 	if lit == 0 || hlen+blen > len(pack) {
 		return rdx.ZeroId
 	}
-	v, vhlen, vblen := toytlv.ProbeHeader(pack[hlen:])
+	v, vhlen, vblen := protocol.ProbeHeader(pack[hlen:])
 	if v != 'V' || vhlen+vblen > len(pack)-blen {
 		return rdx.ZeroId
 	}

@@ -1,4 +1,4 @@
-package toytlv
+package protocol
 
 import (
 	"bytes"
@@ -9,8 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/drpcorg/chotki/utils"
 )
 
 type Peer struct {
@@ -18,7 +16,7 @@ type Peer struct {
 	wg     sync.WaitGroup
 
 	conn  net.Conn
-	inout utils.FeedDrainCloser
+	inout FeedDrainCloser
 }
 
 func (p *Peer) keepRead(ctx context.Context) error {

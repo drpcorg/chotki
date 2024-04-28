@@ -1,4 +1,4 @@
-package toytlv
+package protocol
 
 import (
 	"context"
@@ -15,7 +15,6 @@ import (
 
 	"github.com/drpcorg/chotki/utils"
 	"github.com/puzpuzpuz/xsync/v3"
-	"golang.org/x/exp/constraints"
 )
 
 type ConnType = uint
@@ -34,7 +33,7 @@ const (
 	MIN_RETRY_PERIOD = time.Second / 2
 )
 
-type Jack func(conn net.Conn) utils.FeedDrainCloser
+type Jack func(conn net.Conn) FeedDrainCloser
 
 // A TCP/TLS/QUIC server/client for the use case of real-time async communication.
 // Differently from the case of request-response (like HTTP), we do not
@@ -43,7 +42,7 @@ type Jack func(conn net.Conn) utils.FeedDrainCloser
 // tiny messages. That dictates different work patterns than your typical
 // HTTP/RPC server as, for example, we cannot let one slow receiver delay
 // event transmission to all the other receivers.
-type Transport struct {
+type Net struct {
 	closed atomic.Bool
 
 	wg   sync.WaitGroup
@@ -57,8 +56,8 @@ type Transport struct {
 	ClientCertFiles   []string
 }
 
-func NewTransport(log utils.Logger, jack Jack) *Transport {
-	return &Transport{
+func NewNet(log utils.Logger, jack Jack) *Net {
+	return &Net{
 		log:     log,
 		jack:    jack,
 		conns:   xsync.NewMapOf[string, *Peer](),
@@ -66,42 +65,42 @@ func NewTransport(log utils.Logger, jack Jack) *Transport {
 	}
 }
 
-func (t *Transport) Close() error {
-	t.closed.Store(true)
+func (n *Net) Close() error {
+	n.closed.Store(true)
 
-	t.listens.Range(func(_ string, v net.Listener) bool {
+	n.listens.Range(func(_ string, v net.Listener) bool {
 		v.Close()
 		return true
 	})
-	t.listens.Clear()
+	n.listens.Clear()
 
-	t.conns.Range(func(_ string, p *Peer) bool {
+	n.conns.Range(func(_ string, p *Peer) bool {
 		p.Close()
 		return true
 	})
-	t.conns.Clear()
+	n.conns.Clear()
 
-	t.wg.Wait()
+	n.wg.Wait()
 	return nil
 }
 
-func (t *Transport) Connect(ctx context.Context, addr string) (err error) {
+func (n *Net) Connect(ctx context.Context, addr string) (err error) {
 	// nil is needed so that Connect cannot be called
 	// while KeepConnecting is connects
-	if _, ok := t.conns.LoadOrStore(addr, nil); ok {
+	if _, ok := n.conns.LoadOrStore(addr, nil); ok {
 		return ErrAddressDuplicated
 	}
 
-	t.wg.Add(1)
+	n.wg.Add(1)
 	go func() {
-		t.KeepConnecting(ctx, addr)
-		t.wg.Done()
+		n.KeepConnecting(ctx, addr)
+		n.wg.Done()
 	}()
 
 	return nil
 }
 
-func (de *Transport) Disconnect(addr string) (err error) {
+func (de *Net) Disconnect(addr string) (err error) {
 	conn, ok := de.conns.LoadAndDelete(addr)
 	if !ok {
 		return ErrAddressUnknown
@@ -111,32 +110,32 @@ func (de *Transport) Disconnect(addr string) (err error) {
 	return nil
 }
 
-func (t *Transport) Listen(ctx context.Context, addr string) error {
+func (n *Net) Listen(ctx context.Context, addr string) error {
 	// nil is needed so that Listen cannot be called
 	// while creating listener
-	if _, ok := t.listens.LoadOrStore(addr, nil); ok {
+	if _, ok := n.listens.LoadOrStore(addr, nil); ok {
 		return ErrAddressDuplicated
 	}
 
-	listener, err := t.createListener(ctx, addr)
+	listener, err := n.createListener(ctx, addr)
 	if err != nil {
-		t.listens.Delete(addr)
+		n.listens.Delete(addr)
 		return err
 	}
-	t.listens.Store(addr, listener)
+	n.listens.Store(addr, listener)
 
-	t.log.Debug("tlv: listening", "addr", addr)
+	n.log.Debug("tlv: listening", "addr", addr)
 
-	t.wg.Add(1)
+	n.wg.Add(1)
 	go func() {
-		t.KeepListening(ctx, addr)
-		t.wg.Done()
+		n.KeepListening(ctx, addr)
+		n.wg.Done()
 	}()
 
 	return nil
 }
 
-func (de *Transport) Unlisten(addr string) error {
+func (de *Net) Unlisten(addr string) error {
 	listener, ok := de.listens.LoadAndDelete(addr)
 	if !ok {
 		return ErrAddressUnknown
@@ -145,10 +144,10 @@ func (de *Transport) Unlisten(addr string) error {
 	return listener.Close()
 }
 
-func (t *Transport) KeepConnecting(ctx context.Context, addr string) {
+func (n *Net) KeepConnecting(ctx context.Context, addr string) {
 	connBackoff := MIN_RETRY_PERIOD
 
-	for !t.closed.Load() {
+	for !n.closed.Load() {
 		select {
 		case <-ctx.Done():
 			break
@@ -156,9 +155,9 @@ func (t *Transport) KeepConnecting(ctx context.Context, addr string) {
 			// continue
 		}
 
-		conn, err := t.createConn(ctx, addr)
+		conn, err := n.createConn(ctx, addr)
 		if err != nil {
-			t.log.Error("couldn't connect", "addr", addr, "err", err)
+			n.log.Error("couldn't connect", "addr", addr, "err", err)
 
 			time.Sleep(connBackoff)
 			connBackoff = min(MAX_RETRY_PERIOD, connBackoff*2)
@@ -166,15 +165,15 @@ func (t *Transport) KeepConnecting(ctx context.Context, addr string) {
 			continue
 		}
 
-		t.log.Debug("tlv: connected", "addr", addr)
+		n.log.Debug("tlv: connected", "addr", addr)
 
 		connBackoff = MIN_RETRY_PERIOD
-		t.keepPeer(ctx, addr, conn)
+		n.keepPeer(ctx, addr, conn)
 	}
 }
 
-func (t *Transport) KeepListening(ctx context.Context, addr string) {
-	for !t.closed.Load() {
+func (n *Net) KeepListening(ctx context.Context, addr string) {
+	for !n.closed.Load() {
 		select {
 		case <-ctx.Done():
 			break
@@ -182,7 +181,7 @@ func (t *Transport) KeepListening(ctx context.Context, addr string) {
 			// continue
 		}
 
-		listener, ok := t.listens.Load(addr)
+		listener, ok := n.listens.Load(addr)
 		if !ok {
 			break
 		}
@@ -194,47 +193,47 @@ func (t *Transport) KeepListening(ctx context.Context, addr string) {
 			}
 
 			// reconnects are the client's problem, just continue
-			t.log.Error("tlv: couldn't accept request", "addr", addr, "err", err)
+			n.log.Error("tlv: couldn't accept request", "addr", addr, "err", err)
 			continue
 		}
 
 		remoteAddr := conn.RemoteAddr().String()
-		t.log.Debug("tlv: accept connection", "addr", addr, "remoteAddr", remoteAddr)
+		n.log.Debug("tlv: accept connection", "addr", addr, "remoteAddr", remoteAddr)
 
-		t.wg.Add(1)
+		n.wg.Add(1)
 		go func() {
-			t.keepPeer(ctx, remoteAddr, conn)
-			defer t.wg.Done()
+			n.keepPeer(ctx, remoteAddr, conn)
+			defer n.wg.Done()
 		}()
 	}
 
-	if l, ok := t.listens.LoadAndDelete(addr); ok {
+	if l, ok := n.listens.LoadAndDelete(addr); ok {
 		if err := l.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			t.log.Error("tlv: couldn't correct close listener", "addr", addr, "err", err)
+			n.log.Error("tlv: couldn't correct close listener", "addr", addr, "err", err)
 		}
 	}
 
-	t.log.Debug("tlv: listener closed", "addr", addr)
+	n.log.Debug("tlv: listener closed", "addr", addr)
 }
 
-func (t *Transport) keepPeer(ctx context.Context, addr string, conn net.Conn) {
-	peer := &Peer{inout: t.jack(conn), conn: conn}
-	t.conns.Store(addr, peer)
-	defer t.conns.Delete(addr)
+func (n *Net) keepPeer(ctx context.Context, addr string, conn net.Conn) {
+	peer := &Peer{inout: n.jack(conn), conn: conn}
+	n.conns.Store(addr, peer)
+	defer n.conns.Delete(addr)
 
 	readErr, wrireErr, closeErr := peer.Keep(ctx)
 	if readErr != nil {
-		t.log.Error("tlv: couldn't read from peer", "addr", addr, "err", readErr)
+		n.log.Error("tlv: couldn't read from peer", "addr", addr, "err", readErr)
 	}
 	if wrireErr != nil {
-		t.log.Error("tlv: couldn't write to peer", "addr", addr, "err", wrireErr)
+		n.log.Error("tlv: couldn't write to peer", "addr", addr, "err", wrireErr)
 	}
 	if closeErr != nil {
-		t.log.Error("tlv: couldn't correct close peer", "addr", addr, "err", closeErr)
+		n.log.Error("tlv: couldn't correct close peer", "addr", addr, "err", closeErr)
 	}
 }
 
-func (t *Transport) createListener(ctx context.Context, addr string) (net.Listener, error) {
+func (n *Net) createListener(ctx context.Context, addr string) (net.Listener, error) {
 	connType, address, err := parseAddr(addr)
 	if err != nil {
 		return nil, err
@@ -254,7 +253,7 @@ func (t *Transport) createListener(ctx context.Context, addr string) (net.Listen
 			return nil, err
 		}
 
-		tlsConfig, err := t.tlsConfig()
+		tlsConfig, err := n.tlsConfig()
 		if err != nil {
 			return nil, err
 		}
@@ -268,7 +267,7 @@ func (t *Transport) createListener(ctx context.Context, addr string) (net.Listen
 	return listener, nil
 }
 
-func (t *Transport) createConn(ctx context.Context, addr string) (net.Conn, error) {
+func (n *Net) createConn(ctx context.Context, addr string) (net.Conn, error) {
 	connType, address, err := parseAddr(addr)
 	if err != nil {
 		return nil, err
@@ -284,7 +283,7 @@ func (t *Transport) createConn(ctx context.Context, addr string) (net.Conn, erro
 
 	case TLS:
 		var d tls.Dialer
-		if d.Config, err = t.tlsConfig(); err != nil {
+		if d.Config, err = n.tlsConfig(); err != nil {
 			return nil, err
 		}
 		if conn, err = d.DialContext(ctx, "tcp", address); err != nil {
@@ -298,8 +297,8 @@ func (t *Transport) createConn(ctx context.Context, addr string) (net.Conn, erro
 	return conn, err
 }
 
-func (t *Transport) tlsConfig() (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(t.CertFile, t.KeyFile)
+func (n *Net) tlsConfig() (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(n.CertFile, n.KeyFile)
 	if err != nil {
 		return nil, err
 	}
@@ -309,11 +308,11 @@ func (t *Transport) tlsConfig() (*tls.Config, error) {
 		Certificates: []tls.Certificate{cert},
 	}
 
-	if len(t.ClientCertFiles) > 0 {
+	if len(n.ClientCertFiles) > 0 {
 		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
 		tlsConfig.ClientCAs = x509.NewCertPool()
 
-		for _, file := range t.ClientCertFiles {
+		for _, file := range n.ClientCertFiles {
 			if clientCert, err := os.ReadFile(file); err != nil {
 				return nil, err
 			} else {
@@ -348,18 +347,4 @@ func parseAddr(addr string) (ConnType, string, error) {
 	address := strings.TrimPrefix(u.String(), "//")
 
 	return conn, address, nil
-}
-
-func min[T constraints.Ordered](s ...T) T {
-	if len(s) == 0 {
-		var zero T
-		return zero
-	}
-	m := s[0]
-	for _, v := range s {
-		if m > v {
-			m = v
-		}
-	}
-	return m
 }

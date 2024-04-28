@@ -9,9 +9,8 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki"
+	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/utils"
-	"github.com/drpcorg/chotki/toytlv"
 )
 
 func replicaDirName(rno uint64) string {
@@ -170,7 +169,7 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 	id = rdx.BadId
 	err = HelpNew
 	tid := rdx.ID0
-	tlvs := utils.Records{}
+	tlvs := protocol.Records{}
 	if arg == nil {
 		return
 	} else if arg.RdxType == rdx.Linear {
@@ -186,7 +185,7 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 		if err != nil {
 			return
 		}
-		tmp := make(utils.Records, len(fields))
+		tmp := make(protocol.Records, len(fields))
 
 		for i := 0; i+1 < len(pairs); i += 2 {
 			if pairs[i].RdxType != rdx.Term {
@@ -207,9 +206,9 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 		for i := 1; i < len(fields); i++ {
 			rdt := fields[i].RdxType
 			if tmp[i] == nil {
-				tlvs = append(tlvs, toytlv.Record(rdt, rdx.Xdefault(rdt)))
+				tlvs = append(tlvs, protocol.Record(rdt, rdx.Xdefault(rdt)))
 			} else {
-				tlvs = append(tlvs, toytlv.Record(rdt, tmp[i]))
+				tlvs = append(tlvs, protocol.Record(rdt, tmp[i]))
 			}
 		}
 	} else {
@@ -362,7 +361,7 @@ func (repl *REPL) CommandPing(arg *rdx.RDX) (id rdx.ID, err error) {
 	}
 	fmt.Printf("pinging through %s (field %s, previously %s)\n",
 		fid.String(), form[off].Name, rdx.Snative(fact[off]))
-	id, err = repl.Host.SetFieldTLV(fid, toytlv.Record('S', rdx.Stlv("ping")))
+	id, err = repl.Host.SetFieldTLV(fid, protocol.Record('S', rdx.Stlv("ping")))
 	return
 }
 
@@ -378,9 +377,9 @@ func KeepOddEven(oddeven uint64, cho *chotki.Chotki, fid rdx.ID) error {
 	mine := rdx.Nmine(tlv, src)
 	sum := rdx.Nnative(tlv)
 	if (sum & 1) != oddeven {
-		tlvs := utils.Records{
-			toytlv.Record('F', rdx.ZipUint64(fid.Off())),
-			toytlv.Record(rdx.Natural, toytlv.Record(rdx.Term, rdx.ZipUint64Pair(mine+1, src))),
+		tlvs := protocol.Records{
+			protocol.Record('F', rdx.ZipUint64(fid.Off())),
+			protocol.Record(rdx.Natural, protocol.Record(rdx.Term, rdx.ZipUint64Pair(mine+1, src))),
 		}
 		_, err = cho.CommitPacket('E', fid.ZeroOff(), tlvs)
 	}
@@ -503,9 +502,9 @@ func (repl *REPL) doSinc(fid rdx.ID, delay time.Duration, count int64, mine uint
 	til := rdx.ID0
 	for c := count; c > 0 && err == nil; c-- {
 		mine++
-		tlvs := utils.Records{
-			toytlv.Record('F', rdx.ZipUint64(fid.Off())),
-			toytlv.Record(rdx.Natural, toytlv.Record(rdx.Term, rdx.ZipUint64Pair(mine, src))),
+		tlvs := protocol.Records{
+			protocol.Record('F', rdx.ZipUint64(fid.Off())),
+			protocol.Record(rdx.Natural, protocol.Record(rdx.Term, rdx.ZipUint64Pair(mine, src))),
 		}
 		til, err = repl.Host.CommitPacket('E', fid.ZeroOff(), tlvs)
 		if delay > time.Duration(0) {
@@ -600,7 +599,7 @@ func (repl *REPL) CommandName(arg *rdx.RDX) (id rdx.ID, err error) {
 	} else if arg.RdxType == rdx.Mapping {
 		_, tlv, _ := repl.Host.ObjectFieldTLV(chotki.IdNames)
 		parsed := rdx.MparseTR(arg)
-		delta := toytlv.Record('M', rdx.MdeltaTR(tlv, parsed))
+		delta := protocol.Record('M', rdx.MdeltaTR(tlv, parsed))
 		id, err = repl.Host.EditFieldTLV(chotki.IdNames, delta)
 	} else {
 		err = HelpName

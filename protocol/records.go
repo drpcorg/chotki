@@ -1,4 +1,4 @@
-package utils
+package protocol
 
 // Records (a batch of) as a very universal primitive, especially
 // for database/network op/packet processing. Batching allows

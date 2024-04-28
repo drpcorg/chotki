@@ -13,8 +13,8 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
+	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toytlv"
 	"github.com/drpcorg/chotki/utils"
 	"github.com/puzpuzpuz/xsync/v3"
 )
@@ -27,9 +27,10 @@ type Options struct {
 
 	Src          uint64
 	Name         string
-	Log1         utils.Records
+	Log1         protocol.Records
 	MaxLogLen    int64
 	RelaxedOrder bool
+	Logger       utils.Logger
 
 	TlsCertFile string
 	TlsKeyFile  string
@@ -42,6 +43,10 @@ func (o *Options) SetDefaults() {
 
 	if o.Merger == nil {
 		o.Merger = &pebble.Merger{Name: "CRDT", Merge: merger}
+	}
+
+	if o.Logger == nil {
+		o.Logger = utils.NewDefaultLogger(slog.LevelWarn)
 	}
 }
 
@@ -60,12 +65,12 @@ type Chotki struct {
 	lock sync.Mutex
 	db   *pebble.DB
 	orm  *ORM
-	net  *toytlv.Transport
+	net  *protocol.Net
 	dir  string
 	opts Options
 	log  utils.Logger
 
-	outq  *xsync.MapOf[string, utils.DrainCloser] // queues to broadcast all new packets
+	outq  *xsync.MapOf[string, protocol.DrainCloser] // queues to broadcast all new packets
 	syncs *xsync.MapOf[rdx.ID, *pebble.Batch]
 	hooks *xsync.MapOf[rdx.ID, []Hook]
 	types *xsync.MapOf[rdx.ID, Fields]
@@ -188,17 +193,16 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		db:   db,
 		src:  opts.Src,
 		dir:  dirname,
+		log:  opts.Logger,
 		opts: opts,
 
-		log: utils.NewDefaultLogger(slog.LevelWarn),
-
-		outq:  xsync.NewMapOf[string, utils.DrainCloser](),
+		outq:  xsync.NewMapOf[string, protocol.DrainCloser](),
 		syncs: xsync.NewMapOf[rdx.ID, *pebble.Batch](),
 		hooks: xsync.NewMapOf[rdx.ID, []Hook](),
 		types: xsync.NewMapOf[rdx.ID, Fields](),
 	}
 
-	cho.net = toytlv.NewTransport(cho.log, func(conn net.Conn) utils.FeedDrainCloser {
+	cho.net = protocol.NewNet(cho.log, func(conn net.Conn) protocol.FeedDrainCloser {
 		return &Syncer{
 			Host: &cho,
 			Mode: SyncRWLive,
@@ -214,12 +218,12 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 	if !exists {
 		id0 := rdx.IDFromSrcSeqOff(opts.Src, 0, 0)
 
-		init := append(utils.Records(nil), Log0...)
+		init := append(protocol.Records(nil), Log0...)
 		init = append(init, opts.Log1...)
-		init = append(init, toytlv.Record('Y',
-			toytlv.Record('I', id0.ZipBytes()),
-			toytlv.Record('R', rdx.ID0.ZipBytes()),
-			toytlv.Record('S', rdx.Stlv(opts.Name)),
+		init = append(init, protocol.Record('Y',
+			protocol.Record('I', id0.ZipBytes()),
+			protocol.Record('R', rdx.ID0.ZipBytes()),
+			protocol.Record('S', rdx.Stlv(opts.Name)),
 		))
 
 		if err = cho.Drain(init); err != nil {
@@ -270,7 +274,7 @@ func (cho *Chotki) Disconnect(addr string) error {
 	return cho.net.Disconnect(addr)
 }
 
-func (cho *Chotki) AddPacketHose(name string) (feed utils.FeedCloser) {
+func (cho *Chotki) AddPacketHose(name string) (feed protocol.FeedCloser) {
 	if q, deleted := cho.outq.LoadAndDelete(name); deleted && q != nil {
 		cho.log.Warn(fmt.Sprintf("closing the old conn to %s", name))
 		if err := q.Close(); err != nil {
@@ -278,7 +282,7 @@ func (cho *Chotki) AddPacketHose(name string) (feed utils.FeedCloser) {
 		}
 	}
 
-	queue := utils.NewRecordQueue(SyncOutQueueLimit, time.Millisecond)
+	queue := utils.NewFDQueue[protocol.Records](SyncOutQueueLimit, time.Millisecond)
 	cho.outq.Store(name, queue)
 	return queue
 }
@@ -293,8 +297,8 @@ func (cho *Chotki) RemovePacketHose(name string) error {
 	return nil
 }
 
-func (cho *Chotki) Broadcast(records utils.Records, except string) {
-	cho.outq.Range(func(name string, hose utils.DrainCloser) bool {
+func (cho *Chotki) Broadcast(records protocol.Records, except string) {
+	cho.outq.Range(func(name string, hose protocol.DrainCloser) bool {
 		if name != except {
 			if err := hose.Drain(records); err != nil {
 				cho.outq.Delete(name)
@@ -305,7 +309,7 @@ func (cho *Chotki) Broadcast(records utils.Records, except string) {
 	})
 }
 
-func (cho *Chotki) Drain(recs utils.Records) (err error) {
+func (cho *Chotki) Drain(recs protocol.Records) (err error) {
 	rest := recs
 	var calls []CallHook
 
@@ -478,17 +482,17 @@ func Join(records ...[]byte) (ret []byte) {
 }
 
 // Here new packets are timestamped and queued for save
-func (cho *Chotki) CommitPacket(lit byte, ref rdx.ID, body utils.Records) (id rdx.ID, err error) {
+func (cho *Chotki) CommitPacket(lit byte, ref rdx.ID, body protocol.Records) (id rdx.ID, err error) {
 	cho.lock.Lock()
 	if cho.db == nil {
 		cho.lock.Unlock()
 		return rdx.BadId, ErrClosed
 	}
 	id = (cho.last & ^rdx.OffMask) + rdx.ProInc
-	i := toytlv.Record('I', id.ZipBytes())
-	r := toytlv.Record('R', ref.ZipBytes())
-	packet := toytlv.Record(lit, i, r, Join(body...))
-	recs := utils.Records{packet}
+	i := protocol.Record('I', id.ZipBytes())
+	r := protocol.Record('R', ref.ZipBytes())
+	packet := protocol.Record(lit, i, r, Join(body...))
+	recs := protocol.Records{packet}
 	err = cho.Drain(recs)
 	cho.Broadcast(recs, "")
 	cho.lock.Unlock()

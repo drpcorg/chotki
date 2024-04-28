@@ -5,11 +5,11 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toytlv"
+	"github.com/drpcorg/chotki/protocol"
 )
 
 func (cho *Chotki) UpdateVTree(id, ref rdx.ID, pb *pebble.Batch) (err error) {
-	v := toytlv.Record('V', id.ZipBytes())
+	v := protocol.Record('V', id.ZipBytes())
 	err = pb.Merge(VKey(ref), v, &WriteOptions)
 	if err == nil {
 		err = pb.Merge(VKey(rdx.ID0), v, &WriteOptions)
@@ -23,19 +23,19 @@ func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 	var rdt byte
 	for len(rest) > 0 && err == nil {
 		var dzip, bare []byte
-		dzip, rest = toytlv.Take('F', rest)
+		dzip, rest = protocol.Take('F', rest)
 		d := rdx.UnzipUint64(dzip)
 		at := ref + rdx.ID(d) // fixme
-		rdt, bare, rest = toytlv.TakeAny(rest)
+		rdt, bare, rest = protocol.TakeAny(rest)
 		err = batch.Merge(OKey(at, rdt), bare, &WriteOptions)
 	}
 	return
 }
 
 func (cho *Chotki) ApplyH(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
-	_, rest := toytlv.Take('M', body)
+	_, rest := protocol.Take('M', body)
 	var vbody []byte
-	vbody, _ = toytlv.Take('V', rest)
+	vbody, _ = protocol.Take('V', rest)
 	err = batch.Merge(VKey(rdx.ID0), vbody, &WriteOptions)
 	return
 }
@@ -44,8 +44,8 @@ func (cho *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 	rest := body
 	for len(rest) > 0 {
 		var rec, idb []byte
-		rec, rest = toytlv.Take('V', rest)
-		idb, rec = toytlv.Take('R', rec)
+		rec, rest = protocol.Take('V', rest)
+		idb, rec = protocol.Take('R', rec)
 		id := rdx.IDFromZipBytes(idb)
 		key := VKey(id)
 		if !rdx.VValid(rec) {
@@ -59,8 +59,8 @@ func (cho *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 
 func (cho *Chotki) ApplyC(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
 	desc := make([]byte, 0, len(body)+32)
-	desc = append(desc, toytlv.Record('T', rdx.Ttlv("_ref"))...)
-	desc = append(desc, toytlv.Record('R', rdx.Rtlv(ref))...)
+	desc = append(desc, protocol.Record('T', rdx.Ttlv("_ref"))...)
+	desc = append(desc, protocol.Record('R', rdx.Rtlv(ref))...)
 	desc = append(desc, body...)
 	err = batch.Merge(
 		OKey(id, 'C'),
@@ -77,7 +77,7 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 	rest := body
 	var fid rdx.ID
 	for fno := rdx.ID(1); len(rest) > 0 && err == nil; fno++ {
-		lit, hlen, blen := toytlv.ProbeHeader(rest)
+		lit, hlen, blen := protocol.ProbeHeader(rest)
 		if lit == 0 || lit == '-' {
 			return rdx.ErrBadPacket
 		}
@@ -122,12 +122,12 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls 
 	for len(rest) > 0 && err == nil {
 		var fint, bare, rebar []byte
 		var lit byte
-		fint, rest = toytlv.Take('F', rest)
+		fint, rest = protocol.Take('F', rest)
 		field := rdx.UnzipUint64(fint)
 		if field > uint64(rdx.OffMask) {
 			return ErrBadEPacket
 		}
-		lit, bare, rest = toytlv.TakeAny(rest)
+		lit, bare, rest = protocol.TakeAny(rest)
 		switch lit {
 		case 'F', 'I', 'R', 'S', 'T':
 			rebar, err = rdx.SetSourceFIRST(bare, id.Src())

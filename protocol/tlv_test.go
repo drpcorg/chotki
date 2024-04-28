@@ -1,4 +1,4 @@
-package toytlv
+package protocol
 
 import (
 	"testing"

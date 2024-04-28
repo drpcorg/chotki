@@ -1,11 +1,12 @@
-package toytlv
+// Protocol format is based on ToyTLV (MIT licence) written by Victor Grishchenko in 2024
+// Original project: https://github.com/learn-decentralized-systems/toytlv
+
+package protocol
 
 import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-
-	"github.com/drpcorg/chotki/utils"
 )
 
 const CaseBit uint8 = 'a' - 'A'
@@ -95,7 +96,7 @@ func Incomplete(data []byte) int {
 	}
 }
 
-func Split(data *bytes.Buffer) (recs utils.Records, err error) {
+func Split(data *bytes.Buffer) (recs Records, err error) {
 	for data.Len() > 0 {
 		lit, hlen, blen := ProbeHeader(data.Bytes())
 		if lit == '-' { // bad format
@@ -288,14 +289,14 @@ func TinyRecord(lit byte, body []byte) (tiny []byte) {
 	return AppendTiny(data[:0], lit, body)
 }
 
-func Join(records ...[]byte) (ret utils.Records) {
+func Join(records ...[]byte) (ret Records) {
 	for _, rec := range records {
 		ret = append(ret, rec)
 	}
 	return
 }
 
-func Records(lit byte, bodies ...[]byte) (recs utils.Records) {
+func Recs(lit byte, bodies ...[]byte) (recs Records) {
 	for _, body := range bodies {
 		recs = append(recs, Record(lit, body))
 	}
