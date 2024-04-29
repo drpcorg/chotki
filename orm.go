@@ -74,8 +74,7 @@ func (orm *ORM) Save(objs ...NativeObject) (err error) {
 		if id == rdx.BadId {
 			return ErrObjectUnknown
 		}
-		var it *pebble.Iterator
-		it = orm.Host.ObjectIterator(id, orm.Snap)
+		it := orm.Host.ObjectIterator(id, orm.Snap)
 		if it == nil {
 			err = ErrObjectUnknown
 			break
