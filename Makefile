@@ -15,10 +15,6 @@ ragel:
 lint:
 	golangci-lint run ./...
 
-.PHONY: tlsgen
-tlsgen:
-	openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 1
-
 .PHONY: update-pebble
 update-pebble:
 	go mod edit -replace github.com/cockroachdb/pebble=github.com/drpcorg/pebble@master

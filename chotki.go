@@ -2,6 +2,7 @@ package chotki
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -32,8 +33,7 @@ type Options struct {
 	RelaxedOrder bool
 	Logger       utils.Logger
 
-	TlsCertFile string
-	TlsKeyFile  string
+	TlsConfig *tls.Config
 }
 
 func (o *Options) SetDefaults() {
@@ -210,8 +210,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			Log:  cho.log,
 		}
 	})
-	cho.net.CertFile = opts.TlsCertFile
-	cho.net.KeyFile = opts.TlsKeyFile
+	cho.net.TlsConfig = opts.TlsConfig
 
 	cho.orm = NewORM(&cho, db.NewSnapshot())
 

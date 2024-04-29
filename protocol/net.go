@@ -3,11 +3,9 @@ package protocol
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"net"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,8 +50,7 @@ type Net struct {
 	conns   *xsync.MapOf[string, *Peer]
 	listens *xsync.MapOf[string, net.Listener]
 
-	CertFile, KeyFile string
-	ClientCertFiles   []string
+	TlsConfig *tls.Config
 }
 
 func NewNet(log utils.Logger, jack Jack) *Net {
@@ -253,12 +250,7 @@ func (n *Net) createListener(ctx context.Context, addr string) (net.Listener, er
 			return nil, err
 		}
 
-		tlsConfig, err := n.tlsConfig()
-		if err != nil {
-			return nil, err
-		}
-
-		listener = tls.NewListener(listener, tlsConfig)
+		listener = tls.NewListener(listener, n.TlsConfig)
 
 	case QUIC:
 		return nil, errors.New("QUIC unimplemented")
@@ -282,10 +274,8 @@ func (n *Net) createConn(ctx context.Context, addr string) (net.Conn, error) {
 		}
 
 	case TLS:
-		var d tls.Dialer
-		if d.Config, err = n.tlsConfig(); err != nil {
-			return nil, err
-		}
+		d := tls.Dialer{Config: n.TlsConfig}
+
 		if conn, err = d.DialContext(ctx, "tcp", address); err != nil {
 			return nil, err
 		}
@@ -295,33 +285,6 @@ func (n *Net) createConn(ctx context.Context, addr string) (net.Conn, error) {
 	}
 
 	return conn, err
-}
-
-func (n *Net) tlsConfig() (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(n.CertFile, n.KeyFile)
-	if err != nil {
-		return nil, err
-	}
-
-	tlsConfig := &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{cert},
-	}
-
-	if len(n.ClientCertFiles) > 0 {
-		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
-		tlsConfig.ClientCAs = x509.NewCertPool()
-
-		for _, file := range n.ClientCertFiles {
-			if clientCert, err := os.ReadFile(file); err != nil {
-				return nil, err
-			} else {
-				tlsConfig.ClientCAs.AppendCertsFromPEM(clientCert)
-			}
-		}
-	}
-
-	return tlsConfig, nil
 }
 
 func parseAddr(addr string) (ConnType, string, error) {

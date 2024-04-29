@@ -2,8 +2,12 @@ package protocol
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"log"
 	"log/slog"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -15,31 +19,74 @@ import (
 // 2. create a server, client, connect, disconn, reconnect
 // 3. create a server, client, conn, stop the serv, relaunch, reconnect
 
-func TestTCPDepot_Connect(t *testing.T) {
-	loop := "tcp://127.0.0.1:32000"
+func tlsConfig(servername string) *tls.Config {
+	const (
+		serverCertFile = "testdata/server_cert.pem"    // contains the server's certificate (public key).
+		serverKeyFile  = "testdata/server_key.pem"     // contains the server's private key.
+		serverCAFile   = "testdata/server_ca_cert.pem"        // contains the certificate of the certificate authority that can verify the server's certificate.
 
-	cert, key := "testonly_cert.pem", "testonly_key.pem"
+		clientCertFile = "testdata/client_cert.pem"    // contains the client's certificate (public key).
+		clientKeyFile  = "testdata/client_key.pem"     // contains the client's private key.
+		clientCAFile   = "testdata/client_ca_cert.pem" // contains the certificate of the certificate authority that can verify the client's certificate.
+	)
+
+	// setup for listening
+	serverCert, err := tls.LoadX509KeyPair(serverCertFile, serverKeyFile)
+	if err != nil {
+		log.Fatalf("failed to load key pair: %s", err)
+	}
+
+	clientCAs := x509.NewCertPool()
+	if caBytes, err := os.ReadFile(clientCAFile); err != nil {
+		log.Fatalf("failed to read ca cert %q: %v", clientCAFile, err)
+	} else if ok := clientCAs.AppendCertsFromPEM(caBytes); !ok {
+		log.Fatalf("failed to parse %q", clientCAFile)
+	}
+
+	// setup for connection
+	clientCert, err := tls.LoadX509KeyPair(clientCertFile, clientKeyFile)
+	if err != nil {
+		log.Fatalf("failed to load client cert: %v", err)
+	}
+
+	rootCAs := x509.NewCertPool()
+	if caBytes, err := os.ReadFile(serverCAFile); err != nil {
+		log.Fatalf("failed to read ca cert %q: %v", serverCAFile, err)
+	} else if ok := rootCAs.AppendCertsFromPEM(caBytes); !ok {
+		log.Fatalf("failed to parse %q", serverCAFile)
+	}
+
+	return &tls.Config{
+		ServerName:   servername,
+		RootCAs:      rootCAs,
+		ClientCAs:    clientCAs,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		Certificates: []tls.Certificate{serverCert, clientCert},
+	}
+}
+
+func TestTCPDepot_Connect(t *testing.T) {
+	loop := "tls://127.0.0.1:32000"
+
 	log := utils.NewDefaultLogger(slog.LevelDebug)
 
 	lCon := utils.NewFDQueue[Records](16, time.Millisecond)
 	l := NewNet(log, func(conn net.Conn) FeedDrainCloser {
 		return lCon
 	})
+	l.TlsConfig = tlsConfig("a.chotki.local")
+
 	err := l.Listen(context.Background(), loop)
 	assert.Nil(t, err)
-
-	l.CertFile = cert
-	l.KeyFile = key
 
 	cCon := utils.NewFDQueue[Records](16, time.Millisecond)
 	c := NewNet(log, func(conn net.Conn) FeedDrainCloser {
 		return cCon
 	})
+	c.TlsConfig = tlsConfig("b.chotki.local")
+
 	err = c.Connect(context.Background(), loop)
 	assert.Nil(t, err)
-
-	c.CertFile = cert
-	c.KeyFile = key
 
 	time.Sleep(time.Second) // Wait connection, todo use events
 
