@@ -43,14 +43,14 @@ func TestObjectExample(t *testing.T) {
 	assert.Equal(t, decl[2].RdxType, rdx.Integer)
 
 	ex := Example{}
-	i := a.ObjectIterator(oid)
+	i := a.ObjectIterator(oid, nil)
 	assert.NotNil(t, i)
 	err = ex.Load(i)
 	assert.Nil(t, err)
 	assert.Equal(t, "Petrov", ex.Name)
 	assert.Equal(t, int64(42), ex.Score)
 
-	i2 := a.ObjectIterator(oid)
+	i2 := a.ObjectIterator(oid, nil)
 	assert.NotNil(t, i2)
 	ex.Score = 44
 	var changes protocol.Records
@@ -62,7 +62,7 @@ func TestObjectExample(t *testing.T) {
 	assert.Equal(t, oid+rdx.ProInc, eid)
 
 	ex2 := Example{}
-	i3 := a.ObjectIterator(oid)
+	i3 := a.ObjectIterator(oid, nil)
 	assert.NotNil(t, i3)
 	err = ex2.Load(i3)
 	assert.Nil(t, err)
@@ -100,7 +100,7 @@ func TestObjectExamleWithORM(t *testing.T) {
 	assert.Nil(t, err)
 
 	var exa Example
-	ita := a.ObjectIterator(rdx.IDFromString("1e-2"))
+	ita := a.ObjectIterator(rdx.IDFromString("1e-2"), nil)
 	assert.NotNil(t, ita)
 	err = exa.Load(ita)
 	assert.Nil(t, err)
@@ -120,7 +120,7 @@ func TestObjectExamleWithORM(t *testing.T) {
 	err = protocol.Pump(&syncera, &syncerb)
 	assert.Equal(t, io.EOF, err)
 
-	itb := b.ObjectIterator(rdx.IDFromString("1e-2"))
+	itb := b.ObjectIterator(rdx.IDFromString("1e-2"), nil)
 	assert.NotNil(t, itb)
 
 	var exb Example

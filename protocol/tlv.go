@@ -289,9 +289,9 @@ func TinyRecord(lit byte, body []byte) (tiny []byte) {
 	return AppendTiny(data[:0], lit, body)
 }
 
-func Join(records ...[]byte) (ret Records) {
+func Join(records ...[]byte) (ret []byte) {
 	for _, rec := range records {
-		ret = append(ret, rec)
+		ret = append(ret, rec...)
 	}
 	return
 }

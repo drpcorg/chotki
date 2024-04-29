@@ -1,6 +1,7 @@
 package chotki
 
 import (
+	"encoding/binary"
 	"fmt"
 	"unicode/utf8"
 
@@ -10,25 +11,54 @@ import (
 	"github.com/pkg/errors"
 )
 
-var ErrBadTypeDescription = errors.New("bad type description")
-
-func hasUnsafeChars(text string) bool {
-	for _, l := range text {
-		if l < ' ' {
-			return true
-		}
-	}
-	return false
+func OKey(id rdx.ID, rdt byte) (key []byte) {
+	var ret = [16]byte{'O'}
+	key = binary.BigEndian.AppendUint64(ret[:1], uint64(id))
+	key = append(key, rdt)
+	return
 }
 
-var ErrObjectUnknown = errors.New("unknown object")
-var ErrTypeUnknown = errors.New("unknown object type")
-var ErrUnknownFieldInAType = errors.New("unknown field for the type")
-var ErrBadValueForAType = errors.New("bad value for the type")
+const LidLKeyLen = 1 + 8 + 1
+
+func OKeyIdRdt(key []byte) (id rdx.ID, rdt byte) {
+	if len(key) != LidLKeyLen {
+		return rdx.BadId, 0
+	}
+
+	id = rdx.IDFromBytes(key[1 : LidLKeyLen-1])
+	rdt = key[LidLKeyLen-1]
+	return
+}
+
+func VKey(id rdx.ID) (key []byte) {
+	var ret = [16]byte{'V'}
+	block := id & ^SyncBlockMask
+	key = binary.BigEndian.AppendUint64(ret[:1], uint64(block))
+	key = append(key, 'V')
+	return
+}
+
+func VKeyId(key []byte) rdx.ID {
+	if len(key) != LidLKeyLen {
+		return rdx.BadId
+	}
+	return rdx.IDFromBytes(key[1:])
+}
 
 type Field struct {
 	Name    string
 	RdxType byte
+}
+
+func (f Field) Valid() bool {
+	for _, l := range f.Name { // has unsafe chars
+		if l < ' ' {
+			return false
+		}
+	}
+
+	return (f.RdxType >= 'A' && f.RdxType <= 'Z' &&
+		len(f.Name) > 0 && utf8.ValidString(f.Name))
 }
 
 type Fields []Field
@@ -42,11 +72,37 @@ func (f Fields) Find(name string) (ndx int) {
 	return -1
 }
 
-func (f Field) Valid() bool {
-	return f.RdxType >= 'A' && f.RdxType <= 'Z' && len(f.Name) > 0 && utf8.ValidString(f.Name) && !hasUnsafeChars(f.Name)
+func ObjectKeyRange(oid rdx.ID) (fro, til []byte) {
+	oid = oid & ^rdx.OffMask
+	return OKey(oid, 'O'), OKey(oid+rdx.ProInc, 0)
 }
 
-var ErrBadClass = errors.New("bad class description")
+// returns nil for "not found"
+func (cho *Chotki) ObjectIterator(oid rdx.ID, snap *pebble.Snapshot) *pebble.Iterator {
+	fro, til := ObjectKeyRange(oid)
+	io := pebble.IterOptions{
+		LowerBound: fro,
+		UpperBound: til,
+	}
+	var it *pebble.Iterator
+	if snap != nil {
+		it = snap.NewIter(&io)
+	} else {
+		it = cho.db.NewIter(&io)
+	}
+
+	if it.SeekGE(fro) { // fixme
+		id, rdt := OKeyIdRdt(it.Key())
+		if rdt == 'O' && id == oid {
+			// An iterator is returned from a function, it cannot be closed
+			return it
+		}
+	}
+	if it != nil {
+		_ = it.Close()
+	}
+	return nil
+}
 
 // todo []Field -> map[uint64]Field
 func (cho *Chotki) ClassFields(cid rdx.ID) (fields Fields, err error) {
@@ -93,7 +149,7 @@ func (cho *Chotki) ClassFields(cid rdx.ID) (fields Fields, err error) {
 }
 
 func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, tlvs protocol.Records, err error) {
-	it := cho.ObjectIterator(oid)
+	it := cho.ObjectIterator(oid, nil)
 	if it == nil {
 		return rdx.BadId, nil, ErrObjectUnknown
 	}
@@ -119,7 +175,7 @@ func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, t
 }
 
 func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact protocol.Records, err error) {
-	it := cho.ObjectIterator(oid)
+	it := cho.ObjectIterator(oid, nil)
 	if it == nil {
 		err = ErrObjectUnknown
 		return
@@ -150,7 +206,7 @@ func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact proto
 }
 
 func (cho *Chotki) ObjectFieldsTLV(oid rdx.ID) (tid rdx.ID, tlv protocol.Records, err error) {
-	it := cho.ObjectIterator(oid)
+	it := cho.ObjectIterator(oid, nil)
 	if it == nil {
 		return rdx.BadId, nil, ErrObjectUnknown
 	}
@@ -355,6 +411,23 @@ func (cho *Chotki) ObjectFieldMapTermId(fid rdx.ID) (themap rdx.MapTR, err error
 		return nil, ErrWrongFieldType
 	}
 	themap = rdx.MnativeTR(tlv)
+	return
+}
+
+func (cho *Chotki) GetFieldTLV(id rdx.ID) (rdt byte, tlv []byte) {
+	key := OKey(id, 'A')
+	it := cho.db.NewIter(&pebble.IterOptions{
+		LowerBound: []byte{'O'},
+		UpperBound: []byte{'P'},
+	})
+	defer it.Close()
+	if it.SeekGE(key) {
+		fact, r := OKeyIdRdt(it.Key())
+		if fact == id {
+			tlv = it.Value()
+			rdt = r
+		}
+	}
 	return
 }
 

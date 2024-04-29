@@ -75,8 +75,9 @@ func (orm *ORM) Save(objs ...NativeObject) (err error) {
 			return ErrObjectUnknown
 		}
 		var it *pebble.Iterator
-		it, err = ObjectIterator(id, orm.Snap)
-		if err != nil {
+		it = orm.Host.ObjectIterator(id, orm.Snap)
+		if it == nil {
+			err = ErrObjectUnknown
 			break
 		}
 		cid := rdx.IDFromZipBytes(it.Value())
@@ -159,9 +160,9 @@ func (orm *ORM) UpdateObject(obj NativeObject, snap *pebble.Snapshot) error {
 	if id == rdx.BadId {
 		return ErrObjectUnknown
 	}
-	it, err := ObjectIterator(id, snap)
-	if err != nil {
-		return err
+	it := orm.Host.ObjectIterator(id, snap)
+	if it == nil {
+		return ErrObjectUnknown
 	}
 	seq := orm.Snap.Seq()
 	for it.Next() {
@@ -175,7 +176,7 @@ func (orm *ORM) UpdateObject(obj NativeObject, snap *pebble.Snapshot) error {
 		}
 	}
 	_ = it.Close()
-	return err
+	return nil
 }
 
 func (orm *ORM) UpdateAll() (err error) {

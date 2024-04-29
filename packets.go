@@ -10,9 +10,9 @@ import (
 
 func (cho *Chotki) UpdateVTree(id, ref rdx.ID, pb *pebble.Batch) (err error) {
 	v := protocol.Record('V', id.ZipBytes())
-	err = pb.Merge(VKey(ref), v, &WriteOptions)
+	err = pb.Merge(VKey(ref), v, &pebbleWriteOptions)
 	if err == nil {
-		err = pb.Merge(VKey(rdx.ID0), v, &WriteOptions)
+		err = pb.Merge(VKey(rdx.ID0), v, &pebbleWriteOptions)
 	}
 	return
 }
@@ -27,7 +27,7 @@ func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 		d := rdx.UnzipUint64(dzip)
 		at := ref + rdx.ID(d) // fixme
 		rdt, bare, rest = protocol.TakeAny(rest)
-		err = batch.Merge(OKey(at, rdt), bare, &WriteOptions)
+		err = batch.Merge(OKey(at, rdt), bare, &pebbleWriteOptions)
 	}
 	return
 }
@@ -36,7 +36,7 @@ func (cho *Chotki) ApplyH(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 	_, rest := protocol.Take('M', body)
 	var vbody []byte
 	vbody, _ = protocol.Take('V', rest)
-	err = batch.Merge(VKey(rdx.ID0), vbody, &WriteOptions)
+	err = batch.Merge(VKey(rdx.ID0), vbody, &pebbleWriteOptions)
 	return
 }
 
@@ -51,7 +51,7 @@ func (cho *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 		if !rdx.VValid(rec) {
 			err = ErrBadVPacket
 		} else {
-			err = batch.Merge(key, rec, &WriteOptions)
+			err = batch.Merge(key, rec, &pebbleWriteOptions)
 		}
 	}
 	return
@@ -65,7 +65,7 @@ func (cho *Chotki) ApplyC(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 	err = batch.Merge(
 		OKey(id, 'C'),
 		desc,
-		&WriteOptions)
+		&pebbleWriteOptions)
 	return
 }
 
@@ -73,7 +73,7 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 	err = batch.Merge(
 		OKey(id, lot),
 		ref.ZipBytes(),
-		&WriteOptions)
+		&pebbleWriteOptions)
 	rest := body
 	var fid rdx.ID
 	for fno := rdx.ID(1); len(rest) > 0 && err == nil; fno++ {
@@ -103,7 +103,7 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 		err = batch.Merge(
 			fkey,
 			rebar,
-			&WriteOptions)
+			&pebbleWriteOptions)
 		rest = rest[rlen:]
 	}
 	if err == nil {
@@ -144,7 +144,7 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls 
 		err = batch.Merge(
 			fkey,
 			rebar,
-			&WriteOptions)
+			&pebbleWriteOptions)
 		hook, ok := cho.hooks.Load(fid)
 		if ok {
 			for _, h := range hook {

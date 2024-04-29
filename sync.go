@@ -92,7 +92,7 @@ func (sync *Syncer) Close() error {
 
 	_ = sync.Host.RemovePacketHose(sync.Name)
 	sync.SetFeedState(SendNone) //fixme
-	sync.Log.Error("connection %s closed: %v\n", sync.Name, sync.reason)
+	sync.Log.Debug("sync: connection %s closed: %v\n", sync.Name, sync.reason)
 
 	return nil
 }
@@ -259,12 +259,12 @@ func (sync *Syncer) FeedDiffVV() (vv protocol.Records, err error) {
 }
 
 func (sync *Syncer) SetFeedState(state int) {
-	sync.Log.Debug("feed state", "name", sync.Name, "state", SendStates[state])
+	sync.Log.Debug("sync: feed state", "name", sync.Name, "state", SendStates[state])
 	sync.feedState = state
 }
 
 func (sync *Syncer) SetDrainState(state int) {
-	sync.Log.Debug("drain state", "name", sync.Name, "state", SendStates[state])
+	sync.Log.Debug("sync: drain state", "name", sync.Name, "state", SendStates[state])
 
 	sync.lock.Lock()
 	sync.drainState = state
@@ -311,7 +311,7 @@ func (sync *Syncer) Drain(recs protocol.Records) (err error) {
 		if err != nil {
 			return
 		}
-		sync.Host.Broadcast(recs[0:1], sync.Name)
+		sync.Host.BroadcastPacket(recs[0:1], sync.Name)
 		recs = recs[1:]
 		sync.SetDrainState(SendDiff)
 		if len(recs) == 0 {
@@ -329,7 +329,7 @@ func (sync *Syncer) Drain(recs protocol.Records) (err error) {
 		}
 		err = sync.Host.Drain(recs)
 		if err == nil {
-			sync.Host.Broadcast(recs, sync.Name)
+			sync.Host.BroadcastPacket(recs, sync.Name)
 		}
 	case SendLive:
 		lit := LastLit(recs)
@@ -338,7 +338,7 @@ func (sync *Syncer) Drain(recs protocol.Records) (err error) {
 		}
 		err = sync.Host.Drain(recs)
 		if err == nil {
-			sync.Host.Broadcast(recs, sync.Name)
+			sync.Host.BroadcastPacket(recs, sync.Name)
 		}
 	default:
 		return ErrClosed

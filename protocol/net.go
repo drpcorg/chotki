@@ -121,7 +121,7 @@ func (n *Net) Listen(ctx context.Context, addr string) error {
 	}
 	n.listens.Store(addr, listener)
 
-	n.log.Debug("tlv: listening", "addr", addr)
+	n.log.Debug("net: listening", "addr", addr)
 
 	n.wg.Add(1)
 	go func() {
@@ -154,7 +154,7 @@ func (n *Net) KeepConnecting(ctx context.Context, addr string) {
 
 		conn, err := n.createConn(ctx, addr)
 		if err != nil {
-			n.log.Error("couldn't connect", "addr", addr, "err", err)
+			n.log.Error("net: couldn't connect", "addr", addr, "err", err)
 
 			time.Sleep(connBackoff)
 			connBackoff = min(MAX_RETRY_PERIOD, connBackoff*2)
@@ -162,7 +162,7 @@ func (n *Net) KeepConnecting(ctx context.Context, addr string) {
 			continue
 		}
 
-		n.log.Debug("tlv: connected", "addr", addr)
+		n.log.Debug("net: connected", "addr", addr)
 
 		connBackoff = MIN_RETRY_PERIOD
 		n.keepPeer(ctx, addr, conn)
@@ -190,12 +190,12 @@ func (n *Net) KeepListening(ctx context.Context, addr string) {
 			}
 
 			// reconnects are the client's problem, just continue
-			n.log.Error("tlv: couldn't accept request", "addr", addr, "err", err)
+			n.log.Error("net: couldn't accept request", "addr", addr, "err", err)
 			continue
 		}
 
 		remoteAddr := conn.RemoteAddr().String()
-		n.log.Debug("tlv: accept connection", "addr", addr, "remoteAddr", remoteAddr)
+		n.log.Debug("net: accept connection", "addr", addr, "remoteAddr", remoteAddr)
 
 		n.wg.Add(1)
 		go func() {
@@ -206,11 +206,11 @@ func (n *Net) KeepListening(ctx context.Context, addr string) {
 
 	if l, ok := n.listens.LoadAndDelete(addr); ok {
 		if err := l.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			n.log.Error("tlv: couldn't correct close listener", "addr", addr, "err", err)
+			n.log.Error("net: couldn't correct close listener", "addr", addr, "err", err)
 		}
 	}
 
-	n.log.Debug("tlv: listener closed", "addr", addr)
+	n.log.Debug("net: listener closed", "addr", addr)
 }
 
 func (n *Net) keepPeer(ctx context.Context, addr string, conn net.Conn) {
@@ -220,13 +220,13 @@ func (n *Net) keepPeer(ctx context.Context, addr string, conn net.Conn) {
 
 	readErr, wrireErr, closeErr := peer.Keep(ctx)
 	if readErr != nil {
-		n.log.Error("tlv: couldn't read from peer", "addr", addr, "err", readErr)
+		n.log.Error("net: couldn't read from peer", "addr", addr, "err", readErr)
 	}
 	if wrireErr != nil {
-		n.log.Error("tlv: couldn't write to peer", "addr", addr, "err", wrireErr)
+		n.log.Error("net: couldn't write to peer", "addr", addr, "err", wrireErr)
 	}
 	if closeErr != nil {
-		n.log.Error("tlv: couldn't correct close peer", "addr", addr, "err", closeErr)
+		n.log.Error("net: couldn't correct close peer", "addr", addr, "err", closeErr)
 	}
 }
 
