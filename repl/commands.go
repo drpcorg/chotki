@@ -99,16 +99,16 @@ func (repl *REPL) CommandDump(arg *rdx.RDX) (id rdx.ID, err error) {
 		name := string(arg.Text)
 		switch name {
 		case "obj", "objects":
-			repl.Host.DumpObjects()
+			repl.Host.DumpObjects(os.Stderr)
 		case "vv":
-			repl.Host.DumpVV()
+			repl.Host.DumpVV(os.Stderr)
 		case "all":
-			repl.Host.DumpAll()
+			repl.Host.DumpAll(os.Stderr)
 		default:
 			return rdx.BadId, HelpDump
 		}
 	} else {
-		repl.Host.DumpAll()
+		repl.Host.DumpAll(os.Stderr)
 	}
 	return
 }

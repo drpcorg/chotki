@@ -1,8 +1,10 @@
 package chotki
 
 import (
+	"fmt"
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
+	"io"
 )
 
 func ChotkiKVString(key, value []byte) string {
@@ -18,12 +20,12 @@ func ChotkiKVString(key, value []byte) string {
 	return string(line)
 }
 
-func (cho *Chotki) DumpAll() {
-	cho.DumpObjects()
-	cho.DumpVV()
+func (cho *Chotki) DumpAll(writer io.Writer) {
+	cho.DumpObjects(writer)
+	cho.DumpVV(writer)
 }
 
-func (cho *Chotki) DumpObjects() {
+func (cho *Chotki) DumpObjects(writer io.Writer) {
 	io := pebble.IterOptions{
 		LowerBound: []byte{'O'},
 		UpperBound: []byte{'P'},
@@ -31,11 +33,11 @@ func (cho *Chotki) DumpObjects() {
 	i := cho.db.NewIter(&io)
 	defer i.Close()
 	for i.SeekGE([]byte{'O'}); i.Valid(); i.Next() {
-		cho.log.Debug("OBJECT" + ChotkiKVString(i.Key(), i.Value()))
+		fmt.Fprintln(writer, ChotkiKVString(i.Key(), i.Value()))
 	}
 }
 
-func (cho *Chotki) DumpVV() {
+func (cho *Chotki) DumpVV(writer io.Writer) {
 	io := pebble.IterOptions{
 		LowerBound: []byte{'V'},
 		UpperBound: []byte{'W'},
@@ -46,6 +48,6 @@ func (cho *Chotki) DumpVV() {
 		id := rdx.IDFromBytes(i.Key()[1:])
 		vv := make(rdx.VV)
 		_ = vv.PutTLV(i.Value())
-		cho.log.Debug("VV", "key", id.String(), "string", vv.String())
+		fmt.Fprintln(writer, id.String(), " -> ", vv.String())
 	}
 }
