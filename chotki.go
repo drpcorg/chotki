@@ -377,9 +377,8 @@ func (cho *Chotki) BroadcastPacket(records protocol.Records, except string) {
 	cho.outq.Range(func(name string, hose protocol.DrainCloser) bool {
 		if name != except {
 			if err := hose.Drain(records); err != nil {
-				cho.outq.Delete(name)
-			} else {
 				cho.log.Error("couldn't drain to hose", "err", err)
+				cho.outq.Delete(name)
 			}
 		}
 
