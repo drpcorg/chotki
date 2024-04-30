@@ -7,10 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func Ntlvt(inc uint64, src uint64) []byte {
-	return tlv.Record(Term, tlv.TinyRecord('T', ZipUint64Pair(inc, src)))
-}
-
 func TestNtlv(t *testing.T) {
 	fact := Ntlv(123)
 	correct := Ntlvt(123, 0)

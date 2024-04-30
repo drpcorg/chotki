@@ -252,8 +252,24 @@ var HelpAdd = errors.New(
 )
 
 func (repl *REPL) CommandAdd(arg *rdx.RDX) (id rdx.ID, err error) {
-	id = rdx.BadId
-	err = HelpAdd
+	if arg.RdxType == rdx.Mapping {
+		pairs := arg.Nested
+		for i := 0; i+1 < len(pairs) && err == nil; i += 2 {
+			if pairs[i].RdxType != rdx.Reference || pairs[i+1].RdxType != rdx.Integer {
+				return rdx.BadId, HelpAdd
+			}
+			fid := rdx.IDFromText(pairs[i].Text)
+			var add uint64
+			_, err = fmt.Sscanf(string(pairs[i+1].Text), "%d", &add)
+			if fid.Off() == 0 || err != nil {
+				return
+			}
+			id, err = repl.Host.AddToNField(fid, add)
+		}
+
+	} else {
+		return rdx.BadId, HelpAdd
+	}
 	return
 }
 

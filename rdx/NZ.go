@@ -27,6 +27,10 @@ func Ntlv(u uint64) (tlv []byte) {
 	return protocol.Record(Term, protocol.TinyRecord('T', time))
 }
 
+func Ntlvt(inc uint64, src uint64) []byte {
+	return protocol.Record(Term, protocol.TinyRecord('T', ZipUint64Pair(inc, src)))
+}
+
 // convert a TLV value to a native golang value
 func Nnative(tlv []byte) (sum uint64) {
 	it := FIRSTIterator{TLV: tlv}

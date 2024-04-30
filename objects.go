@@ -392,7 +392,7 @@ func (cho *Chotki) AddToNField(fid rdx.ID, count uint64) (id rdx.ID, err error) 
 	mine := rdx.Nmine(tlv, src)
 	tlvs := protocol.Records{
 		protocol.Record('F', rdx.ZipUint64(fid.Off())),
-		protocol.Record(rdx.Natural, protocol.Record(rdx.Term, rdx.ZipUint64Pair(mine+count, src))),
+		protocol.Record(rdx.Natural, rdx.Ntlvt(mine+count, src)),
 	}
 	id, err = cho.CommitPacket('E', fid.ZeroOff(), tlvs)
 	return
