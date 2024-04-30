@@ -174,17 +174,22 @@ func FIRSTrdx2tlv(a *RDX) (tlv []byte) {
 	if a == nil || !a.FIRST() {
 		return nil
 	}
+	str := string(a.Text)
 	switch a.RdxType {
 	case Float:
-		tlv = Fparse(string(a.Text))
+		tlv = Fparse(str)
 	case Integer:
-		tlv = Iparse(string(a.Text))
+		tlv = Iparse(str)
 	case Reference:
-		tlv = Rparse(string(a.Text))
+		tlv = Rparse(str)
 	case String:
-		tlv = Sparse(string(a.Text))
+		tlv = Sparse(str)
 	case Term:
-		tlv = Tparse(string(a.Text))
+		tlv = Tparse(str)
+	case Natural:
+		tlv = Nparse(str)
+	case ZCounter:
+		tlv = Zparse(str)
 	default:
 		return nil
 	}

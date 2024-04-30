@@ -22,6 +22,7 @@ func ChotkiKVString(key, value []byte) string {
 
 func (cho *Chotki) DumpAll(writer io.Writer) {
 	cho.DumpObjects(writer)
+	fmt.Fprintln(writer, "")
 	cho.DumpVV(writer)
 }
 

@@ -3,13 +3,17 @@ package rdx
 import (
 	"testing"
 
-	"github.com/drpcorg/chotki/protocol"
+	tlv "github.com/drpcorg/chotki/protocol"
 	"github.com/stretchr/testify/assert"
 )
 
+func Ntlvt(inc uint64, src uint64) []byte {
+	return tlv.Record(Term, tlv.TinyRecord('T', ZipUint64Pair(inc, src)))
+}
+
 func TestNtlv(t *testing.T) {
 	fact := Ntlv(123)
-	correct := protocol.Record(Term, ZipUint64Pair(123, 0))
+	correct := Ntlvt(123, 0)
 	assert.Equal(t, correct, fact)
 	str := Nstring(fact)
 	assert.Equal(t, "123", str)
@@ -20,26 +24,26 @@ func TestNtlv(t *testing.T) {
 }
 
 func TestNmerge(t *testing.T) {
-	one := protocol.Concat(
-		protocol.Record(Term, ZipUint64Pair(1, 1)),
-		protocol.Record(Term, ZipUint64Pair(2, 2)),
-		protocol.Record(Term, ZipUint64Pair(3, 3)),
+	one := tlv.Concat(
+		Ntlvt(1, 1),
+		Ntlvt(2, 2),
+		Ntlvt(3, 3),
 	)
 	assert.Equal(t, uint64(6), Nnative(one))
-	two := protocol.Concat(
-		protocol.Record(Term, ZipUint64Pair(3, 2)),
-		protocol.Record(Term, ZipUint64Pair(3, 3)),
-		protocol.Record(Term, ZipUint64Pair(4, 4)),
+	two := tlv.Concat(
+		Ntlvt(3, 2),
+		Ntlvt(3, 3),
+		Ntlvt(4, 4),
 	)
 	assert.Equal(t, uint64(10), Nnative(two))
 
 	three := Nmerge([][]byte{one, two})
 
-	correct := protocol.Concat(
-		protocol.Record(Term, ZipUint64Pair(1, 1)),
-		protocol.Record(Term, ZipUint64Pair(3, 2)),
-		protocol.Record(Term, ZipUint64Pair(3, 3)),
-		protocol.Record(Term, ZipUint64Pair(4, 4)),
+	correct := tlv.Concat(
+		Ntlvt(1, 1),
+		Ntlvt(3, 2),
+		Ntlvt(3, 3),
+		Ntlvt(4, 4),
 	)
 
 	assert.Equal(t, correct, three)
@@ -59,13 +63,13 @@ func TestZtlv(t *testing.T) {
 }
 
 func TestZmerge(t *testing.T) {
-	one := protocol.Concat(
+	one := tlv.Concat(
 		Itlve(1, 1, 1),
 		Itlve(2, 2, 2),
 		Itlve(3, 3, 3),
 	)
 	assert.Equal(t, int64(6), Znative(one))
-	two := protocol.Concat(
+	two := tlv.Concat(
 		Itlve(3, 2, 3),
 		Itlve(3, 3, 3),
 		Itlve(4, 4, 4),
@@ -74,7 +78,7 @@ func TestZmerge(t *testing.T) {
 
 	three := Zmerge([][]byte{one, two})
 
-	correct := protocol.Concat(
+	correct := tlv.Concat(
 		Itlve(1, 1, 1),
 		Itlve(3, 2, 3),
 		Itlve(3, 3, 3),

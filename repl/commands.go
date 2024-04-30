@@ -174,6 +174,9 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 		return
 	} else if arg.RdxType == rdx.Linear {
 		return
+	} else if arg.RdxType == rdx.Term {
+		// todo default object
+		return
 	} else if arg.RdxType == rdx.Mapping {
 		pairs := arg.Nested
 		if len(pairs) >= 2 && pairs[0].String() == "_ref" {
@@ -195,11 +198,16 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 			value := &pairs[i+1]
 			ndx := fields.Find(name) //fixme rdt
 			if ndx == -1 {
-				err = fmt.Errorf("unknown field %s", name)
+				err = fmt.Errorf("unknown field %s\n", name)
 				return
 			}
-			if value.RdxType != fields[ndx].RdxType {
-				err = fmt.Errorf("wrong type for %s", name)
+			fieldType := fields[ndx].RdxType
+			if value.RdxType != fieldType {
+				if value.RdxType == rdx.Integer && (fieldType == rdx.Natural || fieldType == rdx.ZCounter) {
+					value.RdxType = fieldType
+				} else {
+					err = fmt.Errorf("wrong type for %s\n", name)
+				}
 			}
 			tmp[ndx] = rdx.FIRSTrdx2tlv(value)
 		}

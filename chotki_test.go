@@ -81,7 +81,7 @@ func TestChotki_Sync(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, "0-2-3,a-0-1,b-0-1", bvv.String())
 
-	b.DumpAll()
+	b.DumpAll(os.Stderr)
 
 	_ = a.Close()
 	_ = b.Close()

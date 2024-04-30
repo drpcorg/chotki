@@ -23,17 +23,15 @@ func Nparse(txt string) (tlv []byte) {
 
 // convert a native golang value into TLV
 func Ntlv(u uint64) (tlv []byte) {
-	return protocol.Record(Term, ZipUint64Pair(u, 0))
+	time := ZipUint64Pair(u, 0)
+	return protocol.Record(Term, protocol.TinyRecord('T', time))
 }
 
 // convert a TLV value to a native golang value
 func Nnative(tlv []byte) (sum uint64) {
-	rest := tlv
-	for len(rest) > 0 {
-		var one []byte
-		one, rest = protocol.Take(Term, rest)
-		inc, _ := UnzipUint64Pair(one)
-		sum += inc
+	it := FIRSTIterator{TLV: tlv}
+	for it.Next() {
+		sum += it.revz
 	}
 	return
 }
@@ -42,7 +40,7 @@ func Nnative(tlv []byte) (sum uint64) {
 func Nmerge(tlvs [][]byte) (merged []byte) {
 	ih := ItHeap[*NIterator]{}
 	for _, tlv := range tlvs {
-		ih.Push(&NIterator{tlv: tlv})
+		ih.Push(&NIterator{FIRSTIterator{TLV: tlv}})
 	}
 	for ih.Len() > 0 {
 		merged = append(merged, ih.Next()...)
@@ -54,11 +52,11 @@ func N2string(tlv []byte, new_val string, src uint64) (tlv_delta []byte) {
 	if len(new_val) == 0 {
 		return nil
 	}
-	it := NIterator{tlv: tlv}
+	it := NIterator{FIRSTIterator{TLV: tlv}}
 	mine := uint64(0)
 	for it.Next() {
 		if it.src == src {
-			mine = it.inc
+			mine = it.revz
 			break
 		}
 	}
@@ -120,38 +118,23 @@ func Ndiff(tlv []byte, vvdiff VV) []byte {
 }
 
 func Nmine(tlv []byte, src uint64) uint64 {
-	it := NIterator{tlv: tlv}
+	it := NIterator{FIRSTIterator{TLV: tlv}}
 	for it.Next() {
 		if it.src == src {
-			return it.inc
+			return it.revz
 		}
 	}
 	return 0
 }
 
 type NIterator struct {
-	one []byte
-	tlv []byte
-	src uint64
-	inc uint64
-}
-
-func (a *NIterator) Next() bool {
-	if len(a.tlv) == 0 {
-		return false
-	}
-	_, hlen, blen := protocol.ProbeHeader(a.tlv)
-	rlen := hlen + blen
-	a.inc, a.src = UnzipUint64Pair(a.tlv[hlen:rlen])
-	a.one = a.tlv[:rlen]
-	a.tlv = a.tlv[rlen:]
-	return true
+	FIRSTIterator
 }
 
 func (a *NIterator) Merge(b SortedIterator) int {
 	bb := b.(*NIterator)
 	if a.src == bb.src {
-		if a.inc < bb.inc {
+		if a.revz < bb.revz {
 			return MergeB
 		} else {
 			return MergeA
