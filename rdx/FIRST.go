@@ -262,7 +262,7 @@ func Imerge(tlvs [][]byte) (tlv []byte) {
 }
 
 // produce an op that turns the old value into the new one
-func Idelta(tlv []byte, new_val int64) (tlv_delta []byte) {
+func Idelta(tlv []byte, new_val int64, clock Clock) (tlv_delta []byte) {
 	rev, _, val := ParseFIRST(tlv)
 	if rev < 0 {
 		rev = -rev
@@ -348,7 +348,7 @@ func Smerge(tlvs [][]byte) (tlv []byte) {
 }
 
 // produce an op that turns the old value into the new one
-func Sdelta(tlv []byte, new_val string) (tlv_delta []byte) {
+func Sdelta(tlv []byte, new_val string, clock Clock) (tlv_delta []byte) {
 	rev, _, val := ParseFIRST(tlv)
 	if rev < 0 {
 		rev = -rev
@@ -402,7 +402,7 @@ func Rmerge(tlvs [][]byte) (tlv []byte) {
 }
 
 // produce an op that turns the old value into the new one
-func Rdelta(tlv []byte, new_val ID) (tlv_delta []byte) {
+func Rdelta(tlv []byte, new_val ID, clock Clock) (tlv_delta []byte) {
 	rev, _, val := ParseFIRST(tlv)
 	if rev < 0 {
 		rev = -rev
@@ -456,7 +456,7 @@ func Fmerge(tlvs [][]byte) (tlv []byte) {
 }
 
 // produce an op that turns the old value into the new one
-func Fdelta(tlv []byte, new_val float64) (tlv_delta []byte) {
+func Fdelta(tlv []byte, new_val float64, clock Clock) (tlv_delta []byte) {
 	rev, _, val := ParseFIRST(tlv)
 	if rev < 0 {
 		rev = -rev
@@ -506,7 +506,7 @@ func Tmerge(tlvs [][]byte) (tlv []byte) {
 }
 
 // produce an op that turns the old value into the new one
-func Tdelta(tlv []byte) (tlv_delta []byte) {
+func Tdelta(tlv []byte, clock Clock) (tlv_delta []byte) {
 	return nil
 }
 

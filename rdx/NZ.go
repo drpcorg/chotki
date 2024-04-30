@@ -84,15 +84,30 @@ func N2string(tlv []byte, new_val string, src uint64) (tlv_delta []byte) {
 	return ZipUint64Pair(mine, 0)
 }
 
+// FIXME clock
 // produce an op that turns the old value into the new one
-func Ndelta(tlv []byte, new_val uint64) (tlv_delta []byte) {
-	sum := Nnative(tlv)
+func Ndelta(tlv []byte, new_val uint64, clock Clock) (tlv_delta []byte) {
+	it := FIRSTIterator{TLV: tlv}
+	max_revz := uint64(0)
+	mysrc := clock.Src()
+	old_val := uint64(0)
+	sum := uint64(0)
+	for it.Next() {
+		if it.revz > max_revz {
+			max_revz = it.revz
+		}
+		val := UnzipUint64(it.val)
+		if it.src == mysrc {
+			old_val = val
+		}
+		sum += val
+	}
 	if new_val < sum {
 		return nil
 	} else if new_val == sum {
 		return []byte{}
 	}
-	return Ntlv(new_val - sum)
+	return Ntlv(new_val - sum + old_val)
 }
 
 // checks a TLV value for validity (format violations)
@@ -200,7 +215,7 @@ func Zmerge(tlvs [][]byte) (merged []byte) {
 }
 
 // produce an op that turns the old value into the new one
-func Zdelta(tlv []byte, new_val int64) (tlv_delta []byte) {
+func Zdelta(tlv []byte, new_val int64, clock Clock) (tlv_delta []byte) {
 	sum := Znative(tlv)
 	if new_val == sum {
 		return []byte{}

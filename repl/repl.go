@@ -148,6 +148,10 @@ func (repl *REPL) REPL(line string) (id rdx.ID, err error) {
 		id, err = repl.CommandCat(arg)
 	case "name":
 		id, err = repl.CommandName(arg)
+	case "inc":
+		id, err = repl.CommandInc(arg)
+	case "add":
+		id, err = repl.CommandAdd(arg)
 	case "choc":
 		id, err = repl.CommandCompile(arg)
 	// ----- networking -----
@@ -188,7 +192,7 @@ func report(id rdx.ID, err error) {
 		_, _ = fmt.Fprintf(os.Stderr, "%s\n", err.Error())
 		err = nil
 	} else if id != rdx.ID0 {
-		_, _ = fmt.Fprintf(os.Stdout, "%s\n", id.String())
+		_, _ = fmt.Fprintf(os.Stderr, "%s\n", id.String())
 	}
 }
 
@@ -214,9 +218,9 @@ func main() {
 		if len(cmd) > 0 {
 			cmds = append(cmds, cmd)
 		}
-		for _, c := range cmds {
-			fmt.Fprintf(os.Stderr, "◌ %s\n", c)
-			id, err = repl.REPL(c)
+		for i := 0; i < len(cmds) && err == nil; i++ {
+			fmt.Fprintf(os.Stderr, "◌ %s\n", cmds[i])
+			id, err = repl.REPL(cmds[i])
 			report(id, err)
 		}
 	}

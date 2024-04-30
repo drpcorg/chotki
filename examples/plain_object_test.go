@@ -38,7 +38,7 @@ func TestPlainObjectORM(t *testing.T) {
 
 	a2, err := chotki.Open("cho10", chotki.Options{Src: 0x10, Name: "test replica A"})
 	assert.Nil(t, err)
-	//a2.DumpAll()
+	a2.DumpAll()
 	orma2 := a2.ObjectMapper()
 
 	sidorov2 := Student{}
@@ -49,5 +49,27 @@ func TestPlainObjectORM(t *testing.T) {
 	assert.Equal(t, "Semen Sidorov", sidorov2.Name)
 	assert.Equal(t, rdx.ID0, sidorov2.Group)
 	assert.Equal(t, uint64(123), sidorov2.Score)
+
+	sidorov2.Score = 124
+	err = orma2.Save(&sidorov2)
+	assert.Nil(t, err)
+	assert.Equal(t, uint64(124), sidorov2.Score)
+	a2.DumpAll()
+
+	_ = a2.Close()
+
+	a3, err := chotki.Open("cho10", chotki.Options{Src: 0x10, Name: "test replica A"})
+	assert.Nil(t, err)
+	a3.DumpAll()
+	orma3 := a3.ObjectMapper()
+
+	sidorov3 := Student{}
+	ret, err = orma3.Load(id, &sidorov3)
+	assert.Nil(t, err)
+	assert.Equal(t, &sidorov3, ret)
+
+	assert.Equal(t, "Semen Sidorov", sidorov3.Name)
+	assert.Equal(t, rdx.ID0, sidorov3.Group)
+	assert.Equal(t, uint64(124), sidorov3.Score)
 
 }

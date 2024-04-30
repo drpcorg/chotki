@@ -10,18 +10,11 @@ import (
 	"text/template"
 )
 
-type StoreLoader interface {
-	// Read data from an iterator
-	Load(i *pebble.Iterator) error
-	// Compare to the stored state, serialize the changes
-	Store(i *pebble.Iterator) (changes [][]byte, err error)
-}
-
 type NativeObject interface {
 	// Read data from an iterator
 	Load(field uint64, rdt byte, tlv []byte) error
 	// Compare to the stored state, serialize the changes
-	Store(field uint64, rdt byte, old []byte) (changes []byte, err error)
+	Store(field uint64, rdt byte, old []byte, clock rdx.Clock) (changes []byte, err error)
 }
 
 type ORM struct {
@@ -42,7 +35,7 @@ func (orm *ORM) New(cid rdx.ID, objs ...NativeObject) (err error) {
 		for i := 1; i < len(fields) && err == nil; i++ {
 			field := &fields[i]
 			var edit []byte
-			edit, err = obj.Store(uint64(i), field.RdxType, nil)
+			edit, err = obj.Store(uint64(i), field.RdxType, nil, orm.Host.Clock())
 			tlv = append(tlv, toytlv.Record(field.RdxType, edit))
 		}
 		var id rdx.ID
@@ -80,7 +73,7 @@ func (orm *ORM) Save(objs ...NativeObject) (err error) {
 		for it.Next() {
 			lid, rdt := OKeyIdRdt(it.Key())
 			off := lid.Off()
-			change, e := obj.Store(off, rdt, it.Value())
+			change, e := obj.Store(off, rdt, it.Value(), orm.Host.Clock())
 			flags[off] = true
 			if e != nil { // the db may have garbage
 				_ = 0 // todo
@@ -94,7 +87,7 @@ func (orm *ORM) Save(objs ...NativeObject) (err error) {
 			if flags[off] {
 				continue
 			}
-			change, _ := obj.Store(uint64(off), fields[off].RdxType, nil)
+			change, _ := obj.Store(uint64(off), fields[off].RdxType, nil, orm.Host.Clock())
 			if change != nil {
 				changes = append(changes, toytlv.Record('F', rdx.ZipUint64(uint64(off))))
 				changes = append(changes, toytlv.Record(fields[off].RdxType, change))
@@ -310,7 +303,7 @@ func (o *{{.Name}}) Load(off uint64, rdt byte, tlv []byte) error {
 	return nil
 }
 
-func (o *{{.Name}}) Store(off uint64, rdt byte, old []byte) (bare []byte, err error) {
+func (o *{{.Name}}) Store(off uint64, rdt byte, old []byte, clock rdx.Clock) (bare []byte, err error) {
 	switch (off) {
 	{{ range $n, $f := .Fields }}
 	{{ if eq $n 0 }} {{continue}} {{end }}
@@ -320,7 +313,7 @@ func (o *{{.Name}}) Store(off uint64, rdt byte, old []byte) (bare []byte, err er
 		if old == nil {
             bare = rdx.{{$rdt}}tlv(o.{{$f.Name}})
 		} else {
-			bare = rdx.{{$rdt}}delta(old, o.{{$f.Name}})
+			bare = rdx.{{$rdt}}delta(old, o.{{$f.Name}}, clock)
 		}
 	{{ end }}
 	default: return nil, chotki.ErrUnknownFieldInAType

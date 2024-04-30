@@ -36,9 +36,7 @@ func (o *Options) SetDefaults() {
 		o.MaxLogLen = 1 << 23
 	}
 
-	if o.Merger == nil {
-		o.Merger = &pebble.Merger{Name: "CRDT", Merge: merger}
-	}
+	o.Merger = &pebble.Merger{Name: "CRDT", Merge: merger}
 }
 
 type Hook func(cho *Chotki, id rdx.ID) error
@@ -50,8 +48,9 @@ type CallHook struct {
 
 // TLV all the way down
 type Chotki struct {
-	last rdx.ID
-	src  uint64
+	last  rdx.ID
+	src   uint64
+	clock rdx.Clock
 
 	db   *pebble.DB
 	net  *toytlv.Transport
@@ -130,6 +129,10 @@ func (cho *Chotki) Source() uint64 {
 	return cho.src
 }
 
+func (cho *Chotki) Clock() rdx.Clock {
+	return cho.clock
+}
+
 func ReplicaDirName(rno uint64) string {
 	return fmt.Sprintf("cho%x", rno)
 }
@@ -189,6 +192,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 	cho := Chotki{
 		db:    db,
 		src:   opts.Src,
+		clock: &rdx.LocalLogicalClock{Source: opts.Src},
 		dir:   dirname,
 		opts:  opts,
 		types: make(map[rdx.ID]Fields),

@@ -236,6 +236,33 @@ func (repl *REPL) CommandEdit(arg *rdx.RDX) (id rdx.ID, err error) {
 	}
 }
 
+var HelpAdd = errors.New(
+	"add {_id: b0b-1e, Score: +1}",
+)
+
+func (repl *REPL) CommandAdd(arg *rdx.RDX) (id rdx.ID, err error) {
+	id = rdx.BadId
+	err = HelpAdd
+	return
+}
+
+var HelpInc = errors.New(
+	"inc b0b-1e-2",
+)
+
+func (repl *REPL) CommandInc(arg *rdx.RDX) (id rdx.ID, err error) {
+	id = rdx.BadId
+	err = HelpInc
+	if arg.RdxType == rdx.Reference {
+		fid := rdx.IDFromText(arg.Text)
+		if id.Off() == 0 {
+			return
+		}
+		id, err = repl.Host.IncNField(fid)
+	}
+	return
+}
+
 var HelpList = errors.New(
 	"ls b0b-1e",
 )
@@ -596,7 +623,7 @@ func (repl *REPL) CommandName(arg *rdx.RDX) (id rdx.ID, err error) {
 	} else if arg.RdxType == rdx.Mapping {
 		_, tlv, _ := repl.Host.ObjectFieldTLV(chotki.NamesID)
 		parsed := rdx.MparseTR(arg)
-		delta := toytlv.Record('M', rdx.MdeltaTR(tlv, parsed))
+		delta := toytlv.Record('M', rdx.MdeltaTR(tlv, parsed, repl.Host.Clock()))
 		id, err = repl.Host.EditFieldTLV(chotki.NamesID, delta)
 	} else {
 		err = HelpName

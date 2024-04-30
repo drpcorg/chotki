@@ -47,7 +47,7 @@ func (o *Student) Load(off uint64, rdt byte, tlv []byte) error {
 	return nil
 }
 
-func (o *Student) Store(off uint64, rdt byte, old []byte) (bare []byte, err error) {
+func (o *Student) Store(off uint64, rdt byte, old []byte, clock rdx.Clock) (bare []byte, err error) {
 	switch off {
 
 	case 1:
@@ -58,7 +58,7 @@ func (o *Student) Store(off uint64, rdt byte, old []byte) (bare []byte, err erro
 		if old == nil {
 			bare = rdx.Stlv(o.Name)
 		} else {
-			bare = rdx.Sdelta(old, o.Name)
+			bare = rdx.Sdelta(old, o.Name, clock)
 		}
 
 	case 2:
@@ -69,7 +69,7 @@ func (o *Student) Store(off uint64, rdt byte, old []byte) (bare []byte, err erro
 		if old == nil {
 			bare = rdx.Rtlv(o.Group)
 		} else {
-			bare = rdx.Rdelta(old, o.Group)
+			bare = rdx.Rdelta(old, o.Group, clock)
 		}
 
 	case 3:
@@ -80,7 +80,7 @@ func (o *Student) Store(off uint64, rdt byte, old []byte) (bare []byte, err erro
 		if old == nil {
 			bare = rdx.Ntlv(o.Score)
 		} else {
-			bare = rdx.Ndelta(old, o.Score)
+			bare = rdx.Ndelta(old, o.Score, clock)
 		}
 
 	default:

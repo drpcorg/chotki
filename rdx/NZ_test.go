@@ -12,8 +12,9 @@ func TestNtlv(t *testing.T) {
 	assert.Equal(t, correct, fact)
 	str := Nstring(fact)
 	assert.Equal(t, "123", str)
-	inc := Ndelta(fact, 124)
-	assert.Equal(t, uint64(1), Nnative(inc))
+	clock := LocalLogicalClock{}
+	inc := Ndelta(fact, 124, &clock)
+	assert.Equal(t, uint64(124), Nnative(inc))
 	// todo diff
 }
 
@@ -50,7 +51,8 @@ func TestZtlv(t *testing.T) {
 	assert.Equal(t, correct, fact)
 	str := Zstring(fact)
 	assert.Equal(t, "123", str)
-	inc := Zdelta(fact, 124)
+	clock := LocalLogicalClock{}
+	inc := Zdelta(fact, 124, &clock)
 	assert.Equal(t, int64(1), Znative(inc))
 	// todo diff
 }

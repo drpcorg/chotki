@@ -28,7 +28,7 @@ func TestI(t *testing.T) {
 	tlv2 := Iparse(str2)
 	int2 := Inative(tlv2)
 	assert.Equal(t, int64(345), int2)
-	delta12 := Idelta(tlv1, 345)
+	delta12 := Idelta(tlv1, 345, nil)
 	merged := Imerge([][]byte{tlv1, delta12})
 	assert.Equal(t, str2, Istring(merged))
 }
@@ -41,7 +41,7 @@ func TestS(t *testing.T) {
 	assert.Equal(t, str1, unquoted)
 	assert.Equal(t, str1, Snative(tlv1))
 	str2 := "fcuk\n\"zat\"\n"
-	delta12 := Sdelta(tlv1, str2)
+	delta12 := Sdelta(tlv1, str2, nil)
 	merged := Smerge([][]byte{tlv1, delta12})
 	assert.Equal(t, str2, Snative(merged))
 }
@@ -55,7 +55,7 @@ func TestR(t *testing.T) {
 
 	str2 := "ae-33"
 	tlv2 := Rparse(str2)
-	delta12 := Rdelta(tlv1, Rnative(tlv2))
+	delta12 := Rdelta(tlv1, Rnative(tlv2), nil)
 	merged := Rmerge([][]byte{tlv1, delta12})
 	assert.Equal(t, str2, Rstring(merged))
 }
@@ -69,7 +69,7 @@ func TestF(t *testing.T) {
 
 	str2 := "3.141592"
 	tlv2 := Fparse(str2)
-	delta12 := Fdelta(tlv1, Fnative(tlv2))
+	delta12 := Fdelta(tlv1, Fnative(tlv2), nil)
 	merged := Fmerge([][]byte{tlv1, delta12})
 	assert.Equal(t, str2, Fstring(merged))
 }
@@ -78,7 +78,7 @@ func TestIMerge(t *testing.T) {
 	var i1 int64 = 123
 	var i2 int64 = 345
 	tlv1 := Itlv(i1)
-	tlv2 := Idelta(tlv1, i2)
+	tlv2 := Idelta(tlv1, i2, nil)
 	merge := Imerge(toyqueue.Records{tlv1, tlv2})
 	assert.Equal(t, tlv2, merge)
 }

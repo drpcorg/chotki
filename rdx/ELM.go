@@ -155,7 +155,7 @@ func Emerge(tlvs [][]byte) (merged []byte) {
 }
 
 // produce an op that turns the old value into the new one
-func Edelta(tlv []byte, new_val int64) (tlv_delta []byte) {
+func Edelta(tlv []byte, new_val int64, clock Clock) (tlv_delta []byte) {
 	return nil // todo
 }
 
@@ -335,7 +335,7 @@ func (m MapTR) String() string {
 }
 
 // produce an op that turns the old value into the new one
-func MdeltaTR(tlv []byte, changes MapTR) (tlv_delta []byte) {
+func MdeltaTR(tlv []byte, changes MapTR, clock Clock) (tlv_delta []byte) {
 	it := MIterator{it: FIRSTIterator{TLV: tlv}}
 	for it.Next() {
 		if it.lit != Term {
@@ -554,7 +554,7 @@ func pileUp(heap *ItHeap[*LIterator], bares [][]byte) {
 }
 
 // produce an op that turns the old value into the new one
-func Ldelta(tlv []byte, new_val int64) (tlv_delta []byte) {
+func Ldelta(tlv []byte, new_val int64, clock Clock) (tlv_delta []byte) {
 	return nil // todo
 }
 
