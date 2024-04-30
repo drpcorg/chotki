@@ -3,7 +3,7 @@ package rdx
 import (
 	"testing"
 
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/protocol"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -79,7 +79,7 @@ func TestIMerge(t *testing.T) {
 	var i2 int64 = 345
 	tlv1 := Itlv(i1)
 	tlv2 := Idelta(tlv1, i2, nil)
-	merge := Imerge(toyqueue.Records{tlv1, tlv2})
+	merge := Imerge(protocol.Records{tlv1, tlv2})
 	assert.Equal(t, tlv2, merge)
 }
 
@@ -87,7 +87,7 @@ func TestLWWTie(t *testing.T) {
 	a := FIRSTtlv(4, 8, ZipInt64(1))
 	b := FIRSTtlv(4, 7, ZipInt64(2))
 	c := FIRSTtlv(4, 5, ZipInt64(2))
-	d := Imerge(toyqueue.Records{a, b, c})
+	d := Imerge(protocol.Records{a, b, c})
 	assert.Equal(t, int64(2), Inative(d))
 	rev, src, _ := ParseFIRST(d)
 	assert.Equal(t, int64(4), rev)

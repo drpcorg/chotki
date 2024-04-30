@@ -1,9 +1,10 @@
-package toyqueue
+package protocol
 
 import (
-	"github.com/stretchr/testify/assert"
 	"io"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type sliceFeedDrainer struct {

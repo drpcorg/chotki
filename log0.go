@@ -1,49 +1,54 @@
 package chotki
 
 import (
+	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toyqueue"
-	"github.com/drpcorg/chotki/toytlv"
 )
 
-const id1 = rdx.ID0 + rdx.ProInc
-const ID2 = id1 + rdx.ProInc
-const NamesID = ID2 + 1
-const NodesID = ID2 + 2
-const NodeInfoID = ID2 + 3
+const (
+	id1 = rdx.ID0 + rdx.ProInc
+	id2 = id1 + rdx.ProInc
+
+	IdNames    = id2 + 1
+	IdNodes    = id2 + 2
+	IdNodeInfo = id2 + 3
+
+	// ID from which we count user static objects
+	IdLog1 = id2 + 4
+)
 
 // FORMAT: replica creation packet
-var Log0 = toyqueue.Records{
-	toytlv.Record('Y',
-		toytlv.Record('I', rdx.ID0.ZipBytes()), // identifier, `src-0`
-		toytlv.Record('R', rdx.ID0.ZipBytes()), // reference, `0-0`
-		toytlv.Record('T', rdx.Ttlv("Name")),   // replica Name (string)
-		toytlv.Record('T', rdx.Ttlv("S")),
+var Log0 = protocol.Records{
+	protocol.Record('Y',
+		protocol.Record('I', rdx.ID0.ZipBytes()), // identifier, `src-0`
+		protocol.Record('R', rdx.ID0.ZipBytes()), // reference, `0-0`
+		protocol.Record('T', rdx.Ttlv("Name")),   // replica Name (string)
+		protocol.Record('T', rdx.Ttlv("S")),
 	),
-	toytlv.Record('C',
-		toytlv.Record('I', id1.ZipBytes()),     // identifier, `src-0`
-		toytlv.Record('R', rdx.ID0.ZipBytes()), // reference, `0-0`
-		toytlv.Record('T', rdx.Ttlv("Names")),  // global-scope names
-		toytlv.Record('T', rdx.Ttlv("M")),
-		toytlv.Record('T', rdx.Ttlv("Nodes")), // replica addresses
-		toytlv.Record('T', rdx.Ttlv("M")),
-		toytlv.Record('T', rdx.Ttlv("NodeInfo")), // replica addresses
-		toytlv.Record('T', rdx.Ttlv("M")),
+	protocol.Record('C',
+		protocol.Record('I', id1.ZipBytes()),     // identifier, `src-0`
+		protocol.Record('R', rdx.ID0.ZipBytes()), // reference, `0-0`
+		protocol.Record('T', rdx.Ttlv("Names")),  // global-scope names
+		protocol.Record('T', rdx.Ttlv("M")),
+		protocol.Record('T', rdx.Ttlv("Nodes")), // replica addresses
+		protocol.Record('T', rdx.Ttlv("M")),
+		protocol.Record('T', rdx.Ttlv("NodeInfo")), // replica addresses
+		protocol.Record('T', rdx.Ttlv("M")),
 	),
-	toytlv.Record('O',
-		toytlv.Record('I', ID2.ZipBytes()),
-		toytlv.Record('R', id1.ZipBytes()),
-		toytlv.Record('M',
-			toytlv.Record('T', rdx.Ttlv("0")),
-			toytlv.Record('R', rdx.Rtlv(rdx.ID0)),
-			toytlv.Record('T', rdx.Ttlv("Global")),
-			toytlv.Record('R', rdx.Rtlv(ID2)),
-			toytlv.Record('T', rdx.Ttlv("Names")),
-			toytlv.Record('R', rdx.Rtlv(ID2+1)),
-			toytlv.Record('T', rdx.Ttlv("Nodes")),
-			toytlv.Record('R', rdx.Rtlv(ID2+2)),
+	protocol.Record('O',
+		protocol.Record('I', id2.ZipBytes()),
+		protocol.Record('R', id1.ZipBytes()),
+		protocol.Record('M',
+			protocol.Record('T', rdx.Ttlv("0")),
+			protocol.Record('R', rdx.Rtlv(rdx.ID0)),
+			protocol.Record('T', rdx.Ttlv("Global")),
+			protocol.Record('R', rdx.Rtlv(id2)),
+			protocol.Record('T', rdx.Ttlv("Names")),
+			protocol.Record('R', rdx.Rtlv(IdNames)),
+			protocol.Record('T', rdx.Ttlv("Nodes")),
+			protocol.Record('R', rdx.Rtlv(IdNodes)),
 		),
-		toytlv.Record('M'),
-		toytlv.Record('M'),
+		protocol.Record('M'),
+		protocol.Record('M'),
 	),
 }

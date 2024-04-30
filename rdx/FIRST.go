@@ -4,16 +4,15 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/drpcorg/chotki/toyqueue"
 
-	"github.com/drpcorg/chotki/toytlv"
+	"github.com/drpcorg/chotki/protocol"
 )
 
 // Common LWW functions
 
 // for bad format, value==nil (an empty value is an empty slice)
 func ParseFIRST(bulk []byte) (rev int64, src uint64, value []byte) {
-	lit, hlen, blen := toytlv.ProbeHeader(bulk)
+	lit, hlen, blen := protocol.ProbeHeader(bulk)
 	if lit != 'T' && lit != '0' || hlen+blen > len(bulk) {
 		return
 	}
@@ -25,7 +24,7 @@ func ParseFIRST(bulk []byte) (rev int64, src uint64, value []byte) {
 
 // same as ParseFIRST, but the rev number is zigzagged
 func FIRSTparsez(bulk []byte) (zrev uint64, src uint64, value []byte) {
-	lit, hlen, blen := toytlv.ProbeHeader(bulk)
+	lit, hlen, blen := protocol.ProbeHeader(bulk)
 	if lit != 'T' && lit != '0' || hlen+blen > len(bulk) {
 		return
 	}
@@ -38,14 +37,14 @@ func FIRSTparsez(bulk []byte) (zrev uint64, src uint64, value []byte) {
 // Parses an enveloped FIRST record
 func ParseEnvelopedFIRST(data []byte) (lit byte, t Time, value, rest []byte, err error) {
 	var hlen, blen int
-	lit, hlen, blen = toytlv.ProbeHeader(data)
+	lit, hlen, blen = protocol.ProbeHeader(data)
 	if lit == 0 || hlen+blen > len(data) {
-		err = toytlv.ErrIncomplete
+		err = protocol.ErrIncomplete
 		return
 	}
 	rec := data[hlen : hlen+blen]
 	rest = data[hlen+blen:]
-	tlit, thlen, tblen := toytlv.ProbeHeader(rec)
+	tlit, thlen, tblen := protocol.ProbeHeader(rec)
 	tlen := thlen + tblen
 	if (tlit != 'T' && tlit != '0') || (tlen > len(rec)) {
 		err = ErrBadFIRST
@@ -60,7 +59,7 @@ func ParseEnvelopedFIRST(data []byte) (lit byte, t Time, value, rest []byte, err
 func FIRSTtlv(rev int64, src uint64, value []byte) (bulk []byte) {
 	time := ZipIntUint64Pair(rev, src)
 	bulk = make([]byte, 0, len(time)+len(value)+2)
-	bulk = toytlv.AppendTiny(bulk, 'T', time)
+	bulk = protocol.AppendTiny(bulk, 'T', time)
 	bulk = append(bulk, value...)
 	return
 }
@@ -75,7 +74,7 @@ func MergeFIRST(tlvs [][]byte) (tlv []byte) {
 	var winsrc uint64
 	var winhlbl int
 	for _, rec := range tlvs {
-		l, hlen, blen := toytlv.ProbeHeader(rec)
+		l, hlen, blen := protocol.ProbeHeader(rec)
 		hlbl := hlen + blen
 		tsb := rec[hlen:hlbl]
 		rev, src := UnzipIntUint64Pair(tsb)
@@ -155,7 +154,7 @@ func (a *FIRSTIterator) Next() bool {
 		return false
 	}
 	var hlen, blen, rlen int
-	a.lit, hlen, blen = toytlv.ProbeHeader(a.TLV)
+	a.lit, hlen, blen = protocol.ProbeHeader(a.TLV)
 	rlen = hlen + blen
 	if a.lit < 'A' || len(a.TLV) < rlen {
 		return false
@@ -199,20 +198,20 @@ func FIRSTrdxs2tlv(a []RDX) (tlv []byte) {
 	return
 }
 
-func FIRSTrdxs2tlvs(a []RDX) (tlv toyqueue.Records) {
+func FIRSTrdxs2tlvs(a []RDX) (tlv protocol.Records) {
 	for i := 0; i < len(a); i++ {
 		if !a[i].FIRST() {
 			return nil
 		}
-		first := toytlv.Record(a[i].RdxType, FIRSTrdx2tlv(&a[i]))
+		first := protocol.Record(a[i].RdxType, FIRSTrdx2tlv(&a[i]))
 		tlv = append(tlv, first)
 	}
 	return
 }
 
 func FIRSTcompare(a, b []byte) int {
-	alit, ahlen, ablen := toytlv.ProbeHeader(a)
-	blit, bhlen, bblen := toytlv.ProbeHeader(b)
+	alit, ahlen, ablen := protocol.ProbeHeader(a)
+	blit, bhlen, bblen := protocol.ProbeHeader(b)
 	if alit != blit {
 		return int(alit) - int(blit)
 	}
@@ -244,8 +243,8 @@ func Itlv(i int64) (tlv []byte) {
 
 // Enveloped I TLV
 func Itlve(rev int64, src uint64, inc int64) []byte {
-	return toytlv.Record('I',
-		toytlv.TinyRecord('T', ZipIntUint64Pair(rev, src)),
+	return protocol.Record('I',
+		protocol.TinyRecord('T', ZipIntUint64Pair(rev, src)),
 		ZipInt64(inc),
 	)
 }

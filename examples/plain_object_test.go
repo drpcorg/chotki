@@ -1,11 +1,12 @@
 package examples
 
 import (
+	"os"
+	"testing"
+
 	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/stretchr/testify/assert"
-	"os"
-	"testing"
 )
 
 func TestPlainObjectORM(t *testing.T) {

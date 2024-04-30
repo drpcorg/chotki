@@ -1,10 +1,12 @@
-package toytlv
+// Protocol format is based on ToyTLV (MIT licence) written by Victor Grishchenko in 2024
+// Original project: https://github.com/learn-decentralized-systems/toytlv
+
+package protocol
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
-
-	"github.com/drpcorg/chotki/toyqueue"
 )
 
 const CaseBit uint8 = 'a' - 'A'
@@ -94,25 +96,32 @@ func Incomplete(data []byte) int {
 	}
 }
 
-func Split(data []byte) (recs toyqueue.Records, rest []byte, err error) {
-	rest = data
-	for len(rest) > 0 {
-		lit, hlen, blen := ProbeHeader(rest)
-		if lit == '-' {
+func Split(data *bytes.Buffer) (recs Records, err error) {
+	for data.Len() > 0 {
+		lit, hlen, blen := ProbeHeader(data.Bytes())
+		if lit == '-' { // bad format
 			if len(recs) == 0 {
 				err = ErrBadRecord
 			}
 			return
 		}
-		if lit == 0 {
+		if lit == 0 { // incomplete header
 			return
 		}
-		if hlen+blen > len(rest) {
-			break
+		if hlen+blen > data.Len() { // incomplete package received
+			return
 		}
-		recs = append(recs, rest[:hlen+blen])
-		rest = rest[hlen+blen:]
+
+		record := make([]byte, hlen+blen)
+		if n, err := data.Read(record); err != nil {
+			return recs, err
+		} else if n != hlen+blen {
+			panic("impossible buffer reading")
+		}
+
+		recs = append(recs, record)
 	}
+
 	return
 }
 
@@ -280,14 +289,14 @@ func TinyRecord(lit byte, body []byte) (tiny []byte) {
 	return AppendTiny(data[:0], lit, body)
 }
 
-func Join(records ...[]byte) (ret toyqueue.Records) {
+func Join(records ...[]byte) (ret []byte) {
 	for _, rec := range records {
-		ret = append(ret, rec)
+		ret = append(ret, rec...)
 	}
 	return
 }
 
-func Records(lit byte, bodies ...[]byte) (recs toyqueue.Records) {
+func Recs(lit byte, bodies ...[]byte) (recs Records) {
 	for _, body := range bodies {
 		recs = append(recs, Record(lit, body))
 	}

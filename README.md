@@ -8,7 +8,7 @@
 
 Chotki is a syncable store with really fast counters.
 Internally, it is [pebble db][p] running CRDT natively, using
-the [Replicated Data Interchange][r] format (RDX). Chotki is
+the [Replicated Data Interchange](./rdx) format (RDX). Chotki is
 sync-centric and causally consistent. That means, Chotki
 replicas can sync master-master, either incrementally in
 real-time or stay offline to diff-sync periodically.
@@ -113,11 +113,9 @@ go get -u github.com/drpcorg/chotki
 
 ##  Inner workings
 
-Internally, Chotki is [pebble db][p] using [RDX][r] merge operators.
+Internally, Chotki is [pebble db][p] using [RDX](./rdx) merge operators.
 See the RDX doc for further details on its serialization format
 (type-length-value) and a very predictable choice of CRDTs.
-
-[r]: https://github.com/learn-decentralized-systems/Chotki/tree/main/rdx
 
 ##  Comparison to other projects
 
@@ -177,4 +175,3 @@ busywork. Updates are lamport-timestamped, there is a re-sync protocol for
 newly joining and re-joining replicas. Overall, we take every shortcut to make
 the store lightweight and fast while focusing on our specific usecase
 (distributed counters, mainly).
-

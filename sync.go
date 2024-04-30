@@ -2,15 +2,14 @@ package chotki
 
 import (
 	"bytes"
-	"fmt"
-	"github.com/cockroachdb/pebble"
-	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toyqueue"
-	"github.com/drpcorg/chotki/toytlv"
 	"io"
-	"os"
 	"sync"
 	"time"
+
+	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/protocol"
+	"github.com/drpcorg/chotki/rdx"
+	"github.com/drpcorg/chotki/utils"
 )
 
 const SyncBlockBits = 28
@@ -22,12 +21,13 @@ type Syncer struct {
 	Host       *Chotki
 	Mode       uint64
 	Name       string
+	Log        utils.Logger
 	peert      rdx.ID
 	snap       *pebble.Snapshot
 	snaplast   rdx.ID
 	feedState  int
 	drainState int
-	oqueue     toyqueue.FeedCloser
+	oqueue     protocol.FeedCloser
 	myvv       rdx.VV
 	peervv     rdx.VV
 	lock       sync.Mutex
@@ -68,7 +68,7 @@ func (sync *Syncer) Close() error {
 	defer sync.lock.Unlock()
 
 	if sync.Host == nil {
-		return toyqueue.ErrClosed
+		return utils.ErrClosed
 	}
 
 	if sync.snap != nil {
@@ -92,12 +92,12 @@ func (sync *Syncer) Close() error {
 
 	_ = sync.Host.RemovePacketHose(sync.Name)
 	sync.SetFeedState(SendNone) //fixme
-	_, _ = fmt.Fprintf(os.Stderr, "connection %s closed: %v\n", sync.Name, sync.reason)
+	sync.Log.Debug("sync: connection %s closed: %v\n", sync.Name, sync.reason)
 
 	return nil
 }
 
-func (sync *Syncer) Feed() (recs toyqueue.Records, err error) {
+func (sync *Syncer) Feed() (recs protocol.Records, err error) {
 	switch sync.feedState {
 	case SendHandshake:
 		recs, err = sync.FeedHandshake()
@@ -119,7 +119,7 @@ func (sync *Syncer) Feed() (recs toyqueue.Records, err error) {
 		}
 	case SendLive:
 		recs, err = sync.oqueue.Feed()
-		if err == toyqueue.ErrClosed {
+		if err == utils.ErrClosed {
 			sync.SetFeedState(SendEOF)
 			err = nil
 		}
@@ -128,8 +128,8 @@ func (sync *Syncer) Feed() (recs toyqueue.Records, err error) {
 		if sync.reason != nil {
 			reason = []byte(sync.reason.Error())
 		}
-		recs = toyqueue.Records{toytlv.Record('B',
-			toytlv.TinyRecord('T', sync.snaplast.ZipBytes()),
+		recs = protocol.Records{protocol.Record('B',
+			protocol.TinyRecord('T', sync.snaplast.ZipBytes()),
 			reason,
 		)}
 		if sync.snap != nil {
@@ -155,7 +155,7 @@ func (sync *Syncer) EndGracefully(reason error) (err error) {
 	return
 }
 
-func (sync *Syncer) FeedHandshake() (vv toyqueue.Records, err error) {
+func (sync *Syncer) FeedHandshake() (vv protocol.Records, err error) {
 	sync.oqueue = sync.Host.AddPacketHose(sync.Name)
 	sync.snap = sync.Host.db.NewSnapshot()
 	sync.vvit = sync.snap.NewIter(&pebble.IterOptions{
@@ -180,20 +180,20 @@ func (sync *Syncer) FeedHandshake() (vv toyqueue.Records, err error) {
 	sync.snaplast = sync.myvv.GetID(sync.Host.src)
 
 	sync.vpack = make([]byte, 0, 4096)
-	_, sync.vpack = toytlv.OpenHeader(sync.vpack, 'V') // 5
-	sync.vpack = append(sync.vpack, toytlv.Record('T', sync.snaplast.ZipBytes())...)
+	_, sync.vpack = protocol.OpenHeader(sync.vpack, 'V') // 5
+	sync.vpack = append(sync.vpack, protocol.Record('T', sync.snaplast.ZipBytes())...)
 
 	// handshake: H(T{pro,src} M(mode) V(V{p,s}+))
-	hs := toytlv.Record('H',
-		toytlv.TinyRecord('T', sync.snaplast.ZipBytes()),
-		toytlv.TinyRecord('M', rdx.ZipUint64(sync.Mode)),
-		toytlv.Record('V', sync.vvit.Value()),
+	hs := protocol.Record('H',
+		protocol.TinyRecord('T', sync.snaplast.ZipBytes()),
+		protocol.TinyRecord('M', rdx.ZipUint64(sync.Mode)),
+		protocol.Record('V', sync.vvit.Value()),
 	)
 
-	return toyqueue.Records{hs}, nil
+	return protocol.Records{hs}, nil
 }
 
-func (sync *Syncer) FeedBlockDiff() (diff toyqueue.Records, err error) {
+func (sync *Syncer) FeedBlockDiff() (diff protocol.Records, err error) {
 	if !sync.vvit.Next() {
 		return nil, io.EOF
 	}
@@ -213,14 +213,14 @@ func (sync *Syncer) FeedBlockDiff() (diff toyqueue.Records, err error) {
 		}
 	}
 	if !hasChanges {
-		return toyqueue.Records{}, nil
+		return protocol.Records{}, nil
 	}
 	block := VKeyId(sync.vvit.Key()).ZeroOff()
 	key := OKey(block, 0)
 	sync.ffit.SeekGE(key)
-	bmark, parcel := toytlv.OpenHeader(nil, 'D')
-	parcel = append(parcel, toytlv.Record('T', sync.snaplast.ZipBytes())...)
-	parcel = append(parcel, toytlv.Record('R', block.ZipBytes())...)
+	bmark, parcel := protocol.OpenHeader(nil, 'D')
+	parcel = append(parcel, protocol.Record('T', sync.snaplast.ZipBytes())...)
+	parcel = append(parcel, protocol.Record('R', block.ZipBytes())...)
 	till := block + SyncBlockMask + 1
 	for ; sync.ffit.Valid(); sync.ffit.Next() {
 		id, rdt := OKeyIdRdt(sync.ffit.Key())
@@ -229,26 +229,26 @@ func (sync *Syncer) FeedBlockDiff() (diff toyqueue.Records, err error) {
 		}
 		lim, ok := sendvv[id.Src()]
 		if ok && (id.Pro() > lim || lim == 0) {
-			parcel = append(parcel, toytlv.Record('F', rdx.ZipUint64(uint64(id-block)))...)
-			parcel = append(parcel, toytlv.Record(rdt, sync.ffit.Value())...)
+			parcel = append(parcel, protocol.Record('F', rdx.ZipUint64(uint64(id-block)))...)
+			parcel = append(parcel, protocol.Record(rdt, sync.ffit.Value())...)
 			continue
 		}
 		diff := rdx.Xdiff(rdt, sync.ffit.Value(), sendvv)
 		if len(diff) != 0 {
-			parcel = append(parcel, toytlv.Record('F', rdx.ZipUint64(uint64(id-block)))...)
-			parcel = append(parcel, toytlv.Record(rdt, diff)...)
+			parcel = append(parcel, protocol.Record('F', rdx.ZipUint64(uint64(id-block)))...)
+			parcel = append(parcel, protocol.Record(rdt, diff)...)
 		}
 	}
-	toytlv.CloseHeader(parcel, bmark)
-	v := toytlv.Record('V',
-		toytlv.Record('R', block.ZipBytes()),
+	protocol.CloseHeader(parcel, bmark)
+	v := protocol.Record('V',
+		protocol.Record('R', block.ZipBytes()),
 		sync.vvit.Value()) // todo brief
 	sync.vpack = append(sync.vpack, v...)
-	return toyqueue.Records{parcel}, err
+	return protocol.Records{parcel}, err
 }
 
-func (sync *Syncer) FeedDiffVV() (vv toyqueue.Records, err error) {
-	toytlv.CloseHeader(sync.vpack, 5)
+func (sync *Syncer) FeedDiffVV() (vv protocol.Records, err error) {
+	protocol.CloseHeader(sync.vpack, 5)
 	vv = append(vv, sync.vpack)
 	sync.vpack = nil
 	_ = sync.ffit.Close()
@@ -259,12 +259,13 @@ func (sync *Syncer) FeedDiffVV() (vv toyqueue.Records, err error) {
 }
 
 func (sync *Syncer) SetFeedState(state int) {
-	fmt.Printf("%s feed state %s\n", sync.Name, SendStates[state])
+	sync.Log.Debug("sync: feed state", "name", sync.Name, "state", SendStates[state])
 	sync.feedState = state
 }
 
 func (sync *Syncer) SetDrainState(state int) {
-	fmt.Printf("%s drain state %s\n", sync.Name, SendStates[state])
+	sync.Log.Debug("sync: drain state", "name", sync.Name, "state", SendStates[state])
+
 	sync.lock.Lock()
 	sync.drainState = state
 	if sync.cond.L == nil {
@@ -287,14 +288,14 @@ func (sync *Syncer) WaitDrainState(state int) (ds int) {
 	return
 }
 
-func LastLit(recs toyqueue.Records) byte {
+func LastLit(recs protocol.Records) byte {
 	if len(recs) == 0 {
 		return 0
 	}
-	return toytlv.Lit(recs[len(recs)-1])
+	return protocol.Lit(recs[len(recs)-1])
 }
 
-func (sync *Syncer) Drain(recs toyqueue.Records) (err error) {
+func (sync *Syncer) Drain(recs protocol.Records) (err error) {
 	if len(recs) == 0 {
 		return nil
 	}
@@ -310,7 +311,7 @@ func (sync *Syncer) Drain(recs toyqueue.Records) (err error) {
 		if err != nil {
 			return
 		}
-		sync.Host.Broadcast(recs[0:1], sync.Name)
+		sync.Host.BroadcastPacket(recs[0:1], sync.Name)
 		recs = recs[1:]
 		sync.SetDrainState(SendDiff)
 		if len(recs) == 0 {
@@ -328,7 +329,7 @@ func (sync *Syncer) Drain(recs toyqueue.Records) (err error) {
 		}
 		err = sync.Host.Drain(recs)
 		if err == nil {
-			sync.Host.Broadcast(recs, sync.Name)
+			sync.Host.BroadcastPacket(recs, sync.Name)
 		}
 	case SendLive:
 		lit := LastLit(recs)
@@ -337,7 +338,7 @@ func (sync *Syncer) Drain(recs toyqueue.Records) (err error) {
 		}
 		err = sync.Host.Drain(recs)
 		if err == nil {
-			sync.Host.Broadcast(recs, sync.Name)
+			sync.Host.BroadcastPacket(recs, sync.Name)
 		}
 	default:
 		return ErrClosed
@@ -353,12 +354,12 @@ func ParseHandshake(body []byte) (mode uint64, vv rdx.VV, err error) {
 	var mbody, vbody []byte
 	rest := body
 	err = ErrBadHPacket
-	mbody, rest = toytlv.Take('M', rest)
+	mbody, rest = protocol.Take('M', rest)
 	if mbody == nil {
 		return
 	}
 	mode = rdx.UnzipUint64(mbody)
-	vbody, _ = toytlv.Take('V', rest)
+	vbody, _ = protocol.Take('V', rest)
 	if vbody == nil {
 		return
 	}
@@ -372,7 +373,7 @@ func ParseHandshake(body []byte) (mode uint64, vv rdx.VV, err error) {
 	return
 }
 
-func (sync *Syncer) DrainHandshake(recs toyqueue.Records) (err error) {
+func (sync *Syncer) DrainHandshake(recs protocol.Records) (err error) {
 	lit, id, _, body, e := ParsePacket(recs[0])
 	if lit != 'H' || e != nil {
 		return ErrBadHPacket
@@ -385,7 +386,7 @@ func (sync *Syncer) DrainHandshake(recs toyqueue.Records) (err error) {
 }
 
 func ParseVPack(vpack []byte) (vvs map[rdx.ID]rdx.VV, err error) {
-	lit, body, rest := toytlv.TakeAny(vpack)
+	lit, body, rest := protocol.TakeAny(vpack)
 	if lit != 'V' || len(rest) > 0 {
 		return nil, ErrBadVPacket
 	}
@@ -393,11 +394,11 @@ func ParseVPack(vpack []byte) (vvs map[rdx.ID]rdx.VV, err error) {
 	vrest := body
 	for len(vrest) > 0 {
 		var rv, r, v []byte
-		lit, rv, vrest = toytlv.TakeAny(vrest)
+		lit, rv, vrest = protocol.TakeAny(vrest)
 		if lit != 'V' {
 			return nil, ErrBadVPacket
 		}
-		lit, r, v := toytlv.TakeAny(rv)
+		lit, r, v := protocol.TakeAny(rv)
 		if lit != 'R' {
 			return nil, ErrBadVPacket
 		}

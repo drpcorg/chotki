@@ -3,13 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"strings"
+
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/ergochat/readline"
-	"io"
-	"os"
-	"strings"
 )
 
 // REPL per se.

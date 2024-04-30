@@ -4,15 +4,15 @@ import (
 	"errors"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toytlv"
 )
 
 func (cho *Chotki) UpdateVTree(id, ref rdx.ID, pb *pebble.Batch) (err error) {
-	v := toytlv.Record('V', id.ZipBytes())
-	err = pb.Merge(VKey(ref), v, &WriteOptions)
+	v := protocol.Record('V', id.ZipBytes())
+	err = pb.Merge(VKey(ref), v, &pebbleWriteOptions)
 	if err == nil {
-		err = pb.Merge(VKey(rdx.ID0), v, &WriteOptions)
+		err = pb.Merge(VKey(rdx.ID0), v, &pebbleWriteOptions)
 	}
 	return
 }
@@ -23,20 +23,20 @@ func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 	var rdt byte
 	for len(rest) > 0 && err == nil {
 		var dzip, bare []byte
-		dzip, rest = toytlv.Take('F', rest)
+		dzip, rest = protocol.Take('F', rest)
 		d := rdx.UnzipUint64(dzip)
 		at := ref + rdx.ID(d) // fixme
-		rdt, bare, rest = toytlv.TakeAny(rest)
-		err = batch.Merge(OKey(at, rdt), bare, &WriteOptions)
+		rdt, bare, rest = protocol.TakeAny(rest)
+		err = batch.Merge(OKey(at, rdt), bare, &pebbleWriteOptions)
 	}
 	return
 }
 
 func (cho *Chotki) ApplyH(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
-	_, rest := toytlv.Take('M', body)
+	_, rest := protocol.Take('M', body)
 	var vbody []byte
-	vbody, _ = toytlv.Take('V', rest)
-	err = batch.Merge(VKey(rdx.ID0), vbody, &WriteOptions)
+	vbody, _ = protocol.Take('V', rest)
+	err = batch.Merge(VKey(rdx.ID0), vbody, &pebbleWriteOptions)
 	return
 }
 
@@ -44,14 +44,14 @@ func (cho *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 	rest := body
 	for len(rest) > 0 {
 		var rec, idb []byte
-		rec, rest = toytlv.Take('V', rest)
-		idb, rec = toytlv.Take('R', rec)
+		rec, rest = protocol.Take('V', rest)
+		idb, rec = protocol.Take('R', rec)
 		id := rdx.IDFromZipBytes(idb)
 		key := VKey(id)
 		if !rdx.VValid(rec) {
 			err = ErrBadVPacket
 		} else {
-			err = batch.Merge(key, rec, &WriteOptions)
+			err = batch.Merge(key, rec, &pebbleWriteOptions)
 		}
 	}
 	return
@@ -59,13 +59,13 @@ func (cho *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 
 func (cho *Chotki) ApplyC(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
 	desc := make([]byte, 0, len(body)+32)
-	desc = append(desc, toytlv.Record('T', rdx.Ttlv("_ref"))...)
-	desc = append(desc, toytlv.Record('R', rdx.Rtlv(ref))...)
+	desc = append(desc, protocol.Record('T', rdx.Ttlv("_ref"))...)
+	desc = append(desc, protocol.Record('R', rdx.Rtlv(ref))...)
 	desc = append(desc, body...)
 	err = batch.Merge(
 		OKey(id, 'C'),
 		desc,
-		&WriteOptions)
+		&pebbleWriteOptions)
 	return
 }
 
@@ -73,11 +73,11 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 	err = batch.Merge(
 		OKey(id, lot),
 		ref.ZipBytes(),
-		&WriteOptions)
+		&pebbleWriteOptions)
 	rest := body
 	var fid rdx.ID
 	for fno := rdx.ID(1); len(rest) > 0 && err == nil; fno++ {
-		lit, hlen, blen := toytlv.ProbeHeader(rest)
+		lit, hlen, blen := protocol.ProbeHeader(rest)
 		if lit == 0 || lit == '-' {
 			return rdx.ErrBadPacket
 		}
@@ -103,7 +103,7 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 		err = batch.Merge(
 			fkey,
 			rebar,
-			&WriteOptions)
+			&pebbleWriteOptions)
 		rest = rest[rlen:]
 	}
 	if err == nil {
@@ -122,12 +122,12 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls 
 	for len(rest) > 0 && err == nil {
 		var fint, bare, rebar []byte
 		var lit byte
-		fint, rest = toytlv.Take('F', rest)
+		fint, rest = protocol.Take('F', rest)
 		field := rdx.UnzipUint64(fint)
 		if field > uint64(rdx.OffMask) {
 			return ErrBadEPacket
 		}
-		lit, bare, rest = toytlv.TakeAny(rest)
+		lit, bare, rest = protocol.TakeAny(rest)
 		switch lit {
 		case 'F', 'I', 'R', 'S', 'T':
 			rebar, err = rdx.SetSourceFIRST(bare, id.Src())
@@ -144,10 +144,8 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls 
 		err = batch.Merge(
 			fkey,
 			rebar,
-			&WriteOptions)
-		cho.hlock.Lock()
-		hook, ok := cho.hooks[fid]
-		cho.hlock.Unlock()
+			&pebbleWriteOptions)
+		hook, ok := cho.hooks.Load(fid)
 		if ok {
 			for _, h := range hook {
 				(*calls) = append((*calls), CallHook{h, fid})

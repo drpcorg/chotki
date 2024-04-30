@@ -4,7 +4,7 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/drpcorg/chotki/toytlv"
+	"github.com/drpcorg/chotki/protocol"
 )
 
 // VV is a version vector, max ids seen from each known replica.
@@ -72,7 +72,7 @@ func (vv VV) IDs() (ids []ID) {
 func (vv VV) TLV() (ret []byte) {
 	ids := vv.IDs()
 	for _, id := range ids {
-		ret = toytlv.Append(ret, 'V', id.ZipBytes())
+		ret = protocol.Append(ret, 'V', id.ZipBytes())
 	}
 	return
 }
@@ -91,7 +91,7 @@ func (vv VV) PutTLV(rec []byte) (err error) {
 	rest := rec
 	for len(rest) > 0 {
 		var val []byte
-		val, rest, err = toytlv.TakeWary('V', rest)
+		val, rest, err = protocol.TakeWary('V', rest)
 		if err != nil {
 			break
 		}
@@ -104,7 +104,7 @@ func (vv VV) PutTLV(rec []byte) (err error) {
 func VValid(tlv []byte) bool {
 	for len(tlv) > 0 {
 		var body []byte
-		body, tlv = toytlv.Take('V', tlv)
+		body, tlv = protocol.Take('V', tlv)
 		if body == nil || len(body) > 16 { //todo valid pair len
 			return false
 		}

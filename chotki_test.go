@@ -1,13 +1,16 @@
 package chotki
 
 import (
+	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"testing"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toyqueue"
+	"github.com/drpcorg/chotki/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,7 +18,7 @@ func testdirs(origs ...uint64) ([]string, func()) {
 	dirs := make([]string, len(origs))
 
 	for i, orig := range origs {
-		dirs[i] = ReplicaDirName(orig)
+		dirs[i] = fmt.Sprintf("cho%x", orig)
 		os.RemoveAll(dirs[i])
 	}
 
@@ -67,11 +70,11 @@ func TestChotki_Sync(t *testing.T) {
 	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B"})
 	assert.Nil(t, err)
 
-	synca := Syncer{Host: a, Mode: SyncRW, Name: "a"}
-	syncb := Syncer{Host: b, Mode: SyncRW, Name: "b"}
-	err = toyqueue.Relay(&syncb, &synca)
+	synca := Syncer{Host: a, Mode: SyncRW, Name: "a", Log: utils.NewDefaultLogger(slog.LevelDebug)}
+	syncb := Syncer{Host: b, Mode: SyncRW, Name: "b", Log: utils.NewDefaultLogger(slog.LevelDebug)}
+	err = protocol.Relay(&syncb, &synca)
 	assert.Nil(t, err)
-	err = toyqueue.Pump(&synca, &syncb)
+	err = protocol.Pump(&synca, &syncb)
 	assert.Equal(t, io.EOF, err)
 
 	bvv, err := b.VersionVector()

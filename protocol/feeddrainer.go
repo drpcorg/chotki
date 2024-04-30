@@ -1,4 +1,34 @@
-package toyqueue
+package protocol
+
+import "io"
+
+type Feeder interface {
+	// Feed reads and returns records.
+	// The EoF convention follows that of io.Reader:
+	// can either return `records, EoF` or
+	// `records, nil` followed by `nil/{}, EoF`
+	Feed() (recs Records, err error)
+}
+
+type FeedCloser interface {
+	Feeder
+	io.Closer
+}
+
+type Drainer interface {
+	Drain(recs Records) error
+}
+
+type DrainCloser interface {
+	Drainer
+	io.Closer
+}
+
+type FeedDrainCloser interface {
+	Feeder
+	Drainer
+	io.Closer
+}
 
 func Relay(feeder Feeder, drainer Drainer) error {
 	recs, err := feeder.Feed()

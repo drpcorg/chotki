@@ -1,17 +1,18 @@
-package toyqueue
+package utils
 
 import (
 	"encoding/binary"
-	"github.com/stretchr/testify/assert"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestBlockingRecordQueue_Drain(t *testing.T) {
 	const N = 1 << 10 // 8K
 	const K = 1 << 4  // 16
 
-	orig := RecordQueue{Limit: 1024}
-	queue := orig.Blocking()
+	queue := NewFDQueue[[][]byte](1024, time.Millisecond)
 
 	for k := 0; k < K; k++ {
 		go func(k int) {
@@ -19,7 +20,7 @@ func TestBlockingRecordQueue_Drain(t *testing.T) {
 			for n := uint64(0); n < N; n++ {
 				var b [8]byte
 				binary.LittleEndian.PutUint64(b[:], i|n)
-				err := queue.Drain(Records{b[:]})
+				err := queue.Drain([][]byte{b[:]})
 				assert.Nil(t, err)
 			}
 		}(k)
@@ -46,5 +47,4 @@ func TestBlockingRecordQueue_Drain(t *testing.T) {
 	assert.Equal(t, ErrClosed, err)
 	_, err2 := queue.Feed()
 	assert.Equal(t, ErrClosed, err2)
-
 }

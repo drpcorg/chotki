@@ -1,34 +1,64 @@
 package chotki
 
 import (
+	"encoding/binary"
 	"fmt"
-	"github.com/cockroachdb/pebble"
-	"github.com/drpcorg/chotki/rdx"
-	"github.com/drpcorg/chotki/toyqueue"
-	"github.com/drpcorg/chotki/toytlv"
-	"github.com/pkg/errors"
 	"unicode/utf8"
+
+	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/protocol"
+	"github.com/drpcorg/chotki/rdx"
+	"github.com/pkg/errors"
 )
 
-var ErrBadTypeDescription = errors.New("bad type description")
-
-func hasUnsafeChars(text string) bool {
-	for _, l := range text {
-		if l < ' ' {
-			return true
-		}
-	}
-	return false
+func OKey(id rdx.ID, rdt byte) (key []byte) {
+	var ret = [16]byte{'O'}
+	key = binary.BigEndian.AppendUint64(ret[:1], uint64(id))
+	key = append(key, rdt)
+	return
 }
 
-var ErrObjectUnknown = errors.New("unknown object")
-var ErrTypeUnknown = errors.New("unknown object type")
-var ErrUnknownFieldInAType = errors.New("unknown field for the type")
-var ErrBadValueForAType = errors.New("bad value for the type")
+const LidLKeyLen = 1 + 8 + 1
+
+func OKeyIdRdt(key []byte) (id rdx.ID, rdt byte) {
+	if len(key) != LidLKeyLen {
+		return rdx.BadId, 0
+	}
+
+	id = rdx.IDFromBytes(key[1 : LidLKeyLen-1])
+	rdt = key[LidLKeyLen-1]
+	return
+}
+
+func VKey(id rdx.ID) (key []byte) {
+	var ret = [16]byte{'V'}
+	block := id & ^SyncBlockMask
+	key = binary.BigEndian.AppendUint64(ret[:1], uint64(block))
+	key = append(key, 'V')
+	return
+}
+
+func VKeyId(key []byte) rdx.ID {
+	if len(key) != LidLKeyLen {
+		return rdx.BadId
+	}
+	return rdx.IDFromBytes(key[1:])
+}
 
 type Field struct {
 	Name    string
 	RdxType byte
+}
+
+func (f Field) Valid() bool {
+	for _, l := range f.Name { // has unsafe chars
+		if l < ' ' {
+			return false
+		}
+	}
+
+	return (f.RdxType >= 'A' && f.RdxType <= 'Z' &&
+		len(f.Name) > 0 && utf8.ValidString(f.Name))
 }
 
 type Fields []Field
@@ -42,15 +72,41 @@ func (f Fields) Find(name string) (ndx int) {
 	return -1
 }
 
-func (f Field) Valid() bool {
-	return f.RdxType >= 'A' && f.RdxType <= 'Z' && len(f.Name) > 0 && utf8.ValidString(f.Name) && !hasUnsafeChars(f.Name)
+func ObjectKeyRange(oid rdx.ID) (fro, til []byte) {
+	oid = oid & ^rdx.OffMask
+	return OKey(oid, 'O'), OKey(oid+rdx.ProInc, 0)
 }
 
-var ErrBadClass = errors.New("bad class description")
+// returns nil for "not found"
+func (cho *Chotki) ObjectIterator(oid rdx.ID, snap *pebble.Snapshot) *pebble.Iterator {
+	fro, til := ObjectKeyRange(oid)
+	io := pebble.IterOptions{
+		LowerBound: fro,
+		UpperBound: til,
+	}
+	var it *pebble.Iterator
+	if snap != nil {
+		it = snap.NewIter(&io)
+	} else {
+		it = cho.db.NewIter(&io)
+	}
+
+	if it.SeekGE(fro) { // fixme
+		id, rdt := OKeyIdRdt(it.Key())
+		if rdt == 'O' && id == oid {
+			// An iterator is returned from a function, it cannot be closed
+			return it
+		}
+	}
+	if it != nil {
+		_ = it.Close()
+	}
+	return nil
+}
 
 // todo []Field -> map[uint64]Field
 func (cho *Chotki) ClassFields(cid rdx.ID) (fields Fields, err error) {
-	fields, ok := cho.types[cid]
+	fields, ok := cho.types.Load(cid)
 	if ok {
 		return
 	}
@@ -88,14 +144,12 @@ func (cho *Chotki) ClassFields(cid rdx.ID) (fields Fields, err error) {
 		})
 	}
 	_ = clo.Close()
-	cho.lock.Lock()
-	cho.types[cid] = fields
-	cho.lock.Unlock()
+	cho.types.Store(cid, fields)
 	return
 }
 
-func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, tlvs toyqueue.Records, err error) {
-	it := cho.ObjectIterator(oid)
+func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, tlvs protocol.Records, err error) {
+	it := cho.ObjectIterator(oid, nil)
 	if it == nil {
 		return rdx.BadId, nil, ErrObjectUnknown
 	}
@@ -120,8 +174,8 @@ func (cho *Chotki) ObjectFieldsByClass(oid rdx.ID, form []string) (tid rdx.ID, t
 	return
 }
 
-func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact toyqueue.Records, err error) {
-	it := cho.ObjectIterator(oid)
+func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact protocol.Records, err error) {
+	it := cho.ObjectIterator(oid, nil)
 	if it == nil {
 		err = ErrObjectUnknown
 		return
@@ -151,8 +205,8 @@ func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact toyqu
 	return
 }
 
-func (cho *Chotki) ObjectFieldsTLV(oid rdx.ID) (tid rdx.ID, tlv toyqueue.Records, err error) {
-	it := cho.ObjectIterator(oid)
+func (cho *Chotki) ObjectFieldsTLV(oid rdx.ID) (tid rdx.ID, tlv protocol.Records, err error) {
+	it := cho.ObjectIterator(oid, nil)
 	if it == nil {
 		return rdx.BadId, nil, ErrObjectUnknown
 	}
@@ -200,14 +254,14 @@ func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) 
 }
 
 func (cho *Chotki) NewClass(parent rdx.ID, fields ...Field) (id rdx.ID, err error) {
-	var fspecs toyqueue.Records
-	//fspecs = append(fspecs, toytlv.Record('A', parent.ZipBytes()))
+	var fspecs protocol.Records
+	//fspecs = append(fspecs, protocol.Record('A', parent.ZipBytes()))
 	for _, field := range fields {
 		if !field.Valid() {
 			return rdx.BadId, ErrBadTypeDescription
 		}
-		fspecs = append(fspecs, toytlv.Record('T', rdx.Ttlv(field.Name)))
-		fspecs = append(fspecs, toytlv.Record('T', rdx.Ttlv(string(field.RdxType))))
+		fspecs = append(fspecs, protocol.Record('T', rdx.Ttlv(field.Name)))
+		fspecs = append(fspecs, protocol.Record('T', rdx.Ttlv(string(field.RdxType))))
 	}
 	return cho.CommitPacket('C', parent, fspecs)
 }
@@ -221,14 +275,14 @@ func (cho *Chotki) NewObject(tid rdx.ID, fields ...string) (id rdx.ID, err error
 	if len(fields) > len(form) {
 		return rdx.BadId, ErrUnknownFieldInAType
 	}
-	var packet toyqueue.Records
+	var packet protocol.Records
 	for i := 0; i < len(fields); i++ {
 		rdt := form[i+1].RdxType
 		tlv := rdx.Xparse(rdt, fields[i])
 		if tlv == nil {
 			return rdx.BadId, ErrBadValueForAType
 		}
-		packet = append(packet, toytlv.Record(rdt, tlv))
+		packet = append(packet, protocol.Record(rdt, tlv))
 	}
 	return cho.CommitPacket('O', tid, packet)
 }
@@ -246,15 +300,15 @@ func (cho *Chotki) EditObject(oid rdx.ID, fields ...string) (id rdx.ID, err erro
 		return rdx.BadId, err
 	}
 	// fetch type desc
-	var packet toyqueue.Records
+	var packet protocol.Records
 	for i := 0; i < len(fields); i++ {
 		rdt := byte(formula[i].RdxType)
 		tlv := rdx.X2string(rdt, obj[i], fields[i], cho.src)
 		if tlv == nil {
 			return rdx.BadId, ErrBadValueForAType
 		}
-		packet = append(packet, toytlv.Record('F', rdx.ZipUint64(uint64(i))))
-		packet = append(packet, toytlv.Record(rdt, tlv))
+		packet = append(packet, protocol.Record('F', rdx.ZipUint64(uint64(i))))
+		packet = append(packet, protocol.Record(rdt, tlv))
 	}
 	return cho.CommitPacket('E', oid, packet)
 }
@@ -293,12 +347,12 @@ func (cho *Chotki) ObjectString(oid rdx.ID) (txt string, err error) {
 }
 
 func (cho *Chotki) EditObjectRDX(oid rdx.ID, pairs []rdx.RDX) (id rdx.ID, err error) {
-	tlvs := toyqueue.Records{}
+	tlvs := protocol.Records{}
 	_, form, fact, e := cho.ObjectFields(oid)
 	if e != nil {
 		return rdx.BadId, e
 	}
-	tmp := make(toyqueue.Records, len(fact))
+	tmp := make(protocol.Records, len(fact))
 	for i := 0; i+1 < len(pairs); i += 2 {
 		if pairs[i].RdxType != rdx.Term {
 			return
@@ -314,7 +368,7 @@ func (cho *Chotki) EditObjectRDX(oid rdx.ID, pairs []rdx.RDX) (id rdx.ID, err er
 	}
 	for i := 0; i < len(form); i++ {
 		if tmp[i] != nil {
-			tlvs = append(tlvs, toytlv.TinyRecord('F', rdx.ZipUint64(uint64(i))))
+			tlvs = append(tlvs, protocol.TinyRecord('F', rdx.ZipUint64(uint64(i))))
 			tlvs = append(tlvs, tmp[i])
 		}
 	}
@@ -323,8 +377,8 @@ func (cho *Chotki) EditObjectRDX(oid rdx.ID, pairs []rdx.RDX) (id rdx.ID, err er
 
 func (cho *Chotki) SetFieldTLV(fid rdx.ID, tlve []byte) (id rdx.ID, err error) {
 	oid := fid.ZeroOff()
-	f := toytlv.Record('F', rdx.ZipUint64(uint64(fid.Off())))
-	return cho.CommitPacket('E', oid, toyqueue.Records{f, tlve})
+	f := protocol.Record('F', rdx.ZipUint64(uint64(fid.Off())))
+	return cho.CommitPacket('E', oid, protocol.Records{f, tlve})
 }
 
 var ErrWrongFieldType = errors.New("wrong field type")
@@ -336,9 +390,9 @@ func (cho *Chotki) AddToNField(fid rdx.ID, count uint64) (id rdx.ID, err error) 
 	}
 	src := cho.Source()
 	mine := rdx.Nmine(tlv, src)
-	tlvs := toyqueue.Records{
-		toytlv.Record('F', rdx.ZipUint64(fid.Off())),
-		toytlv.Record(rdx.Natural, toytlv.Record(rdx.Term, rdx.ZipUint64Pair(mine+count, src))),
+	tlvs := protocol.Records{
+		protocol.Record('F', rdx.ZipUint64(fid.Off())),
+		protocol.Record(rdx.Natural, protocol.Record(rdx.Term, rdx.ZipUint64Pair(mine+count, src))),
 	}
 	id, err = cho.CommitPacket('E', fid.ZeroOff(), tlvs)
 	return
@@ -348,7 +402,7 @@ func (cho *Chotki) IncNField(fid rdx.ID) (id rdx.ID, err error) {
 	return cho.AddToNField(fid, 1)
 }
 
-func (cho *Chotki) ObjectFieldMapTermId(fid rdx.ID) (themap map[string]rdx.ID, err error) {
+func (cho *Chotki) ObjectFieldMapTermId(fid rdx.ID) (themap rdx.MapTR, err error) {
 	rdt, tlv, e := cho.ObjectFieldTLV(fid)
 	if e != nil {
 		return nil, e
@@ -360,15 +414,32 @@ func (cho *Chotki) ObjectFieldMapTermId(fid rdx.ID) (themap map[string]rdx.ID, e
 	return
 }
 
+func (cho *Chotki) GetFieldTLV(id rdx.ID) (rdt byte, tlv []byte) {
+	key := OKey(id, 'A')
+	it := cho.db.NewIter(&pebble.IterOptions{
+		LowerBound: []byte{'O'},
+		UpperBound: []byte{'P'},
+	})
+	defer it.Close()
+	if it.SeekGE(key) {
+		fact, r := OKeyIdRdt(it.Key())
+		if fact == id {
+			tlv = it.Value()
+			rdt = r
+		}
+	}
+	return
+}
+
 func EditTLV(off uint64, rdt byte, tlv []byte) (edit []byte) {
-	edit = append(edit, toytlv.TinyRecord('F', rdx.ZipUint64(off))...)
-	edit = append(edit, toytlv.Record(rdt, tlv)...)
+	edit = append(edit, protocol.TinyRecord('F', rdx.ZipUint64(off))...)
+	edit = append(edit, protocol.Record(rdt, tlv)...)
 	return
 }
 
 func (cho *Chotki) EditFieldTLV(fid rdx.ID, delta []byte) (id rdx.ID, err error) {
-	tlvs := toyqueue.Records{}
-	tlvs = append(tlvs, toytlv.TinyRecord('F', rdx.ZipUint64(fid.Off())))
+	tlvs := protocol.Records{}
+	tlvs = append(tlvs, protocol.TinyRecord('F', rdx.ZipUint64(fid.Off())))
 	tlvs = append(tlvs, delta)
 	id, err = cho.CommitPacket('E', fid.ZeroOff(), tlvs)
 	return

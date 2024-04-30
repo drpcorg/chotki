@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/drpcorg/chotki/toytlv"
+	"github.com/drpcorg/chotki/protocol"
 )
 
 /*
@@ -107,13 +107,13 @@ func IDFromZipBytes(zip []byte) ID {
 
 func (id ID) Feed(into []byte) (res []byte) {
 	pair := id.ZipBytes()
-	res = toytlv.AppendHeader(into, 'I', len(pair))
+	res = protocol.AppendHeader(into, 'I', len(pair))
 	res = append(res, pair...)
 	return res
 }
 
 func (id *ID) Drain(from []byte) (rest []byte) { // FIXME
-	body, rest := toytlv.Take('I', from)
+	body, rest := protocol.Take('I', from)
 	seq, orig := UnzipUint64Pair(body)
 	*id = ID((seq << SrcBits) | orig)
 	return rest
@@ -122,7 +122,7 @@ func (id *ID) Drain(from []byte) (rest []byte) { // FIXME
 var ErrBadId = errors.New("not an expected id")
 
 func TakeIDWary(lit byte, pack []byte) (id ID, rest []byte, err error) {
-	idbytes, rest := toytlv.Take(lit, pack)
+	idbytes, rest := protocol.Take(lit, pack)
 	if idbytes == nil {
 		err = ErrBadId
 	} else {
@@ -252,7 +252,7 @@ func readIDFromString(idstr []byte) (ID, []byte) {
 }
 
 func readIDFromTLV(tlv []byte) (ID, []byte) { //nolint:golint,unused
-	lit, body, rest := toytlv.TakeAny(tlv)
+	lit, body, rest := protocol.TakeAny(tlv)
 	if lit == '-' || lit == 0 {
 		return BadId, nil
 	}

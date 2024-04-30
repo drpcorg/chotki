@@ -1,10 +1,8 @@
 package chotki
 
 import (
-	"fmt"
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
-	"os"
 )
 
 func ChotkiKVString(key, value []byte) string {
@@ -21,9 +19,7 @@ func ChotkiKVString(key, value []byte) string {
 }
 
 func (cho *Chotki) DumpAll() {
-	_, _ = fmt.Fprintf(os.Stderr, "=====OBJECTS=====\n")
 	cho.DumpObjects()
-	_, _ = fmt.Fprintf(os.Stderr, "=====VVS=====\n")
 	cho.DumpVV()
 }
 
@@ -35,7 +31,7 @@ func (cho *Chotki) DumpObjects() {
 	i := cho.db.NewIter(&io)
 	defer i.Close()
 	for i.SeekGE([]byte{'O'}); i.Valid(); i.Next() {
-		_, _ = fmt.Fprintln(os.Stderr, ChotkiKVString(i.Key(), i.Value()))
+		cho.log.Debug("OBJECT" + ChotkiKVString(i.Key(), i.Value()))
 	}
 }
 
@@ -50,12 +46,6 @@ func (cho *Chotki) DumpVV() {
 		id := rdx.IDFromBytes(i.Key()[1:])
 		vv := make(rdx.VV)
 		_ = vv.PutTLV(i.Value())
-		fmt.Printf("%s -> \t%s\n", id.String(), vv.String())
-	}
-}
-
-func DumpVPacket(vvs map[rdx.ID]rdx.VV) {
-	for id, vv := range vvs {
-		_, _ = fmt.Fprintf(os.Stderr, "%s -> %s\n", id.String(), vv.String())
+		cho.log.Debug("VV", "key", id.String(), "string", vv.String())
 	}
 }
