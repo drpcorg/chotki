@@ -127,6 +127,8 @@ func (repl *REPL) REPL(line string) (id rdx.ID, err error) {
 		id, err = repl.CommandCreate(arg)
 	case "open":
 		id, err = repl.CommandOpen(arg)
+	case "checkpoint", "cp":
+		id, err = repl.CommandCheckpoint(arg)
 	case "close":
 		id, err = repl.CommandClose(arg)
 	case "exit", "quit":

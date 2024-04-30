@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -90,6 +91,20 @@ func (repl *REPL) CommandOpen(arg *rdx.RDX) (rdx.ID, error) {
 	}
 
 	return repl.Host.Last(), nil
+}
+
+var HelpCheckpoint = errors.New("cp \"monday\"")
+
+func (repl *REPL) CommandCheckpoint(arg *rdx.RDX) (rdx.ID, error) {
+	if arg == nil || arg.RdxType != rdx.String {
+		return rdx.BadId, HelpCheckpoint
+	}
+	tlv := rdx.Sparse(string(arg.Text))
+	name := rdx.Snative(tlv)
+	parent := repl.Host.Directory()
+	path := filepath.Join(parent, name)
+	err := repl.Host.Database().Checkpoint(path)
+	return rdx.ID0, err
 }
 
 var HelpDump = errors.New("dump (obj|objects|vv|all)?")
@@ -248,7 +263,7 @@ func (repl *REPL) CommandEdit(arg *rdx.RDX) (id rdx.ID, err error) {
 }
 
 var HelpAdd = errors.New(
-	"add {_id: b0b-1e, Score: +1}",
+	"add {b0b-1e-2: +3, a1ece-3f0-2: +7}",
 )
 
 func (repl *REPL) CommandAdd(arg *rdx.RDX) (id rdx.ID, err error) {

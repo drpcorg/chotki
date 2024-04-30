@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -152,10 +153,15 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		return nil, err
 	}
 
+	absdir, err := filepath.Abs(dirname)
+	if err != nil {
+		return nil, err
+	}
+
 	cho := Chotki{
 		db:   db,
 		src:  opts.Src,
-		dir:  dirname,
+		dir:  absdir,
 		log:  opts.Logger,
 		opts: opts,
 
@@ -263,6 +269,10 @@ func (cho *Chotki) Snapshot() pebble.Reader {
 
 func (cho *Chotki) Database() *pebble.DB {
 	return cho.db
+}
+
+func (cho *Chotki) Directory() string {
+	return cho.dir
 }
 
 func (cho *Chotki) ObjectMapper() *ORM {
