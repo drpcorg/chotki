@@ -23,19 +23,19 @@ Chotki's data model has three key entities:
  2. an object is an instance of a class,
  3. a field is a value of a Replicated Data Type (RDT).
 
-Available RDTs are basic FIRST types: 
+Available RDTs include basic "last-write-wins" FIRST types: 
  1. Float, 
  2. Integer, 
  3. Reference,
  4. String and
  5. Term.
 
-There are also collection ELM types: 
+There are also collections/ELM types: 
  1. Eulerian (set) is an unordered collection of FIRST values,
  2. Linear (array) is an ordered collection of FIRST values, and
  3. Mapping is a collection of key-value pairs (both FIRST).
 
-There are also two counter types:
+There are also counters/NZ types:
  1. N are "natural" increment-only uint64 counters and
  2. Z are signed int64 increment/decrement counters.
 
@@ -156,7 +156,11 @@ supporting RDX as a unifying format. (Ping us any time!)
 
 ##  The original Chotki project summary
 
-The mission of the system is to keep and update real-time statistics, such as
+The project is a collaboration of dRPC.org and Victor "gritzko" Grishchenko.
+RDX types are based on the RON/RDX research project.
+The following is the original project summary:
+
+*The mission of the system is to keep and update real-time statistics, such as
 quotas, counters, billing and suchlike. Update propagation time is expected to
 be close to the theoretic minimum: the one-way delay. We expect to be able to
 process data at bulk transfer speeds (i.e. as much as we can move by the
@@ -174,4 +178,4 @@ field, we do a lookup. That wav we minimize reads, de-serializations and GC
 busywork. Updates are lamport-timestamped, there is a re-sync protocol for
 newly joining and re-joining replicas. Overall, we take every shortcut to make
 the store lightweight and fast while focusing on our specific usecase
-(distributed counters, mainly).
+(distributed counters, mainly).*
