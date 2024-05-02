@@ -173,11 +173,14 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		types: xsync.NewMapOf[rdx.ID, Fields](),
 	}
 
+	conno := 0
+
 	cho.net = protocol.NewNet(cho.log, func(conn net.Conn) protocol.FeedDrainCloser {
+		conno++
 		return &Syncer{
 			Host: &cho,
 			Mode: SyncRWLive,
-			Name: conn.RemoteAddr().String(),
+			Name: conn.RemoteAddr().String() + fmt.Sprintf("@%d", conno),
 			Log:  cho.log,
 		}
 	})

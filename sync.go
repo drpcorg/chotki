@@ -260,7 +260,9 @@ func (sync *Syncer) FeedDiffVV() (vv protocol.Records, err error) {
 
 func (sync *Syncer) SetFeedState(state int) {
 	sync.Log.Debug("sync: feed state", "name", sync.Name, "state", SendStates[state])
+	sync.lock.Lock()
 	sync.feedState = state
+	sync.lock.Unlock()
 }
 
 func (sync *Syncer) SetDrainState(state int) {
@@ -277,10 +279,10 @@ func (sync *Syncer) SetDrainState(state int) {
 
 func (sync *Syncer) WaitDrainState(state int) (ds int) {
 	sync.lock.Lock()
+	if sync.cond.L == nil {
+		sync.cond.L = &sync.lock
+	}
 	for sync.drainState < state {
-		if sync.cond.L == nil {
-			sync.cond.L = &sync.lock
-		}
 		sync.cond.Wait()
 	}
 	ds = sync.drainState
