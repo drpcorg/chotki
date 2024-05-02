@@ -3,6 +3,7 @@ package rdx
 import (
 	"fmt"
 	"github.com/drpcorg/chotki/protocol"
+	"strconv"
 )
 
 // N is an increment-only uint64 counter
@@ -16,8 +17,10 @@ func Ndefault() []byte { return []byte{} }
 
 // parse a text form into a TLV value
 func Nparse(txt string) (tlv []byte) {
-	var u uint64
-	_, _ = fmt.Sscanf(txt, "%d", &u)
+	u, err := strconv.ParseUint(txt, 10, 64)
+	if err != nil {
+		return nil
+	}
 	return Ntlv(u)
 }
 
@@ -163,8 +166,10 @@ func Zstring(tlv []byte) (txt string) {
 
 // parse a text form into a TLV value
 func Zparse(txt string) (tlv []byte) {
-	var i int64
-	_, _ = fmt.Sscanf(txt, "%d", &i)
+	i, err := strconv.ParseInt(txt, 10, 64)
+	if err != nil {
+		return nil
+	}
 	return Ztlv(i)
 }
 

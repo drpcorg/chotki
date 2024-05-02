@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/drpcorg/chotki/protocol"
 )
@@ -236,8 +237,10 @@ func Istring(tlv []byte) (txt string) {
 
 // parse a text form into a TLV value
 func Iparse(txt string) (tlv []byte) {
-	var i int64
-	_, _ = fmt.Sscanf(txt, "%d", &i)
+	i, err := strconv.ParseInt(txt, 10, 64)
+	if err != nil {
+		return nil
+	}
 	return Itlv(i)
 }
 
