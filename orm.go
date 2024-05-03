@@ -36,6 +36,7 @@ func NewORM(host *Chotki, snap *pebble.Snapshot) *ORM {
 	}
 }
 
+// New object of the same type get persisted and registered with the ORM
 func (orm *ORM) New(cid rdx.ID, objs ...NativeObject) (err error) {
 	fields, e := orm.Host.ClassFields(cid)
 	if e != nil {
@@ -59,8 +60,8 @@ func (orm *ORM) New(cid rdx.ID, objs ...NativeObject) (err error) {
 	return nil
 }
 
-// Save the object changes.
-// Recommended, especially if you loaded many, modified few.
+// Save the registered object's changes.
+// Much faster than SaveALl() esp if you loaded many, modified few.
 func (orm *ORM) Save(objs ...NativeObject) (err error) {
 	for _, obj := range objs {
 		id := orm.FindID(obj)
@@ -110,7 +111,8 @@ func (orm *ORM) Save(objs ...NativeObject) (err error) {
 	return err
 }
 
-// SaveAll the changed fields; this will re-scan the objects in the database.
+// SaveAll the changed fields; this will scan the objects and
+// their database records.
 func (orm *ORM) SaveAll() (err error) {
 	orm.objects.Range(func(_ rdx.ID, obj NativeObject) bool {
 		err = orm.Save(obj)
@@ -162,6 +164,7 @@ func (orm *ORM) UpdateObject(obj NativeObject, snap *pebble.Snapshot) error {
 		off := lid.Off()
 		if it.Seq() > seq {
 			e := obj.Load(off, rdt, it.Value())
+			// todo as of now, this may overwrite the object's changes
 			if e != nil { // the db may have garbage
 				_ = 0 // todo
 			}
@@ -171,16 +174,23 @@ func (orm *ORM) UpdateObject(obj NativeObject, snap *pebble.Snapshot) error {
 	return nil
 }
 
+// UpdateAll the registered objects to the new db state
 func (orm *ORM) UpdateAll() (err error) {
 	snap := orm.Host.Database().NewSnapshot()
 	orm.objects.Range(func(_ rdx.ID, obj NativeObject) bool {
 		err = orm.UpdateObject(obj, snap)
 		return err == nil
 	})
+	orm.lock.Lock()
+	if orm.Snap != nil {
+		_ = orm.Snap.Close()
+	}
+	orm.Snap = snap
+	orm.lock.Unlock()
 	return
 }
 
-// Saves all the changes, takes a new snapshot, updates
+// Saves all the changes, updates all the objects to the current db state.
 func (orm *ORM) SyncAll() (err error) {
 	err = orm.SaveAll()
 	if err == nil {
@@ -189,6 +199,9 @@ func (orm *ORM) SyncAll() (err error) {
 	return
 }
 
+// Load the object's state from the db, register the object.
+// If an object is already registered for that id, returns the old one.
+// The new one is not used then.
 func (orm *ORM) Load(id rdx.ID, blanc NativeObject) (obj NativeObject, err error) {
 	pre, ok := orm.objects.Load(id)
 	if ok {
@@ -218,11 +231,13 @@ func (orm *ORM) Load(id rdx.ID, blanc NativeObject) (obj NativeObject, err error
 	return blanc, nil
 }
 
+// Find a registered object for the id. nil if none.
 func (orm *ORM) Object(id rdx.ID) (obj NativeObject) {
 	obj, _ = orm.objects.Load(id)
 	return // todo
 }
 
+// Find the ID of the registered object's.
 func (orm *ORM) FindID(obj NativeObject) rdx.ID {
 	id, ok := orm.ids.Load(obj)
 	if !ok {
