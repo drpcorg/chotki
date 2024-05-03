@@ -326,6 +326,9 @@ func (o *{{.Name}}) Store(off uint64, rdt byte, old []byte, clock rdx.Clock) (ba
 	{{ end }}
 	default: return nil, chotki.ErrUnknownFieldInAType
 	}
+	if bare==nil {
+		err = rdx.ErrBadValueForAType
+	}
 	return 
 }
 `

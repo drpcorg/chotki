@@ -86,5 +86,8 @@ func (o *Student) Store(off uint64, rdt byte, old []byte, clock rdx.Clock) (bare
 	default:
 		return nil, chotki.ErrUnknownFieldInAType
 	}
+	if bare == nil {
+		err = rdx.ErrBadValueForAType
+	}
 	return
 }

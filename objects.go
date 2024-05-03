@@ -280,7 +280,7 @@ func (cho *Chotki) NewObject(tid rdx.ID, fields ...string) (id rdx.ID, err error
 		rdt := form[i+1].RdxType
 		tlv := rdx.Xparse(rdt, fields[i])
 		if tlv == nil {
-			return rdx.BadId, ErrBadValueForAType
+			return rdx.BadId, rdx.ErrBadValueForAType
 		}
 		packet = append(packet, protocol.Record(rdt, tlv))
 	}
@@ -305,7 +305,7 @@ func (cho *Chotki) EditObject(oid rdx.ID, fields ...string) (id rdx.ID, err erro
 		rdt := byte(formula[i].RdxType)
 		tlv := rdx.X2string(rdt, obj[i], fields[i], cho.src)
 		if tlv == nil {
-			return rdx.BadId, ErrBadValueForAType
+			return rdx.BadId, rdx.ErrBadValueForAType
 		}
 		packet = append(packet, protocol.Record('F', rdx.ZipUint64(uint64(i))))
 		packet = append(packet, protocol.Record(rdt, tlv))

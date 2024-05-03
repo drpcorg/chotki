@@ -89,8 +89,8 @@ func N2string(tlv []byte, new_val string, src uint64) (tlv_delta []byte) {
 	return ZipUint64Pair(mine, 0)
 }
 
-// FIXME clock
 // produce an op that turns the old value into the new one
+// return nil on error, empty slice for "no changes"
 func Ndelta(tlv []byte, new_val uint64, clock Clock) (tlv_delta []byte) {
 	it := FIRSTIterator{TLV: tlv}
 	max_revz := uint64(0)

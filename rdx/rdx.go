@@ -44,6 +44,7 @@ const (
 )
 
 var ErrBadRdx = errors.New("bad RDX syntax")
+var ErrBadValueForAType = errors.New("rdx: bad value for the type")
 
 func (rdx *RDX) AddChild(rdxtype byte, text []byte) {
 	rdx.Nested = append(rdx.Nested, RDX{

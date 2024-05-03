@@ -43,7 +43,6 @@ var (
 	ErrObjectUnknown       = errors.New("chotki: unknown object")
 	ErrTypeUnknown         = errors.New("chotki: unknown object type")
 	ErrUnknownFieldInAType = errors.New("chotki: unknown field for the type")
-	ErrBadValueForAType    = errors.New("chotki: bad value for the type")
 	ErrBadClass            = errors.New("chotki: bad class description")
 
 	ErrOutOfOrder      = errors.New("chotki: order fail: sequence gap")
