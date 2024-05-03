@@ -439,40 +439,42 @@ func (cho *Chotki) Drain(recs protocol.Records) (err error) {
 
 		pb, noApply := pebble.Batch{}, false
 
+		cho.log.Debug(string(lit), " packet, #", id.String())
+
 		switch lit {
 		case 'Y': // create replica log
-			cho.log.Debug("'Y' sync session", "id", id.String())
+
 			if ref != rdx.ID0 {
 				return ErrBadYPacket
 			}
 			err = cho.ApplyOY('Y', id, ref, body, &pb)
 
 		case 'C': // create class
-			cho.log.Debug("'C' sync session", "id", id.String())
+
 			err = cho.ApplyC(id, ref, body, &pb)
 
 		case 'O': // create object
-			cho.log.Debug("'O' sync session", "id", id.String())
+
 			if ref == rdx.ID0 {
 				return ErrBadOPacket
 			}
 			err = cho.ApplyOY('O', id, ref, body, &pb)
 
 		case 'E': // edit object
-			cho.log.Debug("'E' sync session", "id", id.String())
+
 			if ref == rdx.ID0 {
 				return ErrBadEPacket
 			}
 			err = cho.ApplyE(id, ref, body, &pb, &calls)
 
 		case 'H': // handshake
-			cho.log.Debug("H sync session", "id", id.String())
+
 			d := cho.db.NewBatch()
 			cho.syncs.Store(id, d)
 			err = cho.ApplyH(id, ref, body, d)
 
 		case 'D': // diff
-			cho.log.Debug("'D' sync session", "id", id.String())
+
 			d, ok := cho.syncs.Load(id)
 			if !ok {
 				return ErrSyncUnknown
@@ -481,7 +483,6 @@ func (cho *Chotki) Drain(recs protocol.Records) (err error) {
 			noApply = true
 
 		case 'V':
-			cho.log.Debug("V sync session", "id", id.String())
 			d, ok := cho.syncs.Load(id)
 			if !ok {
 				return ErrSyncUnknown
