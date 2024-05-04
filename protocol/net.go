@@ -82,23 +82,27 @@ func (n *Net) Close() error {
 }
 
 func (n *Net) Connect(ctx context.Context, addr string) (err error) {
+	return n.ConnectPool(ctx, addr, []string{addr})
+}
+
+func (n *Net) ConnectPool(ctx context.Context, name string, addrs []string) (err error) {
 	// nil is needed so that Connect cannot be called
 	// while KeepConnecting is connects
-	if _, ok := n.conns.LoadOrStore(addr, nil); ok {
+	if _, ok := n.conns.LoadOrStore(name, nil); ok {
 		return ErrAddressDuplicated
 	}
 
 	n.wg.Add(1)
 	go func() {
-		n.KeepConnecting(ctx, addr)
+		n.KeepConnecting(ctx, name, addrs)
 		n.wg.Done()
 	}()
 
 	return nil
 }
 
-func (de *Net) Disconnect(addr string) (err error) {
-	conn, ok := de.conns.LoadAndDelete(addr)
+func (de *Net) Disconnect(name string) (err error) {
+	conn, ok := de.conns.LoadAndDelete(name)
 	if !ok {
 		return ErrAddressUnknown
 	}
@@ -141,7 +145,7 @@ func (de *Net) Unlisten(addr string) error {
 	return listener.Close()
 }
 
-func (n *Net) KeepConnecting(ctx context.Context, addr string) {
+func (n *Net) KeepConnecting(ctx context.Context, name string, addrs []string) {
 	connBackoff := MIN_RETRY_PERIOD
 
 	for !n.closed.Load() {
@@ -152,9 +156,17 @@ func (n *Net) KeepConnecting(ctx context.Context, addr string) {
 			// continue
 		}
 
-		conn, err := n.createConn(ctx, addr)
+		var err error
+		var conn net.Conn
+		for _, addr := range addrs {
+			conn, err = n.createConn(ctx, addr)
+			if err == nil {
+				break
+			}
+		}
+
 		if err != nil {
-			n.log.Error("net: couldn't connect", "addr", addr, "err", err)
+			n.log.Error("net: couldn't connect", "name", name, "err", err)
 
 			time.Sleep(connBackoff)
 			connBackoff = min(MAX_RETRY_PERIOD, connBackoff*2)
@@ -162,10 +174,10 @@ func (n *Net) KeepConnecting(ctx context.Context, addr string) {
 			continue
 		}
 
-		n.log.Debug("net: connected", "addr", addr)
+		n.log.Debug("net: connected", "name", name)
 
 		connBackoff = MIN_RETRY_PERIOD
-		n.keepPeer(ctx, addr, conn)
+		n.keepPeer(ctx, name, conn)
 	}
 }
 
@@ -213,20 +225,20 @@ func (n *Net) KeepListening(ctx context.Context, addr string) {
 	n.log.Debug("net: listener closed", "addr", addr)
 }
 
-func (n *Net) keepPeer(ctx context.Context, addr string, conn net.Conn) {
+func (n *Net) keepPeer(ctx context.Context, name string, conn net.Conn) {
 	peer := &Peer{inout: n.jack(conn), conn: conn}
-	n.conns.Store(addr, peer)
-	defer n.conns.Delete(addr)
+	n.conns.Store(name, peer)
+	defer n.conns.Delete(name)
 
 	readErr, wrireErr, closeErr := peer.Keep(ctx)
 	if readErr != nil {
-		n.log.Error("net: couldn't read from peer", "addr", addr, "err", readErr)
+		n.log.Error("net: couldn't read from peer", "name", name, "err", readErr)
 	}
 	if wrireErr != nil {
-		n.log.Error("net: couldn't write to peer", "addr", addr, "err", wrireErr)
+		n.log.Error("net: couldn't write to peer", "name", name, "err", wrireErr)
 	}
 	if closeErr != nil {
-		n.log.Error("net: couldn't correct close peer", "addr", addr, "err", closeErr)
+		n.log.Error("net: couldn't correct close peer", "name", name, "err", closeErr)
 	}
 }
 

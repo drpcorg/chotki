@@ -310,6 +310,10 @@ func (cho *Chotki) Connect(ctx context.Context, addr string) error {
 	return cho.net.Connect(ctx, addr)
 }
 
+func (cho *Chotki) ConnectPool(ctx context.Context, name string, addrs []string) error {
+	return cho.net.ConnectPool(ctx, name, addrs)
+}
+
 func (cho *Chotki) Disconnect(addr string) error {
 	return cho.net.Disconnect(addr)
 }
