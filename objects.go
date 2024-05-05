@@ -106,10 +106,10 @@ func (cho *Chotki) ObjectIterator(oid rdx.ID, snap *pebble.Snapshot) *pebble.Ite
 
 // todo []Field -> map[uint64]Field
 func (cho *Chotki) ClassFields(cid rdx.ID) (fields Fields, err error) {
-	fields, ok := cho.types.Load(cid)
-	if ok {
-		return
+	if fields, ok := cho.types.Load(cid); ok {
+		return fields, nil
 	}
+
 	okey := OKey(cid, 'C')
 	tlv, clo, e := cho.db.Get(okey)
 	if e != nil {
