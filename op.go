@@ -34,31 +34,28 @@ func ParsePacket(pack []byte) (lit byte, id, ref rdx.ID, body []byte, err error)
 	return
 }
 
-// PacketSeqSrc picks the I field from the packet.
-// Returns 0,0 if nothing found.
-func PacketSrcSeq(pack []byte) (src, seq uint32) { // FIXME offset
-	lit, hlen, blen := protocol.ProbeHeader(pack)
-	if lit == 0 || hlen+blen > len(pack) {
-		return
+func ParseHandshake(body []byte) (mode SyncMode, vv rdx.VV, err error) {
+	// handshake: H(T{pro,src} M(mode) V(V{p,s}+) ...)
+	var mbody, vbody []byte
+	rest := body
+	mbody, rest = protocol.Take('M', rest)
+	if mbody == nil {
+		return 0, nil, ErrBadHPacket
 	}
-	v, vhlen, vblen := protocol.ProbeHeader(pack[hlen:])
-	if v != 'V' || vhlen+vblen > len(pack)-blen {
-		return
-	}
-	big, lil := rdx.UnzipUint64Pair(pack[hlen+vhlen : hlen+vhlen+vblen])
-	seq = uint32(big)
-	src = uint32(lil)
-	return
-}
 
-func PacketID(pack []byte) rdx.ID {
-	lit, hlen, blen := protocol.ProbeHeader(pack)
-	if lit == 0 || hlen+blen > len(pack) {
-		return rdx.ZeroId
+	vbody, _ = protocol.Take('V', rest)
+	if vbody == nil {
+		return 0, nil, ErrBadHPacket
 	}
-	v, vhlen, vblen := protocol.ProbeHeader(pack[hlen:])
-	if v != 'V' || vhlen+vblen > len(pack)-blen {
-		return rdx.ZeroId
+
+	vv = make(rdx.VV)
+	if err := vv.PutTLV(vbody); err != nil {
+		return 0, nil, err
 	}
-	return rdx.IDFromZipBytes(pack[hlen+vhlen : hlen+vhlen+vblen])
+
+	if err := mode.Unzip(mbody); err != nil {
+		return 0, nil, err
+	}
+
+	return mode, vv, nil
 }

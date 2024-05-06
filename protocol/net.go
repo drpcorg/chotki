@@ -31,7 +31,8 @@ const (
 	MIN_RETRY_PERIOD = time.Second / 2
 )
 
-type Jack func(conn net.Conn) FeedDrainCloser
+type InstallCallback func(name string) FeedDrainCloser
+type DestroyCallback func(name string)
 
 // A TCP/TLS/QUIC server/client for the use case of real-time async communication.
 // Differently from the case of request-response (like HTTP), we do not
@@ -43,9 +44,10 @@ type Jack func(conn net.Conn) FeedDrainCloser
 type Net struct {
 	closed atomic.Bool
 
-	wg   sync.WaitGroup
-	jack Jack
-	log  utils.Logger
+	wg        sync.WaitGroup
+	log       utils.Logger
+	onInstall InstallCallback
+	onDestroy DestroyCallback
 
 	conns   *xsync.MapOf[string, *Peer]
 	listens *xsync.MapOf[string, net.Listener]
@@ -53,12 +55,14 @@ type Net struct {
 	TlsConfig *tls.Config
 }
 
-func NewNet(log utils.Logger, jack Jack) *Net {
+func NewNet(log utils.Logger, tlsConfig *tls.Config, install InstallCallback, destroy DestroyCallback) *Net {
 	return &Net{
-		log:     log,
-		jack:    jack,
-		conns:   xsync.NewMapOf[string, *Peer](),
-		listens: xsync.NewMapOf[string, net.Listener](),
+		log:       log,
+		conns:     xsync.NewMapOf[string, *Peer](),
+		listens:   xsync.NewMapOf[string, net.Listener](),
+		onInstall: install,
+		onDestroy: destroy,
+		TlsConfig: tlsConfig,
 	}
 }
 
@@ -226,9 +230,9 @@ func (n *Net) KeepListening(ctx context.Context, addr string) {
 }
 
 func (n *Net) keepPeer(ctx context.Context, name string, conn net.Conn) {
-	peer := &Peer{inout: n.jack(conn), conn: conn}
+	fullname := conn.RemoteAddr().String()
+	peer := &Peer{inout: n.onInstall(fullname), conn: conn}
 	n.conns.Store(name, peer)
-	defer n.conns.Delete(name)
 
 	readErr, wrireErr, closeErr := peer.Keep(ctx)
 	if readErr != nil {
@@ -240,6 +244,9 @@ func (n *Net) keepPeer(ctx context.Context, name string, conn net.Conn) {
 	if closeErr != nil {
 		n.log.Error("net: couldn't correct close peer", "name", name, "err", closeErr)
 	}
+
+	n.conns.Delete(name)
+	n.onDestroy(fullname)
 }
 
 func (n *Net) createListener(ctx context.Context, addr string) (net.Listener, error) {

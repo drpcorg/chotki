@@ -5,8 +5,8 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -172,18 +172,35 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		types: xsync.NewMapOf[rdx.ID, Fields](),
 	}
 
-	conno := 0
+	cho.net = protocol.NewNet(cho.log, opts.TlsConfig,
+		func(name string) protocol.FeedDrainCloser { // new connection
+			const outQueueLimit = 1 << 20
 
-	cho.net = protocol.NewNet(cho.log, func(conn net.Conn) protocol.FeedDrainCloser {
-		conno++
-		return &Syncer{
-			Host: &cho,
-			Mode: SyncRWLive,
-			Name: conn.RemoteAddr().String() + fmt.Sprintf("@%d", conno),
-			Log:  cho.log,
-		}
-	})
-	cho.net.TlsConfig = opts.TlsConfig
+			queue := utils.NewFDQueue[protocol.Records](outQueueLimit, time.Millisecond)
+			if q, loaded := cho.outq.LoadAndStore(name, queue); loaded && q != nil {
+				cho.log.Warn(fmt.Sprintf("closing the old conn to %s", name))
+				if err := q.Close(); err != nil {
+					cho.log.Error(fmt.Sprintf("couldn't close conn %s", name), "err", err)
+				}
+			}
+
+			return &Syncer{
+				Src:    cho.src,
+				Host:   &cho,
+				Mode:   SyncRWLive,
+				Name:   name,
+				log:    cho.log,
+				oqueue: queue,
+			}
+		},
+		func(name string) { // destroy connection
+			if q, deleted := cho.outq.LoadAndDelete(name); deleted && q != nil {
+				cho.log.Warn(fmt.Sprintf("closing the old conn to %s", name))
+				if err := q.Close(); err != nil {
+					cho.log.Error(fmt.Sprintf("couldn't close conn %s", name), "err", err)
+				}
+			}
+		})
 
 	cho.orm = NewORM(&cho, db.NewSnapshot())
 
@@ -366,30 +383,7 @@ func (cho *Chotki) RemoveAllHooks(fid rdx.ID) {
 	cho.hooks.Delete(fid)
 }
 
-func (cho *Chotki) AddPacketHose(name string) (feed protocol.FeedCloser) {
-	if q, deleted := cho.outq.LoadAndDelete(name); deleted && q != nil {
-		cho.log.Warn(fmt.Sprintf("closing the old conn to %s", name))
-		if err := q.Close(); err != nil {
-			cho.log.Error(fmt.Sprintf("couldn't close conn %s", name), "err", err)
-		}
-	}
-
-	queue := utils.NewFDQueue[protocol.Records](SyncOutQueueLimit, time.Millisecond)
-	cho.outq.Store(name, queue)
-	return queue
-}
-
-func (cho *Chotki) RemovePacketHose(name string) error {
-	if q, deleted := cho.outq.LoadAndDelete(name); deleted && q != nil {
-		cho.log.Warn(fmt.Sprintf("closing the old conn to %s", name))
-		if err := q.Close(); err != nil {
-			cho.log.Error(fmt.Sprintf("couldn't close conn %s", name), "err", err)
-		}
-	}
-	return nil
-}
-
-func (cho *Chotki) BroadcastPacket(records protocol.Records, except string) {
+func (cho *Chotki) Broadcast(records protocol.Records, except string) {
 	cho.outq.Range(func(name string, hose protocol.DrainCloser) bool {
 		if name != except {
 			if err := hose.Drain(records); err != nil {
@@ -416,7 +410,7 @@ func (cho *Chotki) CommitPacket(lit byte, ref rdx.ID, body protocol.Records) (id
 	packet := protocol.Record(lit, i, r, protocol.Join(body...))
 	recs := protocol.Records{packet}
 	err = cho.Drain(recs)
-	cho.BroadcastPacket(recs, "")
+	cho.Broadcast(recs, "")
 	return
 }
 
@@ -443,42 +437,36 @@ func (cho *Chotki) Drain(recs protocol.Records) (err error) {
 
 		pb, noApply := pebble.Batch{}, false
 
-		cho.log.Debug(string(lit), " packet, #", id.String())
+		cho.log.Debug("new packet", "type", string(lit), "packet", id.String())
 
 		switch lit {
 		case 'Y': // create replica log
-
 			if ref != rdx.ID0 {
 				return ErrBadYPacket
 			}
 			err = cho.ApplyOY('Y', id, ref, body, &pb)
 
 		case 'C': // create class
-
 			err = cho.ApplyC(id, ref, body, &pb)
 
 		case 'O': // create object
-
 			if ref == rdx.ID0 {
 				return ErrBadOPacket
 			}
 			err = cho.ApplyOY('O', id, ref, body, &pb)
 
 		case 'E': // edit object
-
 			if ref == rdx.ID0 {
 				return ErrBadEPacket
 			}
 			err = cho.ApplyE(id, ref, body, &pb, &calls)
 
 		case 'H': // handshake
-
 			d := cho.db.NewBatch()
 			cho.syncs.Store(id, d)
 			err = cho.ApplyH(id, ref, body, d)
 
 		case 'D': // diff
-
 			d, ok := cho.syncs.Load(id)
 			if !ok {
 				return ErrSyncUnknown
@@ -523,4 +511,45 @@ func (cho *Chotki) Drain(recs protocol.Records) (err error) {
 	}
 
 	return
+}
+
+func dumpKVString(key, value []byte) (str string) {
+	if len(key) == LidLKeyLen {
+		id, rdt := OKeyIdRdt(key)
+		str = fmt.Sprintf("%s.%c:\t%s", id, rdt, rdx.Xstring(rdt, value))
+	}
+	return
+}
+
+func (cho *Chotki) DumpObjects(writer io.Writer) {
+	io := pebble.IterOptions{
+		LowerBound: []byte{'O'},
+		UpperBound: []byte{'P'},
+	}
+	i := cho.db.NewIter(&io)
+	defer i.Close()
+	for i.SeekGE([]byte{'O'}); i.Valid(); i.Next() {
+		fmt.Fprintln(writer, dumpKVString(i.Key(), i.Value()))
+	}
+}
+
+func (cho *Chotki) DumpVV(writer io.Writer) {
+	io := pebble.IterOptions{
+		LowerBound: []byte{'V'},
+		UpperBound: []byte{'W'},
+	}
+	i := cho.db.NewIter(&io)
+	defer i.Close()
+	for i.SeekGE(VKey(rdx.ID0)); i.Valid(); i.Next() {
+		id := rdx.IDFromBytes(i.Key()[1:])
+		vv := make(rdx.VV)
+		_ = vv.PutTLV(i.Value())
+		fmt.Fprintln(writer, id.String(), " -> ", vv.String())
+	}
+}
+
+func (cho *Chotki) DumpAll(writer io.Writer) {
+	cho.DumpObjects(writer)
+	fmt.Fprintln(writer, "")
+	cho.DumpVV(writer)
 }

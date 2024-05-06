@@ -33,12 +33,12 @@ func TestChotki_Debug(t *testing.T) {
 	oid := rdx.IDFromSrcSeqOff(0x1e, 0x1ab, 0)
 	key := OKey(oid+1, 'I')
 	value := rdx.Itlv(-13)
-	str := ChotkiKVString(key, value)
+	str := dumpKVString(key, value)
 	assert.Equal(t, "1e-1ab-1.I:\t-13", string(str))
 
 	skey := OKey(oid+2, 'S')
 	svalue := rdx.Stlv("funny\tstring\n")
-	sstr := ChotkiKVString(skey, svalue)
+	sstr := dumpKVString(skey, svalue)
 	assert.Equal(t, "1e-1ab-2.S:\t\"funny\\tstring\\n\"", string(sstr))
 }
 
@@ -70,8 +70,8 @@ func TestChotki_Sync(t *testing.T) {
 	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B"})
 	assert.Nil(t, err)
 
-	synca := Syncer{Host: a, Mode: SyncRW, Name: "a", Log: utils.NewDefaultLogger(slog.LevelDebug)}
-	syncb := Syncer{Host: b, Mode: SyncRW, Name: "b", Log: utils.NewDefaultLogger(slog.LevelDebug)}
+	synca := Syncer{Host: a, Mode: SyncRW, Name: "a", log: utils.NewDefaultLogger(slog.LevelDebug)}
+	syncb := Syncer{Host: b, Mode: SyncRW, Name: "b", log: utils.NewDefaultLogger(slog.LevelDebug)}
 	err = protocol.Relay(&syncb, &synca)
 	assert.Nil(t, err)
 	err = protocol.Pump(&synca, &syncb)

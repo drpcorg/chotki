@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"log"
 	"log/slog"
-	"net"
 	"os"
 	"testing"
 	"time"
@@ -71,23 +70,18 @@ func TestTCPDepot_Connect(t *testing.T) {
 	log := utils.NewDefaultLogger(slog.LevelDebug)
 
 	lCon := utils.NewFDQueue[Records](16, time.Millisecond)
-	l := NewNet(log, func(conn net.Conn) FeedDrainCloser {
-		return lCon
-	})
+	l := NewNet(log, nil, func(_ string) FeedDrainCloser { return lCon }, func(_ string) { lCon.Close() })
 	l.TlsConfig = tlsConfig("a.chotki.local")
 
 	err := l.Listen(context.Background(), loop)
 	assert.Nil(t, err)
 
 	cCon := utils.NewFDQueue[Records](16, time.Millisecond)
-	c := NewNet(log, func(conn net.Conn) FeedDrainCloser {
-		return cCon
-	})
+	c := NewNet(log, nil, func(_ string) FeedDrainCloser { return cCon }, func(_ string) { cCon.Close() })
 	c.TlsConfig = tlsConfig("b.chotki.local")
 
 	err = c.Connect(context.Background(), loop)
 	assert.Nil(t, err)
-
 	time.Sleep(time.Second) // Wait connection, todo use events
 
 	// send a record

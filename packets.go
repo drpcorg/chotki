@@ -18,7 +18,6 @@ func (cho *Chotki) UpdateVTree(id, ref rdx.ID, pb *pebble.Batch) (err error) {
 }
 
 func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
-	// see Chotki.SyncPeer()
 	rest := body
 	var rdt byte
 	for len(rest) > 0 && err == nil {
