@@ -143,6 +143,7 @@ func (orm *ORM) Close() error {
 		return ErrClosed
 	}
 	orm.objects.Clear()
+	orm.ids.Clear()
 	orm.Host = nil
 	_ = orm.Snap.Close()
 	orm.Snap = nil

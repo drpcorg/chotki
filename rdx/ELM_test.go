@@ -7,6 +7,22 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestMap(t *testing.T) {
+	var correct = []byte{
+		0x6D, 0x15,
+		0x36, 0x03, 0x00, 0xaf, 0x00, 0x0b, 0x0b,
+		0x73, 0x04, 0x30, 0x4b, 0x65, 0x79,
+		0x73, 0x06, 0x30, 0x56, 0x61, 0x6c, 0x75, 0x65,
+	}
+	id := IDFromString("b0b-af0-3")
+	env2 := protocol.Record('M',
+		protocol.TinyRecord('I', id.ZipBytes()),
+		protocol.Record('S', protocol.TinyRecord('T', ZipIntUint64Pair(0, 0)), []byte("Key")),
+		protocol.Record('S', protocol.TinyRecord('T', ZipIntUint64Pair(0, 0)), []byte("Value")),
+	)
+	assert.Equal(t, correct, env2)
+}
+
 func TestEmerge(t *testing.T) {
 	tlv1 := Eparse("{1, 2, \"four\"}")
 	assert.Equal(t, "{1,2,\"four\"}", Estring(tlv1))

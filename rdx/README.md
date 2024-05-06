@@ -156,7 +156,7 @@ to produce `I{1,3}1 T{-4,4} I{2,3}2 I{3,3}3` or `[2,3]`.
 
 The string value for an array is like `[1,2,3]`
 
-### `V`
+### `V` Version vector
 
 [Version vector][v] is a way to track dataset versions in a
 causally ordered system. It is a vector of `seq` numbers, where
@@ -244,6 +244,35 @@ which has a separate bit-level [LEB128][b] coding for ints).
 
 id64 and logical timestamps get packed as pairs of uint64s. All
 zip codings are little-endian.
+
+##  Enveloping
+
+RDX values can be bare, enveloped or double-enveloped. We use
+bare values when we already know what field of what object we
+are dealing with and what RDT it belongs to. That might be the
+case when we read a value from a key-value storage where the key
+contains object id, field and RDT. In such a case, a bare
+Integer is like `{3,2}1` or `32 03 02 02`.
+
+Within a network packet, that integer may need to be
+single-enveloped: `I({3,2}1)` or `69 04 32 03 02 02` assuming
+the other metadata is known from the context. 
+
+A bare `ELM` or `NZ` value would only contain a sequence of
+single-enveloped `FIRST` values. To make that single-enveloped
+we only prepend a TLV header.
+
+In case we also have to convey the rest of the metadata, namely
+the object id and the field, we have to use the double-enveloped
+form. For a simple `map[string]string{"Key":"Value"}` that
+looks like: `M({b0b-af0-3} S({0,0}"Key") S({0,0}"Value"))` or
+`6D 15  36 03 00 af 00 0b 0b  73 04 30 4b 65 79  73 06 30 56 61 6c 75 65`.
+For `FIRST` values, there is no need to use two nested TLV
+records, so a double-enveloped Integer looks like:
+`I({b0b-af0-7}{3,2}1)`
+
+Object/fields ids are serialized as tiny `ZipUint64Pair`s.
+Revisions are serialized as tiny `ZipIntUint64Pair`s.
 
 [x]: https://en.wikipedia.org/wiki/Causal_consistency
 [v]: https://en.wikipedia.org/wiki/Version_vector
