@@ -364,8 +364,11 @@ func (sync *Syncer) Drain(recs protocol.Records) (err error) {
 			sync.Host.Broadcast(recs, sync.Name)
 		}
 
-	default:
+	case SendEOF, SendNone:
 		return ErrClosed
+
+	default:
+		panic("chotki: unacceptable sync-state")
 	}
 
 	if err != nil { // todo send the error msg
