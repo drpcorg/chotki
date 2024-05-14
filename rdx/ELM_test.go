@@ -23,6 +23,28 @@ func TestMap(t *testing.T) {
 	assert.Equal(t, correct, env2)
 }
 
+func TestMapConversions(t *testing.T) {
+	tt := MapTT{
+		"nil":   "false",
+		"true":  "false",
+		"false": "false",
+	}
+	tlv := MtlvTT(tt)
+	tt2 := MnativeTT(tlv)
+	assert.Equal(t, tt, tt2)
+	diff := MapTT{
+		"''":   "false",
+		"true": "true",
+	}
+	difftlv := MtlvTT(diff)
+	stamped := Restamp(difftlv, Time{1, 1})
+	// todo changes
+	mergedtlv := Mmerge(protocol.Records{tlv, stamped})
+	mergedtt := MnativeTT(mergedtlv)
+	assert.Equal(t, mergedtt["''"], "false")
+	assert.Equal(t, mergedtt["true"], "true")
+}
+
 func TestEmerge(t *testing.T) {
 	tlv1 := Eparse("{1, 2, \"four\"}")
 	assert.Equal(t, "{1,2,\"four\"}", Estring(tlv1))

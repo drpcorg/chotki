@@ -256,7 +256,7 @@ func Mparse(txt string) (tlv []byte) {
 func Mmerge(tlvs [][]byte) (merged []byte) {
 	ih := ItHeap[*MIterator]{}
 	for _, tlv := range tlvs {
-		ih.Push(&MIterator{it: FIRSTIterator{TLV: tlv}})
+		ih.Push(&MIterator{Val: FIRSTIterator{TLV: tlv}})
 	}
 	for ih.Len() > 0 {
 		merged = append(merged, ih.Next()...)
@@ -289,12 +289,35 @@ func MnativeTR(tlv []byte) MapTR {
 		if !it.Next() {
 			break
 		}
+		if len(it.val) == 0 { // removed
+			continue
+		}
 		valrdt, _, val := it.ParsedValue()
 		if keyrdt != Term || valrdt != Reference {
 			continue
 		}
 		id := IDFromZipBytes(val)
 		ret[string(key)] = id
+	}
+	return ret
+}
+
+func MnativeSS(tlv []byte) MapSS {
+	ret := make(MapSS)
+	it := FIRSTIterator{TLV: tlv}
+	for it.Next() {
+		keyrdt, _, key := it.ParsedValue()
+		if !it.Next() {
+			break
+		}
+		if len(it.val) == 0 { // removed
+			continue
+		}
+		valrdt, _, val := it.ParsedValue()
+		if keyrdt != String || valrdt != String {
+			continue
+		}
+		ret[string(key)] = string(val)
 	}
 	return ret
 }
@@ -316,6 +339,7 @@ func MparseTR(arg *RDX) MapTR {
 
 type MapTR map[string]ID
 type MapTT map[string]string
+type MapSS map[string]string
 
 func (m MapTR) String() string {
 	var keys []string
@@ -335,25 +359,148 @@ func (m MapTR) String() string {
 	return string(ret)
 }
 
+func MtlvTR(nat MapTR) (tlv []byte) {
+	pairs := protocol.Records{}
+	rev0 := []byte{'0'}
+	for k, v := range nat {
+		rec := []byte{}
+		rec = protocol.Append(rec, 'T', rev0, []byte(k))
+		rec = protocol.Append(rec, 'R', rev0, v.ZipBytes())
+		pairs = append(pairs, rec)
+	}
+	valueOrderUnstampedFirsts(pairs)
+	return protocol.Join(pairs...)
+}
+
+func valueOrderUnstampedFirsts(recs protocol.Records) {
+	slices.SortFunc(recs, func(a, b []byte) int {
+		return bytes.Compare(a[2:], b[2:])
+	})
+}
+
+func MtlvTT(mtt MapTT) (tlv []byte) {
+	pairs := protocol.Records{}
+	rev0 := []byte{'0'}
+	for k, v := range mtt {
+		rec := []byte{}
+		rec = protocol.Append(rec, 'T', rev0, []byte(k))
+		rec = protocol.Append(rec, 'T', rev0, []byte(v))
+		pairs = append(pairs, rec)
+	}
+	valueOrderUnstampedFirsts(pairs)
+	return protocol.Join(pairs...)
+}
+
+func MtlvSS(m MapSS) (tlv []byte) {
+	pairs := protocol.Records{}
+	rev0 := []byte{'0'}
+	for k, v := range m {
+		rec := []byte{}
+		rec = protocol.Append(rec, 'S', rev0, []byte(k))
+		rec = protocol.Append(rec, 'S', rev0, []byte(v))
+		pairs = append(pairs, rec)
+	}
+	valueOrderUnstampedFirsts(pairs)
+	return protocol.Join(pairs...)
+
+}
+
+func MtlvII(nat MapTT) (tlv []byte) {
+	return nil
+}
+
+func NextRev(revz uint64) (next int64) {
+	next = ZagZigUint64(revz)
+	if next < 0 {
+		next = -next
+	}
+	next++
+	return
+}
+
+func Mdelta(tlv []byte, new_tlv []byte) (tlv_delta []byte) {
+	oldit := MIterator{Val: FIRSTIterator{TLV: tlv}}
+	newit := MIterator{Val: FIRSTIterator{TLV: new_tlv}}
+	oldok := oldit.Next()
+	newok := newit.Next()
+	for oldok {
+		for newok && FIRSTcompare(oldit.Key.one, newit.Key.one) > 0 {
+			tlv_delta = append(tlv_delta, newit.both...)
+			newok = newit.Next()
+		}
+		if newok && FIRSTcompare(oldit.Key.one, newit.Key.one) == 0 {
+			if FIRSTcompare(oldit.Val.one, newit.Val.one) != 0 {
+				newrev := NextRev(oldit.Val.revz)
+				tlv_delta = append(tlv_delta, protocol.Record(oldit.Key.lit, FIRSTtlv(newrev, 0, oldit.Key.val))...)
+				tlv_delta = append(tlv_delta, protocol.Record(newit.Val.lit, FIRSTtlv(newrev, 0, newit.Val.val))...)
+			}
+			oldok = oldit.Next()
+			newok = newit.Next()
+		} else {
+			if len(oldit.Val.val) > 0 {
+				newrev := NextRev(oldit.Val.revz)
+				tlv_delta = append(tlv_delta, protocol.Record(oldit.Key.lit, FIRSTtlv(newrev, 0, oldit.Key.val))...)
+				tlv_delta = append(tlv_delta, protocol.Record(oldit.Val.lit, FIRSTtlv(newrev, 0, []byte{}))...)
+			}
+			oldok = oldit.Next()
+		}
+	}
+	for newok {
+		if len(newit.Val.val) > 0 {
+			tlv_delta = append(tlv_delta, newit.both...)
+		}
+		newok = newit.Next()
+	}
+	return
+}
+
+// Given a TLV of *changed* key-value pairs, produce a delta
+func Mdelta2(tlv []byte, changes []byte) (tlv_delta []byte) {
+	oldit := MIterator{Val: FIRSTIterator{TLV: tlv}}
+	newit := MIterator{Val: FIRSTIterator{TLV: changes}}
+	oldok := oldit.Next()
+	newok := newit.Next()
+	for oldok {
+		for newok && FIRSTcompare(oldit.Key.one, newit.Key.one) > 0 {
+			tlv_delta = append(tlv_delta, newit.both...)
+			newok = newit.Next()
+		}
+		if newok && FIRSTcompare(oldit.Key.one, newit.Key.one) == 0 {
+			if FIRSTcompare(oldit.Val.one, newit.Val.one) != 0 {
+				newrev := NextRev(oldit.Val.revz)
+				tlv_delta = append(tlv_delta, protocol.Record(oldit.Key.lit, FIRSTtlv(newrev, 0, oldit.Key.val))...)
+				tlv_delta = append(tlv_delta, protocol.Record(newit.Val.lit, FIRSTtlv(newrev, 0, newit.Val.val))...)
+			}
+			oldok = oldit.Next()
+			newok = newit.Next()
+		} else {
+			oldok = oldit.Next()
+		}
+	}
+	for newok {
+		if len(newit.Val.val) > 0 {
+			tlv_delta = append(tlv_delta, newit.both...)
+		}
+		newok = newit.Next()
+	}
+	return
+}
+
 // produce an op that turns the old value into the new one
 func MdeltaTR(tlv []byte, changes MapTR, clock Clock) (tlv_delta []byte) {
-	it := MIterator{it: FIRSTIterator{TLV: tlv}}
+	it := MIterator{Val: FIRSTIterator{TLV: tlv}}
 	for it.Next() {
-		if it.lit != Term {
+		if it.Key.lit != Term {
 			continue
 		}
-		change, ok := changes[string(it.val)]
-		if !ok {
+		change, ok := changes[string(it.Key.val)]
+		if !ok { // todo compare
 			continue
 		}
-		new_rev := ZagZigUint64(it.revz)
-		if new_rev < 0 {
-			new_rev = -new_rev
-		}
-		new_rev++
-		tlv_delta = append(tlv_delta, protocol.Record(Term, FIRSTtlv(new_rev, 0, it.val))...)
+		new_rev := NextRev(it.Val.revz)
+		tlv_delta = append(tlv_delta, protocol.Record(Term, FIRSTtlv(new_rev, 0, it.Val.val))...)
 		tlv_delta = append(tlv_delta, protocol.Record(Reference, FIRSTtlv(new_rev, 0, change.ZipBytes()))...)
-		delete(changes, string(it.val))
+		delete(changes, string(it.Val.val)) // fixme
 	}
 	for key, val := range changes {
 		tlv_delta = append(tlv_delta, protocol.Record(Term, Ttlv(key))...)
@@ -372,42 +519,37 @@ func Mdiff(tlv []byte, vvdiff VV) []byte {
 }
 
 type MIterator struct {
-	it   FIRSTIterator
-	keye []byte
-	val  []byte
-	src  uint64
-	revz uint64
-	lit  byte
-	pair []byte
+	Key, Val FIRSTIterator
+	both     []byte
 }
 
 func (a *MIterator) Next() (got bool) {
-	tlv := a.it.TLV
-	got = a.it.Next() // skip value
-	a.keye = a.it.one
-	a.val = a.it.val
-	a.src = a.it.src
-	a.revz = a.it.revz
-	a.lit = a.it.lit
-	if got {
-		got = a.it.Next()
+	a.both = a.Val.TLV
+	if !a.Val.Next() {
+		a.both = nil
+		return false
 	}
-	a.pair = tlv[:len(tlv)-len(a.it.TLV)]
-	return
+	a.Key = a.Val
+	if !a.Val.Next() {
+		a.both = nil
+		return false
+	}
+	a.both = a.both[:len(a.both)-len(a.Val.TLV)]
+	return true
 }
 
 func (a *MIterator) Merge(b SortedIterator) int {
 	bb := b.(*MIterator)
-	cmp := FIRSTcompare(a.keye, bb.keye)
+	cmp := FIRSTcompare(a.Key.one, bb.Key.one)
 	if cmp < 0 {
 		return MergeAB
 	} else if cmp > 0 {
 		return MergeBA
-	} else if a.revz < bb.revz {
+	} else if a.Key.revz < bb.Key.revz {
 		return MergeB
-	} else if a.revz > bb.revz {
+	} else if a.Key.revz > bb.Key.revz {
 		return MergeA
-	} else if a.src < bb.src {
+	} else if a.Key.src < bb.Key.src {
 		return MergeB
 	} else {
 		return MergeA
@@ -416,7 +558,7 @@ func (a *MIterator) Merge(b SortedIterator) int {
 }
 
 func (a *MIterator) Value() []byte {
-	return a.pair
+	return a.both
 }
 
 // L is an array of any FIRST elements

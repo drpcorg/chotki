@@ -652,7 +652,7 @@ var HelpName = errors.New("name, name Obj, name {Obj: b0b-12-1}")
 func (repl *REPL) CommandName(arg *rdx.RDX) (id rdx.ID, err error) {
 	id = rdx.BadId
 	var names rdx.MapTR
-	names, err = repl.Host.ObjectFieldMapTermId(chotki.IdNames)
+	names, err = repl.Host.MapTRField(chotki.IdNames)
 	if err != nil {
 		return
 	}

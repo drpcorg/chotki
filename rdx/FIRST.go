@@ -526,3 +526,12 @@ func Tvalid(tlv []byte) bool {
 func Tdiff(tlv []byte, vvdiff VV) []byte {
 	return DiffFIRST(tlv, vvdiff)
 }
+
+func Restamp(first []byte, time Time) (stamped []byte) {
+	it := FIRSTIterator{TLV: first}
+	stamp := protocol.TinyRecord('T', time.ZipBytes())
+	for it.Next() {
+		stamped = protocol.Append(stamped, it.lit, stamp, it.val)
+	}
+	return
+}

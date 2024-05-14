@@ -23,6 +23,7 @@ issues:
     - path: '(.+)\.ragel\.go'
       linters:
         - ineffassign
+        - unused
     - linters:
         - staticcheck
       text: "SA1019:"

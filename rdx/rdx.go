@@ -119,4 +119,4 @@ func (rdx *RDX) Feed() (recs protocol.Records, err error) {
 	return
 }
 
-//go:generate ragel-go -o rdx.ragel.go rdx.rl
+//go:generate ragel -Z -o rdx.ragel.go rdx.rl

@@ -22,6 +22,7 @@ type REPL struct {
 
 var ErrBadPath = errors.New("bad path")
 
+// todo synchronize these automatically, maybe use a script
 var completer = readline.NewPrefixCompleter(
 	readline.PcItem("help"),
 
