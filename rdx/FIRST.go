@@ -23,7 +23,7 @@ func ParseFIRST(bulk []byte) (rev int64, src uint64, value []byte) {
 	return
 }
 
-// same as ParseFIRST, but the rev number is zigzagged
+// same as ParseFIRST, but the Rev number is zigzagged
 func FIRSTparsez(bulk []byte) (zrev uint64, src uint64, value []byte) {
 	lit, hlen, blen := protocol.ProbeHeader(bulk)
 	if lit != 'T' && lit != '0' || hlen+blen > len(bulk) {
@@ -52,9 +52,13 @@ func ParseEnvelopedFIRST(data []byte) (lit byte, t Time, value, rest []byte, err
 		return
 	}
 	tsb := rec[thlen:tlen]
-	t.rev, t.src = UnzipIntUint64Pair(tsb)
+	t.Rev, t.Src = UnzipIntUint64Pair(tsb)
 	value = rec[tlen:]
 	return
+}
+
+func IsFirst(c byte) bool {
+	return c == Float || c == Integer || c == Reference || c == String || c == Term
 }
 
 func FIRSTtlv(rev int64, src uint64, value []byte) (bulk []byte) {
@@ -119,7 +123,7 @@ var ErrBadPacket = errors.New("bad packet")
 
 func SetTimeFIRST(bare []byte, t Time) (res []byte) {
 	_, _, value := ParseFIRST(bare)
-	res = FIRSTtlv(t.rev, t.src, value)
+	res = FIRSTtlv(t.Rev, t.Src, value)
 	return
 }
 
@@ -330,7 +334,7 @@ func Sparset(txt string, t Time) (tlv []byte) {
 	}
 	unq := txt[1 : len(txt)-1]
 	unesc, _ := Unescape([]byte(unq), nil)
-	return FIRSTtlv(t.rev, t.src, unesc)
+	return FIRSTtlv(t.Rev, t.Src, unesc)
 }
 
 // parse a text form into a TLV value; nil on error

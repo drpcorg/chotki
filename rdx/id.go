@@ -238,8 +238,8 @@ func readIDFromString(idstr []byte) (ID, []byte) {
 	case 0: // off
 		parts[2] = parts[0]
 		parts[0] = 0
-	case 1: // src-seq
-	case 2: // src-seq-off
+	case 1: // Src-seq
+	case 2: // Src-seq-off
 	case 3:
 		return BadId, rest
 	}

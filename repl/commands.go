@@ -145,32 +145,45 @@ var HelpClass = errors.New(
 func (repl *REPL) CommandClass(arg *rdx.RDX) (id rdx.ID, err error) {
 	id = rdx.BadId
 	err = HelpClass
-	if arg == nil || arg.RdxType != rdx.Mapping || len(arg.Nested) < 2 {
+	if arg == nil {
+		return
+	} else if arg.RdxType == rdx.Mapping {
+		fields := arg.Nested
+		parent := rdx.ID0
+		decl := protocol.Records{}
+		n := int64(1)
+		for i := 0; i+1 < len(fields); i += 2 {
+			key := fields[i]
+			val := fields[i+1]
+			if string(key.Text) == "_ref" {
+				if val.RdxType != rdx.Reference || parent != rdx.ID0 {
+					return
+				}
+				parent = rdx.IDFromText(val.Text)
+				continue
+			}
+			if key.RdxType != rdx.Term || val.RdxType != rdx.Term {
+				return
+			}
+			if len(val.Text) != 1 || val.Text[0] > 'Z' || val.Text[0] < 'A' {
+				return // todo support typed containers, e.g. MSS
+			}
+			desc := append([]byte{}, val.Text[0])
+			desc = append(desc, key.Text...)
+			tok := rdx.FIRSTtlv(n, 0, desc)
+			decl = append(decl, protocol.Record('T', tok))
+			n++
+		}
+		id, err = repl.Host.CommitPacket('C', parent, decl)
+	} else { // todo array
 		return
 	}
-	fields := arg.Nested
-	for i := 0; i+1 < len(fields); i += 2 {
-		key := fields[i]
-		val := fields[i+1]
-		if string(key.Text) == "_ref" {
-			continue
-		}
-		if key.RdxType != rdx.Term || val.RdxType != rdx.Term {
-			return
-		}
-		// TODO more checks
-	}
-	parent := rdx.ID0
-	if string(fields[0].Text) == "_ref" {
-		if fields[1].RdxType != rdx.Reference {
-			return
-		}
-		parent = rdx.IDFromText(fields[1].Text)
-		fields = fields[2:]
-	}
-	tlvs := rdx.FIRSTrdxs2tlvs(fields)
-	id, err = repl.Host.CommitPacket('C', parent, tlvs)
 	return
+}
+
+func (repl *REPL) CommandXClass(arg *rdx.RDX) (id rdx.ID, err error) {
+	// todo
+	return rdx.BadId, nil
 }
 
 var ErrBadArgs = errors.New("bad arguments")
@@ -211,7 +224,7 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 			}
 			name := pairs[i].String()
 			value := &pairs[i+1]
-			ndx := fields.Find(name) //fixme rdt
+			ndx := fields.FindName(name) //fixme rdt
 			if ndx == -1 {
 				err = fmt.Errorf("unknown field %s\n", name)
 				return

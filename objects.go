@@ -52,12 +52,17 @@ func VKeyId(key []byte) rdx.ID {
 // When stored, a class is an append-only sequence of Ts.
 // The syntax for each T: "XName", where X is the RDT.
 // For the map types, can use "MSS_Name" or similar.
+// Each field has an Offset. The Offset+RdxType pair is the
+// *actual key* for the field in the database.
+// Entries having identical Offset+RdxType are considered *renames*!
 type Field struct {
+	Offset     int64
 	Name       string
 	RdxType    byte
 	RdxTypeExt []byte
 }
 
+// Fields
 type Fields []Field
 
 func (f Field) Valid() bool {
@@ -71,7 +76,25 @@ func (f Field) Valid() bool {
 		len(f.Name) > 0 && utf8.ValidString(f.Name))
 }
 
-func (f Fields) Find(name string) (ndx int) {
+func (fs Fields) MaxOffset() (off int64) {
+	for _, f := range fs {
+		if f.Offset > off {
+			off = f.Offset
+		}
+	}
+	return
+}
+
+func (f Fields) FindRdtOff(rdx byte, off int64) int {
+	for i := 0; i < len(f); i++ {
+		if f[i].RdxType == rdx && f[i].Offset == off {
+			return i
+		}
+	}
+	return -1
+}
+
+func (f Fields) FindName(name string) (ndx int) { // fixme double naming?
 	for i := 0; i < len(f); i++ {
 		if f[i].Name == name {
 			return i
@@ -112,7 +135,9 @@ func (cho *Chotki) ObjectIterator(oid rdx.ID, snap *pebble.Snapshot) *pebble.Ite
 	return nil
 }
 
-// todo []Field -> map[uint64]Field
+// todo note that the class may change as the program runs; in such a case
+// if the class fields are already cached, the current session will not
+// understand the new fields!
 func (cho *Chotki) ClassFields(cid rdx.ID) (fields Fields, err error) {
 	if fields, ok := cho.types.Load(cid); ok {
 		return fields, nil
@@ -124,30 +149,24 @@ func (cho *Chotki) ClassFields(cid rdx.ID) (fields Fields, err error) {
 		return nil, ErrTypeUnknown
 	}
 	it := rdx.FIRSTIterator{TLV: tlv}
-	if !it.Next() {
-		return nil, ErrBadClass
-	}
-	rr, _, rv := it.ParsedValue()
-	if rr != rdx.Term || string(rv) != "_ref" || !it.Next() {
-		return nil, ErrBadClass
-	}
-	pr, _, pv := it.ParsedValue()
-	if pr != rdx.Reference {
-		return nil, ErrBadClass
-	}
-	fields = append(fields, Field{Name: "_ref", RdxType: rdx.Reference})
-	_ = pv // todo recur
+	fields = append(fields, Field{ // todo inheritance
+		Offset:  0,
+		Name:    "_ref",
+		RdxType: rdx.Reference,
+	})
 	for it.Next() {
-		lit, _, name := it.ParsedValue()
-		if lit != rdx.Term || len(name) == 0 || !it.Next() {
+		lit, t, name := it.ParsedValue()
+		if lit != rdx.Term || len(name) == 0 {
 			break // todo unique names etc
 		}
-		lit2, _, rdt := it.ParsedValue()
-		if lit2 != rdx.Term || len(rdt) == 0 {
-			break
+		rdt := rdx.String
+		if name[0] >= 'A' && name[0] <= 'Z' {
+			rdt = name[0]
+			name = name[1:]
 		}
 		fields = append(fields, Field{
-			RdxType: rdt[0],
+			Offset:  t.Rev,
+			RdxType: rdt,
 			Name:    string(name),
 		})
 	}
@@ -192,23 +211,19 @@ func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact proto
 
 	tid = rdx.IDFromZipBytes(it.Value())
 	decl, err = cho.ClassFields(tid)
+	fact = make(protocol.Records, len(decl))
 	if err != nil {
 		return
 	}
 	fact = append(fact, it.Value())
 	for it.Next() {
 		id, rdt := OKeyIdRdt(it.Key())
-		off := int(id.Off())
-		if off == 0 || off >= len(decl) {
+		off := int64(id.Off())
+		ndx := decl.FindRdtOff(rdt, off)
+		if ndx == -1 {
 			continue
 		}
-		if decl[off].RdxType != rdt {
-			continue
-		}
-		for off > len(fact) {
-			fact = append(fact, nil)
-		}
-		fact = append(fact, it.Value())
+		fact[ndx] = it.Value()
 	}
 	return
 }
@@ -239,6 +254,7 @@ func FieldOffset(fields []string, name string) rdx.ID {
 	return 0
 }
 
+// ObjectFieldTLV picks one field fast. No class checks, etc.
 func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) {
 	db := cho.db
 	if db == nil {
@@ -263,14 +279,22 @@ func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) 
 
 func (cho *Chotki) NewClass(parent rdx.ID, fields ...Field) (id rdx.ID, err error) {
 	var fspecs protocol.Records
-	//fspecs = append(fspecs, protocol.Record('A', parent.ZipBytes()))
+	maxidx := int64(-1)
 	for _, field := range fields {
+		if field.Offset > maxidx {
+			maxidx = field.Offset
+		} else if field.Offset == 0 {
+			maxidx++
+			field.Offset = maxidx
+		}
 		if !field.Valid() {
 			return rdx.BadId, ErrBadTypeDescription
 		}
-		fspecs = append(fspecs, protocol.Record('T', rdx.Ttlv(field.Name)))
-		fspecs = append(fspecs, protocol.Record('T', rdx.Ttlv(string(field.RdxType))))
+		name := append([]byte{}, field.RdxType)
+		name = append(name, field.Name...)
+		fspecs = append(fspecs, protocol.Record('T', rdx.FIRSTtlv(maxidx, 0, name)))
 	}
+	//head := protocol.AppendHeader(nil) fspecs.TotalLen()
 	return cho.CommitPacket('C', parent, fspecs)
 }
 
@@ -300,6 +324,7 @@ func (cho *Chotki) NewObject(tid rdx.ID, fields ...string) (id rdx.ID, err error
 	return cho.NewObjectTLV(tid, packet)
 }
 
+// Deprecated: does not handle non-trivial cases
 func (cho *Chotki) EditObject(oid rdx.ID, fields ...string) (id rdx.ID, err error) {
 	formula, err := cho.ClassFields(oid)
 	if err != nil {
@@ -372,7 +397,7 @@ func (cho *Chotki) EditObjectRDX(oid rdx.ID, pairs []rdx.RDX) (id rdx.ID, err er
 		}
 		name := pairs[i].String()
 		value := &pairs[i+1]
-		ndx := form.Find(name)
+		ndx := form.FindName(name)
 		if ndx == -1 {
 			err = fmt.Errorf("unknown field %s", name)
 			return

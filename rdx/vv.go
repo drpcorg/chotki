@@ -19,7 +19,7 @@ func (vv VV) Set(src, pro uint64) {
 	vv[src] = pro
 }
 
-// Put the src-pro pair to the VV, returns whether it was
+// Put the Src-pro pair to the VV, returns whether it was
 // unseen (i.e. made any difference)
 func (vv VV) Put(src, pro uint64) bool {
 	pre, ok := vv[src]

@@ -43,8 +43,10 @@ func FIRSTparsee(rdt byte, val string) (tlv []byte) {
 
 func Xmerge(rdt byte, tlvs [][]byte) (tlv []byte) {
 	switch rdt {
-	case 'C', 'O', 'Y': // object's ref is immutable
-		tlv = COLAmerge(tlvs)
+	case 'O', 'Y': // object's ref is immutable
+		tlv = NOmerge(tlvs)
+	case 'C':
+		tlv = Amerge(tlvs)
 	case 'F':
 		tlv = Fmerge(tlvs)
 	case 'I':
@@ -194,7 +196,7 @@ func COYdefault() []byte {
 	return ID0.ZipBytes()
 }
 
-func COLAmerge(inputs [][]byte) []byte {
+func NOmerge(inputs [][]byte) []byte {
 	return inputs[0]
 }
 

@@ -57,13 +57,9 @@ func (cho *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 }
 
 func (cho *Chotki) ApplyC(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
-	desc := make([]byte, 0, len(body)+32)
-	desc = append(desc, protocol.Record('T', rdx.Ttlv("_ref"))...)
-	desc = append(desc, protocol.Record('R', rdx.Rtlv(ref))...)
-	desc = append(desc, body...)
 	err = batch.Merge(
 		OKey(id, 'C'),
-		desc,
+		body,
 		&pebbleWriteOptions)
 	return
 }

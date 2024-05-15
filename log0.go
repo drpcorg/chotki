@@ -28,12 +28,11 @@ var Log0 = protocol.Records{
 	protocol.Record('C',
 		protocol.Record('I', id1.ZipBytes()),     // identifier, `src-0`
 		protocol.Record('R', rdx.ID0.ZipBytes()), // reference, `0-0`
-		protocol.Record('T', rdx.Ttlv("Names")),  // global-scope names
-		protocol.Record('T', rdx.Ttlv("M")),
-		protocol.Record('T', rdx.Ttlv("Nodes")), // replica addresses
-		protocol.Record('T', rdx.Ttlv("M")),
-		protocol.Record('T', rdx.Ttlv("NodeInfo")), // replica addresses
-		protocol.Record('T', rdx.Ttlv("M")),
+		rdx.Atlv(rdx.LogT{
+			"MNames", // global-scope names
+			"MNodes", // replica addresses
+			"MNodeInfo",
+		}),
 	),
 	protocol.Record('O',
 		protocol.Record('I', id2.ZipBytes()),

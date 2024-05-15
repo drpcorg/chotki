@@ -232,7 +232,7 @@ func (orm *ORM) Load(id rdx.ID, blanc NativeObject) (obj NativeObject, err error
 	return blanc, nil
 }
 
-// Find a registered object for the id. nil if none.
+// Find a registered object given its id. nil if none.
 func (orm *ORM) Object(id rdx.ID) (obj NativeObject) {
 	obj, _ = orm.objects.Load(id)
 	return // todo

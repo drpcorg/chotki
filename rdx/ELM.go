@@ -10,12 +10,12 @@ import (
 )
 
 type Time struct {
-	rev int64
-	src uint64
+	Rev int64
+	Src uint64
 }
 
 func (t Time) Time64() uint64 {
-	return (ZigZagInt64(t.rev) << SrcBits) | t.src
+	return (ZigZagInt64(t.Rev) << SrcBits) | t.Src
 }
 
 const srcMask = (uint64(1) << SrcBits) - 1
@@ -25,16 +25,16 @@ func Time64FromRevzSrc(revz, src uint64) uint64 {
 }
 
 func TimeFrom64(t64 uint64) Time {
-	return Time{rev: ZagZigUint64(t64 >> SrcBits), src: t64 & srcMask}
+	return Time{Rev: ZagZigUint64(t64 >> SrcBits), Src: t64 & srcMask}
 }
 
 func (t Time) ZipBytes() []byte {
-	return ZipIntUint64Pair(t.rev, t.src)
+	return ZipIntUint64Pair(t.Rev, t.Src)
 }
 
 func TimeFromZipBytes(zip []byte) (t Time) {
 	// todo bad data
-	t.rev, t.src = UnzipIntUint64Pair(zip)
+	t.Rev, t.Src = UnzipIntUint64Pair(zip)
 	return
 }
 
@@ -56,7 +56,7 @@ func MelReSource(first []byte, src uint64) (ret []byte, err error) {
 		if err != nil {
 			return
 		}
-		if time.src != src {
+		if time.Src != src {
 			ret = make([]byte, at, len(first)*2)
 			copy(ret, first[:at])
 			break
@@ -66,7 +66,7 @@ func MelReSource(first []byte, src uint64) (ret []byte, err error) {
 		return first, nil
 	}
 	for err == nil {
-		time.src = src
+		time.Src = src
 		ret = MelAppend(ret, lit, time, body)
 		if len(rest) == 0 {
 			break

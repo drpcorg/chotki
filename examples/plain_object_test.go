@@ -10,6 +10,7 @@ import (
 )
 
 func TestPlainObjectORM(t *testing.T) {
+	_ = os.RemoveAll("cho10")
 	defer os.RemoveAll("cho10")
 
 	a, err := chotki.Open("cho10", chotki.Options{Src: 0x10, Name: "test replica A"})
