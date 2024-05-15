@@ -45,10 +45,20 @@ func VKeyId(key []byte) rdx.ID {
 	return rdx.IDFromBytes(key[1:])
 }
 
+// A class contains a number of fields. Each Field has
+// some RDT type. A class can inherit another class.
+// New fields can be appended to a class, but never removed.
+// Max number of fields is 128, max inheritance depth 32.
+// When stored, a class is an append-only sequence of Ts.
+// The syntax for each T: "XName", where X is the RDT.
+// For the map types, can use "MSS_Name" or similar.
 type Field struct {
-	Name    string
-	RdxType byte
+	Name       string
+	RdxType    byte
+	RdxTypeExt []byte
 }
+
+type Fields []Field
 
 func (f Field) Valid() bool {
 	for _, l := range f.Name { // has unsafe chars
@@ -60,8 +70,6 @@ func (f Field) Valid() bool {
 	return (f.RdxType >= 'A' && f.RdxType <= 'Z' &&
 		len(f.Name) > 0 && utf8.ValidString(f.Name))
 }
-
-type Fields []Field
 
 func (f Fields) Find(name string) (ndx int) {
 	for i := 0; i < len(f); i++ {
