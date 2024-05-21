@@ -213,6 +213,8 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			protocol.Record('I', id0.ZipBytes()),
 			protocol.Record('R', rdx.ID0.ZipBytes()),
 			protocol.Record('S', rdx.Stlv(opts.Name)),
+			protocol.Record('M', []byte{}),
+			protocol.Record('S', rdx.Stlv("")),
 		))
 
 		if err = cho.Drain(init); err != nil {
@@ -267,6 +269,25 @@ func (cho *Chotki) Close() error {
 	cho.last = rdx.ID0
 
 	return nil
+}
+
+func (cho *Chotki) KeepAlive() error {
+	oid := rdx.IDfromSrcPro(cho.src, 0)
+	_, oldvv, err := cho.ObjectFieldTLV(oid.ToOff(YAckOff))
+	if err != nil {
+		return err
+	}
+	newvv, err := cho.VersionVector()
+	if err != nil {
+		return err
+	}
+	tlv_delta := rdx.Vdelta(oldvv, newvv)
+	d := protocol.Records{
+		protocol.Record('F', rdx.ZipUint64(2)),
+		protocol.Record('M', tlv_delta),
+	}
+	_, err = cho.CommitPacket('E', oid, d)
+	return err
 }
 
 // ToyKV convention key, lit O, then O00000-00000000-000 id

@@ -61,6 +61,9 @@ func (cho *Chotki) ApplyC(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 		OKey(id, 'C'),
 		body,
 		&pebbleWriteOptions)
+	if err == nil {
+		err = cho.UpdateVTree(id, ref, batch)
+	}
 	return
 }
 

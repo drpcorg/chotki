@@ -277,6 +277,21 @@ func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) 
 	return
 }
 
+func (cho *Chotki) ObjectVVField(fid rdx.ID) (vv rdx.VV, err error) {
+	var rdt byte
+	var tlv []byte
+	rdt, tlv, err = cho.ObjectFieldTLV(fid)
+	if err != nil {
+		return
+	}
+	if rdt != rdx.VVector {
+		return nil, ErrWrongFieldType
+	}
+	vv = make(rdx.VV)
+	err = vv.PutTLV(tlv)
+	return
+}
+
 func (cho *Chotki) NewClass(parent rdx.ID, fields ...Field) (id rdx.ID, err error) {
 	var fspecs protocol.Records
 	maxidx := int64(-1)

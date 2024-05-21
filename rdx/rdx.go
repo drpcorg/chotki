@@ -20,6 +20,7 @@ const (
 	Eulerian  = byte('E')
 	Linear    = byte('L')
 	Mapping   = byte('M')
+	VVector   = byte('V')
 )
 
 type RDX struct {

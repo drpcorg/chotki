@@ -77,8 +77,8 @@ func (id ID) Off() uint64 {
 	return uint64(id & OffMask)
 }
 
-func (id ID) ToOff(newoff ID) ID {
-	return (id & ^OffMask) | (newoff & OffMask)
+func (id ID) ToOff(newoff uint64) ID {
+	return (id & ^OffMask) | (ID(newoff) & OffMask)
 }
 
 // Src is the replica id. That is normally a small number.
