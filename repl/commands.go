@@ -65,6 +65,7 @@ func (repl *REPL) CommandCreate(arg *rdx.RDX) (id rdx.ID, err error) {
 		Name:    name,
 		Options: pebble.Options{ErrorIfExists: true},
 	})
+	go repl.Host.KeepAliveLoop()
 	if err == nil {
 		id = repl.Host.Last()
 	}
@@ -89,6 +90,7 @@ func (repl *REPL) CommandOpen(arg *rdx.RDX) (rdx.ID, error) {
 	if err != nil {
 		return rdx.BadId, err
 	}
+	go repl.Host.KeepAliveLoop()
 
 	return repl.Host.Last(), nil
 }
@@ -704,6 +706,35 @@ func (repl *REPL) CommandValid(arg *rdx.RDX) (id rdx.ID, err error) {
 		}
 	}
 	_ = it.Close()
+	return rdx.ID0, nil
+}
+
+var HelpWhoSaw = errors.New("whosaw b0b-2}")
+
+func (repl *REPL) CommandWhoSaw(arg *rdx.RDX) (id rdx.ID, err error) {
+	if arg == nil || arg.RdxType != rdx.Reference {
+		return rdx.BadId, HelpWhoSaw
+	}
+	var vv rdx.VV
+	vv, err = repl.Host.VersionVector()
+	if err != nil {
+		return
+	}
+	idq := rdx.IDFromText(arg.Text)
+	for src := range vv {
+		oid := rdx.IDfromSrcPro(src, chotki.YAckOff)
+		var tlv []byte
+		tlv, err = repl.Host.ObjectRDTFieldTLV(oid, 'V')
+		if err != nil {
+			continue
+		}
+		revv := make(rdx.VV)
+		_ = revv.PutTLV(tlv)
+		pro := revv[idq.Src()]
+		if pro >= idq.Pro() {
+			fmt.Println(rdx.IDfromSrcPro(src, 0).String())
+		}
+	}
 	return rdx.ID0, nil
 }
 

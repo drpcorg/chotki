@@ -121,6 +121,9 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls 
 		var fint, bare, rebar []byte
 		var lit byte
 		fint, rest = protocol.Take('F', rest)
+		if fint == nil {
+			return ErrBadEPacket
+		}
 		field := rdx.UnzipUint64(fint)
 		if field > uint64(rdx.OffMask) {
 			return ErrBadEPacket

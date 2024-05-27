@@ -184,10 +184,8 @@ func Vmerge(tlvs [][]byte) (tlv []byte) {
 	return
 }
 
-func Vdelta(tlv []byte, new_val VV) (tlv_delta []byte) {
-	old := make(VV)
+func VVdelta(old VV, new_val VV) (tlv_delta []byte) {
 	delta := make(VV)
-	_ = old.PutTLV(tlv)
 	for src, pro := range new_val {
 		pre := old[src]
 		if pro != pre {
@@ -195,6 +193,12 @@ func Vdelta(tlv []byte, new_val VV) (tlv_delta []byte) {
 		}
 	}
 	return delta.TLV()
+}
+
+func Vdelta(tlv []byte, new_val VV) (tlv_delta []byte) {
+	old := make(VV)
+	_ = old.PutTLV(tlv)
+	return VVdelta(old, new_val)
 }
 
 func Vvalid(tlv []byte) bool {

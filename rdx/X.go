@@ -95,6 +95,8 @@ func Xstring(rdt byte, tlv []byte) string {
 		return Nstring(tlv)
 	case 'M':
 		return Mstring(tlv)
+	case 'V':
+		return Vstring(tlv)
 	default:
 		hex := make([]byte, len(tlv)*2)
 		hex2.Encode(hex, tlv)

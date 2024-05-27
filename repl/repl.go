@@ -185,6 +185,8 @@ func (repl *REPL) REPL(line string) (id rdx.ID, err error) {
 		id, err = repl.CommandSinc(arg)
 	case "valid":
 		id, err = repl.CommandValid(arg)
+	case "whosaw":
+		id, err = repl.CommandWhoSaw(arg)
 	default:
 		_, _ = fmt.Fprintf(os.Stderr, "command unknown: %s\n", cmd)
 	}

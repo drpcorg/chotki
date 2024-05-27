@@ -277,6 +277,28 @@ func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) 
 	return
 }
 
+// ObjectFieldTLV picks one field given its id and RDT.
+func (cho *Chotki) ObjectRDTFieldTLV(fid rdx.ID, rdt byte) (tlv []byte, err error) {
+	db := cho.db
+	if db == nil {
+		return nil, ErrClosed
+	}
+
+	it := cho.db.NewIter(&pebble.IterOptions{})
+	defer it.Close()
+
+	key := OKey(fid, rdt)
+	if !it.SeekGE(key) {
+		return nil, pebble.ErrNotFound
+	}
+	fidfact, rdtfact := OKeyIdRdt(it.Key())
+	if fidfact != fid || rdtfact != rdt {
+		return nil, pebble.ErrNotFound
+	}
+	tlv = it.Value()
+	return
+}
+
 func (cho *Chotki) ObjectVVField(fid rdx.ID) (vv rdx.VV, err error) {
 	var rdt byte
 	var tlv []byte

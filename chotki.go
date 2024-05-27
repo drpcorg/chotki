@@ -213,7 +213,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			protocol.Record('I', id0.ZipBytes()),
 			protocol.Record('R', rdx.ID0.ZipBytes()),
 			protocol.Record('S', rdx.Stlv(opts.Name)),
-			protocol.Record('M', []byte{}),
+			protocol.Record('V', []byte{}),
 			protocol.Record('S', rdx.Stlv("")),
 		))
 
@@ -271,20 +271,40 @@ func (cho *Chotki) Close() error {
 	return nil
 }
 
+func (cho *Chotki) KeepAliveLoop() {
+	var err error
+	for err == nil {
+		time.Sleep(time.Second * 30)
+		err = cho.KeepAlive()
+	}
+	if err != ErrClosed {
+		cho.log.Error(err.Error())
+		cho.log.Error("keep alives stop")
+	}
+}
+
 func (cho *Chotki) KeepAlive() error {
 	oid := rdx.IDfromSrcPro(cho.src, 0)
-	_, oldvv, err := cho.ObjectFieldTLV(oid.ToOff(YAckOff))
+	oldtlv, err := cho.ObjectRDTFieldTLV(oid.ToOff(YAckOff), 'V')
 	if err != nil {
 		return err
 	}
+	mysrc := cho.src
 	newvv, err := cho.VersionVector()
 	if err != nil {
 		return err
 	}
-	tlv_delta := rdx.Vdelta(oldvv, newvv)
+	oldvv := make(rdx.VV)
+	_ = oldvv.PutTLV(oldtlv)
+	delete(oldvv, mysrc)
+	delete(newvv, mysrc)
+	tlv_delta := rdx.VVdelta(oldvv, newvv)
+	if len(tlv_delta) == 0 {
+		return nil
+	}
 	d := protocol.Records{
 		protocol.Record('F', rdx.ZipUint64(2)),
-		protocol.Record('M', tlv_delta),
+		protocol.Record('V', tlv_delta),
 	}
 	_, err = cho.CommitPacket('E', oid, d)
 	return err
