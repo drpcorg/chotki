@@ -117,3 +117,21 @@ func TestTCPDepot_Connect(t *testing.T) {
 	err = l.Close()
 	assert.Nil(t, err)
 }
+
+func TestTCPDepot_ConnectFailed(t *testing.T) {
+	loop := "tls://127.0.0.1:32000"
+
+	log := utils.NewDefaultLogger(slog.LevelDebug)
+
+	cCon := utils.NewFDQueue[Records](16, time.Millisecond)
+	c := NewNet(log, nil, func(_ string) FeedDrainCloser { return cCon }, func(_ string) { cCon.Close() })
+	c.TlsConfig = tlsConfig("b.chotki.local")
+
+	err := c.Connect(context.Background(), loop)
+	assert.Nil(t, err)
+	time.Sleep(time.Second) // Wait connection, todo use events
+
+	// cleanup
+	err = c.Close()
+	assert.Nil(t, err)
+}
