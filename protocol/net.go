@@ -76,7 +76,10 @@ func (n *Net) Close() error {
 	n.listens.Clear()
 
 	n.conns.Range(func(_ string, p *Peer) bool {
-		p.Close()
+		// sometimes it can be nil when we started connecting, but haven't connected yet
+		if p != nil {
+			p.Close()
+		}
 		return true
 	})
 	n.conns.Clear()
