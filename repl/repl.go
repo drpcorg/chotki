@@ -112,7 +112,7 @@ func (repl *REPL) REPL(line string) (id rdx.ID, err error) {
 	}
 	var arg *rdx.RDX
 	arg, err = rdx.ParseRDX([]byte(line))
-	if err != nil {
+	if err != nil && cmd != "opendir" {
 		return rdx.ID0, err
 	}
 	if repl.snap != nil {
@@ -128,6 +128,8 @@ func (repl *REPL) REPL(line string) (id rdx.ID, err error) {
 		id, err = repl.CommandCreate(arg)
 	case "open":
 		id, err = repl.CommandOpen(arg)
+	case "opendir":
+		id, err = repl.CommandOpenDir(line)
 	case "checkpoint", "cp":
 		id, err = repl.CommandCheckpoint(arg)
 	case "close":
