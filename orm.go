@@ -22,7 +22,7 @@ type ORM struct {
 	Host    *Chotki
 	Snap    *pebble.Snapshot
 	objects *xsync.MapOf[rdx.ID, NativeObject]
-	ids     *xsync.MapOf[NativeObject, rdx.ID]
+	ids     sync.Map // xsync sometimes does not correctly work with pointers
 	lock    sync.Mutex
 }
 
@@ -31,7 +31,6 @@ func NewORM(host *Chotki, snap *pebble.Snapshot) *ORM {
 		Host: host,
 		Snap: snap,
 
-		ids:     xsync.NewMapOf[NativeObject, rdx.ID](),
 		objects: xsync.NewMapOf[rdx.ID, NativeObject](),
 	}
 }
@@ -55,6 +54,8 @@ func (orm *ORM) New(cid rdx.ID, objs ...NativeObject) (err error) {
 		if err == nil {
 			orm.ids.Store(obj, id)
 			orm.objects.Store(id, obj)
+			orm.Snap.Close()
+			orm.Snap = orm.Host.Database().NewSnapshot()
 		}
 	}
 	return nil
@@ -143,7 +144,7 @@ func (orm *ORM) Close() error {
 		return ErrClosed
 	}
 	orm.objects.Clear()
-	orm.ids.Clear()
+	orm.ids = sync.Map{}
 	orm.Host = nil
 	_ = orm.Snap.Close()
 	orm.Snap = nil
@@ -244,7 +245,7 @@ func (orm *ORM) FindID(obj NativeObject) rdx.ID {
 	if !ok {
 		id = rdx.BadId
 	}
-	return id
+	return id.(rdx.ID)
 }
 
 type templateState struct {
@@ -330,7 +331,7 @@ func (o *{{.Name}}) Store(off uint64, rdt byte, old []byte, clock rdx.Clock) (ba
 	if bare==nil {
 		err = rdx.ErrBadValueForAType
 	}
-	return 
+	return
 }
 `
 

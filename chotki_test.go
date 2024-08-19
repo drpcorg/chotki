@@ -1,6 +1,7 @@
 package chotki
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -87,4 +88,79 @@ func TestChotki_Sync(t *testing.T) {
 	_ = syncb.Close()
 	_ = a.Close()
 	_ = b.Close()
+}
+
+var Schema = []Field{
+	{Name: "test", RdxType: rdx.Integer},
+}
+
+type Test struct {
+	Test int64 `chotki:"test"`
+}
+
+var ErrInvalidField = errors.New("Invalid field type")
+var _ NativeObject = (*Test)(nil)
+
+func (k *Test) Load(off uint64, rdt byte, tlv []byte) error {
+	switch off {
+	case 1: // Deleted
+		if rdt != rdx.Integer {
+			return ErrInvalidField
+		}
+		k.Test = rdx.Inative(tlv)
+	default:
+		return ErrUnknownFieldInAType
+	}
+	return nil
+}
+
+func (k *Test) Store(off uint64, rdt byte, old []byte, clock rdx.Clock) (bare []byte, err error) {
+	switch off {
+	case 1: // Deleted
+		if rdt != rdx.Integer {
+			return nil, ErrInvalidField
+		} else if old == nil {
+			bare = rdx.Itlv(k.Test)
+		} else {
+			bare = rdx.Idelta(old, k.Test, clock)
+		}
+	default:
+		return nil, ErrUnknownFieldInAType
+	}
+	return
+}
+
+func TestOrmCreateThanEdit(t *testing.T) {
+	dirs, clear := testdirs(0xa)
+	defer clear()
+
+	a, err := Open(dirs[0], Options{Src: 0xa, Name: "test replica A"})
+	assert.NoError(t, err)
+	id, err := a.NewClass(rdx.ID0, Schema...)
+	assert.NoError(t, err)
+	obj := &Test{
+		Test: 10,
+	}
+	err = a.orm.New(id, obj)
+	assert.NoError(t, err)
+
+	objId := a.orm.FindID(obj)
+	assert.NotEqual(t, rdx.BadId, objId)
+
+	loadedObj, err := a.orm.Load(objId, &Test{})
+	assert.NoError(t, err)
+
+	result := loadedObj.(*Test)
+	assert.Equal(t, &Test{Test: 10}, result)
+
+	result.Test = 100
+	err = a.orm.Save(result)
+	assert.NoError(t, err)
+
+	loadedObj, err = a.orm.Load(objId, &Test{})
+	assert.NoError(t, err)
+	result = loadedObj.(*Test)
+
+	assert.Equal(t, &Test{Test: 100}, result)
+
 }
