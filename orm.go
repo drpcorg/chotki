@@ -54,8 +54,6 @@ func (orm *ORM) New(cid rdx.ID, objs ...NativeObject) (err error) {
 		if err == nil {
 			orm.ids.Store(obj, id)
 			orm.objects.Store(id, obj)
-			orm.Snap.Close()
-			orm.Snap = orm.Host.Database().NewSnapshot()
 		}
 	}
 	return nil

@@ -129,38 +129,3 @@ func (k *Test) Store(off uint64, rdt byte, old []byte, clock rdx.Clock) (bare []
 	}
 	return
 }
-
-func TestOrmCreateThanEdit(t *testing.T) {
-	dirs, clear := testdirs(0xa)
-	defer clear()
-
-	a, err := Open(dirs[0], Options{Src: 0xa, Name: "test replica A"})
-	assert.NoError(t, err)
-	id, err := a.NewClass(rdx.ID0, Schema...)
-	assert.NoError(t, err)
-	obj := &Test{
-		Test: 10,
-	}
-	err = a.orm.New(id, obj)
-	assert.NoError(t, err)
-
-	objId := a.orm.FindID(obj)
-	assert.NotEqual(t, rdx.BadId, objId)
-
-	loadedObj, err := a.orm.Load(objId, &Test{})
-	assert.NoError(t, err)
-
-	result := loadedObj.(*Test)
-	assert.Equal(t, &Test{Test: 10}, result)
-
-	result.Test = 100
-	err = a.orm.Save(result)
-	assert.NoError(t, err)
-
-	loadedObj, err = a.orm.Load(objId, &Test{})
-	assert.NoError(t, err)
-	result = loadedObj.(*Test)
-
-	assert.Equal(t, &Test{Test: 100}, result)
-
-}

@@ -95,6 +95,21 @@ func (repl *REPL) CommandOpen(arg *rdx.RDX) (rdx.ID, error) {
 	return repl.Host.Last(), nil
 }
 
+func (repl *REPL) CommandOpenDir(dirname string) (rdx.ID, error) {
+
+	var err error
+	repl.Host, err = chotki.Open(dirname, chotki.Options{
+		Src:     0xa,
+		Options: pebble.Options{ErrorIfNotExists: true},
+	})
+	if err != nil {
+		return rdx.BadId, err
+	}
+	go repl.Host.KeepAliveLoop()
+
+	return repl.Host.Last(), nil
+}
+
 var HelpCheckpoint = errors.New("cp \"monday\"")
 
 func (repl *REPL) CommandCheckpoint(arg *rdx.RDX) (rdx.ID, error) {

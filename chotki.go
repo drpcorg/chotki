@@ -105,7 +105,6 @@ type Chotki struct {
 
 	lock sync.Mutex
 	db   *pebble.DB
-	orm  *ORM
 	net  *protocol.Net
 	dir  string
 	opts Options
@@ -202,8 +201,6 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			}
 		})
 
-	cho.orm = NewORM(&cho, db.NewSnapshot())
-
 	if !exists {
 		id0 := rdx.IDFromSrcSeqOff(opts.Src, 0, 0)
 
@@ -243,15 +240,6 @@ func (cho *Chotki) Close() error {
 
 		cho.net = nil
 	}
-
-	if cho.orm != nil {
-		if err := cho.orm.Close(); err != nil {
-			cho.log.Error("couldn't close ORM", "err", err)
-		}
-
-		cho.orm = nil
-	}
-
 	if cho.db != nil {
 		if err := cho.db.Close(); err != nil {
 			cho.log.Error("couldn't close Pebble", "err", err)
@@ -336,7 +324,7 @@ func (cho *Chotki) Directory() string {
 }
 
 func (cho *Chotki) ObjectMapper() *ORM {
-	return cho.orm
+	return NewORM(cho, cho.db.NewSnapshot())
 }
 
 func (cho *Chotki) RestoreNet(ctx context.Context) error {
