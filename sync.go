@@ -235,8 +235,7 @@ func (sync *Syncer) FeedBlockDiff() (diff protocol.Records, err error) {
 		return protocol.Records{}, nil
 	}
 	block := VKeyId(sync.vvit.Key()).ZeroOff()
-	key := OKey(block, 0)
-	sync.ffit.SeekGE(key)
+	sync.ffit.SeekGE(OKey(rdx.ID0, 0))
 	bmark, parcel := protocol.OpenHeader(nil, 'D')
 	parcel = append(parcel, protocol.Record('T', sync.snaplast.ZipBytes())...)
 	parcel = append(parcel, protocol.Record('R', block.ZipBytes())...)
