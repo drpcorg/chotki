@@ -1,9 +1,10 @@
 package chotki
 
 import (
-	"github.com/drpcorg/chotki/rdx"
 	"io"
 	"slices"
+
+	"github.com/drpcorg/chotki/rdx"
 )
 
 type Merger interface {
@@ -19,11 +20,15 @@ type PebbleMergeAdaptor struct {
 }
 
 func (a *PebbleMergeAdaptor) MergeNewer(value []byte) error {
-	a.vals = append(a.vals, value)
+	target := make([]byte, len(value))
+	copy(target, value)
+	a.vals = append(a.vals, target)
 	return nil
 }
 func (a *PebbleMergeAdaptor) MergeOlder(value []byte) error {
-	a.vals = append(a.vals, value)
+	target := make([]byte, len(value))
+	copy(target, value)
+	a.vals = append(a.vals, target)
 	a.old = true
 	return nil
 }
