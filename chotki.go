@@ -75,11 +75,13 @@ func (o *Options) SetDefaults() {
 			/*if len(key) != 10 {
 				return nil, nil
 			}*/
+			target := make([]byte, len(value))
+			copy(target, value)
 			id, rdt := OKeyIdRdt(key)
 			pma := PebbleMergeAdaptor{
 				id:   id,
 				rdt:  rdt,
-				vals: [][]byte{value},
+				vals: [][]byte{target},
 			}
 			return &pma, nil
 		},
