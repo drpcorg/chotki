@@ -194,6 +194,22 @@ func Znative(tlv []byte) (sum int64) {
 	return
 }
 
+func Znative2(tlv []byte, src uint64) (sum, mine int64) {
+	rest := tlv
+	for len(rest) > 0 {
+		var one []byte
+		one, rest = protocol.Take('I', rest)
+		stamp, body := protocol.Take('T', one)
+		inc := UnzipInt64(body)
+		_, recsrc := UnzipIntUint64Pair(stamp)
+		sum += inc
+		if recsrc == src {
+			mine = inc
+		}
+	}
+	return
+}
+
 // merge TLV values
 func Zmerge(tlvs [][]byte) (merged []byte) {
 	ih := ItHeap[*ZIterator]{}
@@ -208,11 +224,11 @@ func Zmerge(tlvs [][]byte) (merged []byte) {
 
 // produce an op that turns the old value into the new one
 func Zdelta(tlv []byte, new_val int64, clock Clock) (tlv_delta []byte) {
-	sum := Znative(tlv)
+	sum, mine := Znative2(tlv, clock.Src())
 	if new_val == sum {
 		return []byte{}
 	}
-	return Ztlv(new_val - sum)
+	return Ztlv(new_val + mine - sum)
 }
 
 // checks a TLV value for validity (format violations)

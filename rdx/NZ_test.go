@@ -52,7 +52,7 @@ func TestZtlv(t *testing.T) {
 	assert.Equal(t, correct, fact)
 	str := Zstring(fact)
 	assert.Equal(t, "123", str)
-	clock := LocalLogicalClock{}
+	clock := LocalLogicalClock{Source: 1}
 	inc := Zdelta(fact, 124, &clock)
 	assert.Equal(t, int64(1), Znative(inc))
 	// todo diff
