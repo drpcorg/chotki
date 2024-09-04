@@ -60,6 +60,8 @@ type Options struct {
 	MaxLogLen    int64
 	RelaxedOrder bool
 	Logger       utils.Logger
+	PingPeriod   time.Duration
+	PingWait     time.Duration
 
 	TlsConfig *tls.Config
 }
@@ -67,6 +69,14 @@ type Options struct {
 func (o *Options) SetDefaults() {
 	if o.MaxLogLen == 0 {
 		o.MaxLogLen = 1 << 23
+	}
+
+	if o.PingPeriod == 0 {
+		o.PingPeriod = 10 * time.Second
+	}
+
+	if o.PingWait == 0 {
+		o.PingWait = 3 * time.Second
 	}
 
 	o.Merger = &pebble.Merger{
@@ -159,12 +169,11 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 	}
 
 	cho := Chotki{
-		db:   db,
-		src:  opts.Src,
-		dir:  absdir,
-		log:  opts.Logger,
-		opts: opts,
-
+		db:    db,
+		src:   opts.Src,
+		dir:   absdir,
+		log:   opts.Logger,
+		opts:  opts,
 		clock: &rdx.LocalLogicalClock{Source: opts.Src},
 
 		outq:  xsync.NewMapOf[string, protocol.DrainCloser](),
@@ -186,12 +195,14 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			}
 
 			return &Syncer{
-				Src:    cho.src,
-				Host:   &cho,
-				Mode:   SyncRWLive,
-				Name:   name,
-				log:    cho.log,
-				oqueue: queue,
+				Src:        cho.src,
+				Host:       &cho,
+				Mode:       SyncRWLive,
+				PingPeriod: cho.opts.PingPeriod,
+				PingWait:   cho.opts.PingWait,
+				Name:       name,
+				log:        cho.log,
+				oqueue:     queue,
 			}
 		},
 		func(name string) { // destroy connection
@@ -519,7 +530,10 @@ func (cho *Chotki) Drain(recs protocol.Records) (err error) {
 
 		case 'B': // bye dear
 			cho.syncs.Delete(id)
-
+		case 'A':
+			cho.log.Info("received ping")
+		case 'Z':
+			cho.log.Info("received pong")
 		default:
 			return fmt.Errorf("unsupported packet type %c", lit)
 		}

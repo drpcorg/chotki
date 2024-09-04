@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -55,17 +56,30 @@ const (
 	SendLive
 	SendEOF
 	SendNone
+	SendPing
+	SendPong
+)
+
+type PingState int
+
+const (
+	Inactive PingState = iota
+	Ping
+	Pong
+	PingBroken
 )
 
 func (s SyncState) String() string {
-	return []string{"SendHandshake", "SendDiff", "SendLive", "SendEOF", "SendNone"}[s]
+	return []string{"SendHandshake", "SendDiff", "SendLive", "SendEOF", "SendNone", "SendPing", "SendPong"}[s]
 }
 
 type Syncer struct {
-	Src  uint64
-	Name string
-	Host SyncHost
-	Mode SyncMode
+	Src        uint64
+	Name       string
+	Host       SyncHost
+	Mode       SyncMode
+	PingPeriod time.Duration
+	PingWait   time.Duration
 
 	log        utils.Logger
 	vvit, ffit *pebble.Iterator
@@ -79,8 +93,10 @@ type Syncer struct {
 	vpack          []byte
 	reason         error
 
-	lock sync.Mutex
-	cond sync.Cond
+	lock      sync.Mutex
+	cond      sync.Cond
+	pingTimer *time.Timer
+	pingStage atomic.Int32
 }
 
 func (sync *Syncer) Close() error {
@@ -118,9 +134,32 @@ func (sync *Syncer) Close() error {
 
 	return nil
 }
+func (sync *Syncer) GetFeedState() SyncState {
+	sync.lock.Lock()
+	defer sync.lock.Unlock()
+	return sync.feedState
+}
+
+func (sync *Syncer) pingTransition() {
+	//nolint:exhaustive
+	switch PingState(sync.pingStage.Load()) {
+	case Ping:
+		sync.SetFeedState(SendPing)
+	case Pong:
+		sync.SetFeedState(SendPong)
+	case PingBroken:
+		sync.SetFeedState(SendEOF)
+	}
+}
+
+func (sync *Syncer) GetDrainState() SyncState {
+	sync.lock.Lock()
+	defer sync.lock.Unlock()
+	return sync.drainState
+}
 
 func (sync *Syncer) Feed() (recs protocol.Records, err error) {
-	switch sync.feedState {
+	switch sync.GetFeedState() {
 	case SendHandshake:
 		recs, err = sync.FeedHandshake()
 		sync.SetFeedState(SendDiff)
@@ -133,6 +172,7 @@ func (sync *Syncer) Feed() (recs protocol.Records, err error) {
 			recs = append(recs, recs2...)
 			if (sync.Mode & SyncLive) != 0 {
 				sync.SetFeedState(SendLive)
+				sync.resetPingTimer()
 			} else {
 				sync.SetFeedState(SendEOF)
 			}
@@ -140,13 +180,30 @@ func (sync *Syncer) Feed() (recs protocol.Records, err error) {
 			sync.snap = nil
 			err = nil
 		}
-
+	case SendPing:
+		recs = protocol.Records{
+			protocol.Record('A', rdx.Stlv("ping")),
+		}
+		sync.SetFeedState(SendLive)
+		sync.pingStage.Store(int32(Inactive))
+		sync.pingTimer.Stop()
+		sync.pingTimer = time.AfterFunc(sync.PingWait, func() {
+			sync.pingStage.Store(int32(PingBroken))
+			sync.log.Error("peer did not respond to ping", "name", sync.Name)
+		})
+	case SendPong:
+		recs = protocol.Records{
+			protocol.Record('Z', rdx.Stlv("pong")),
+		}
+		sync.pingStage.Store(int32(Inactive))
+		sync.SetFeedState(SendLive)
 	case SendLive:
 		recs, err = sync.oqueue.Feed()
 		if err == utils.ErrClosed {
 			sync.SetFeedState(SendEOF)
 			err = nil
 		}
+		sync.pingTransition()
 
 	case SendEOF:
 		reason := []byte("closing")
@@ -202,10 +259,13 @@ func (sync *Syncer) FeedHandshake() (vv protocol.Records, err error) {
 	_, sync.vpack = protocol.OpenHeader(sync.vpack, 'V') // 5
 	sync.vpack = append(sync.vpack, protocol.Record('T', sync.snaplast.ZipBytes())...)
 
+	sync.lock.Lock()
+	mode := sync.Mode.Zip()
+	sync.lock.Unlock()
 	// handshake: H(T{pro,src} M(mode) V(V{p,s}+))
 	hs := protocol.Record('H',
 		protocol.TinyRecord('T', sync.snaplast.ZipBytes()),
-		protocol.TinyRecord('M', sync.Mode.Zip()),
+		protocol.TinyRecord('M', mode),
 		protocol.Record('V', sync.vvit.Value()),
 	)
 
@@ -314,6 +374,17 @@ func LastLit(recs protocol.Records) byte {
 	return protocol.Lit(recs[len(recs)-1])
 }
 
+func (sync *Syncer) resetPingTimer() {
+	sync.lock.Lock()
+	defer sync.lock.Unlock()
+	if sync.pingTimer != nil {
+		sync.pingTimer.Stop()
+	}
+	sync.pingTimer = time.AfterFunc(sync.PingPeriod, func() {
+		sync.pingStage.Store(int32(Ping))
+	})
+}
+
 func (sync *Syncer) Drain(recs protocol.Records) (err error) {
 	if len(recs) == 0 {
 		return nil
@@ -338,6 +409,8 @@ func (sync *Syncer) Drain(recs protocol.Records) (err error) {
 			break
 		}
 		fallthrough
+	case SendPong, SendPing:
+		panic("chotki: unacceptable sync-state")
 
 	case SendDiff:
 		lit := LastLit(recs)
@@ -347,6 +420,12 @@ func (sync *Syncer) Drain(recs protocol.Records) (err error) {
 			} else {
 				sync.SetDrainState(SendLive)
 			}
+			if lit == 'A' {
+				sync.pingStage.Store(int32(Pong))
+			}
+		}
+		if sync.Mode&SyncLive != 0 {
+			sync.resetPingTimer()
 		}
 		err = sync.Host.Drain(recs)
 		if err == nil {
@@ -354,9 +433,13 @@ func (sync *Syncer) Drain(recs protocol.Records) (err error) {
 		}
 
 	case SendLive:
+		sync.resetPingTimer()
 		lit := LastLit(recs)
 		if lit == 'B' {
 			sync.SetDrainState(SendNone)
+		}
+		if lit == 'A' {
+			sync.pingStage.Store(int32(Pong))
 		}
 		err = sync.Host.Drain(recs)
 		if err == nil {
@@ -384,6 +467,8 @@ func (sync *Syncer) DrainHandshake(recs protocol.Records) (err error) {
 	}
 	var mode SyncMode
 	mode, sync.peervv, err = ParseHandshake(body)
+	sync.lock.Lock()
 	sync.Mode &= mode
+	sync.lock.Unlock()
 	return
 }

@@ -1,12 +1,14 @@
 package chotki
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/protocol"
@@ -14,6 +16,18 @@ import (
 	"github.com/drpcorg/chotki/utils"
 	"github.com/stretchr/testify/assert"
 )
+
+type FeedCloserTest struct{}
+
+func (t *FeedCloserTest) Feed() (recs protocol.Records, err error) {
+	return protocol.Records{}, nil
+}
+
+func (t *FeedCloserTest) Close() error {
+	return nil
+}
+
+var _ protocol.FeedCloser = (*FeedCloserTest)(nil)
 
 func testdirs(origs ...uint64) ([]string, func()) {
 	dirs := make([]string, len(origs))
@@ -116,6 +130,123 @@ func TestChotki_SyncEdit(t *testing.T) {
 	assert.Equal(t, &Test{Test: "edited text"}, res)
 	orm.Close()
 	borm.Close()
+	_ = a.Close()
+	_ = b.Close()
+}
+
+func TestChotki_SyncLivePingsOk(t *testing.T) {
+	dirs, clear := testdirs(0xa, 0xb)
+	defer clear()
+
+	a, err := Open(dirs[0], Options{Src: 0xa, Name: "test replica A", Logger: utils.NewDefaultLogger(slog.LevelInfo)})
+	assert.Nil(t, err)
+
+	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B", Logger: utils.NewDefaultLogger(slog.LevelInfo)})
+	assert.Nil(t, err)
+
+	synca := Syncer{
+		Host:       a,
+		PingPeriod: 100 * time.Millisecond,
+		PingWait:   100 * time.Millisecond,
+		Mode:       SyncRWLive, Name: "a",
+		Src:    a.src,
+		log:    utils.NewDefaultLogger(slog.LevelDebug),
+		oqueue: &FeedCloserTest{},
+	}
+	syncb := Syncer{
+		Host:       b,
+		PingPeriod: 100 * time.Second,
+		Mode:       SyncRWLive,
+		PingWait:   3 * time.Second,
+		Name:       "b",
+		Src:        b.src,
+		log:        utils.NewDefaultLogger(slog.LevelDebug),
+		oqueue:     &FeedCloserTest{},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go protocol.PumpCtxCallback(ctx, &synca, &syncb, func() bool {
+		return synca.GetFeedState() != SendPing
+	})
+	go protocol.PumpCtx(ctx, &syncb, &synca)
+	time.Sleep(time.Millisecond * 10)
+	assert.Equal(t, SendLive, synca.GetFeedState())
+	assert.Equal(t, SendLive, syncb.GetFeedState())
+	assert.Equal(t, SendDiff, synca.GetDrainState())
+	assert.Equal(t, SendDiff, syncb.GetDrainState())
+
+	time.Sleep(time.Millisecond * 110)
+	assert.Equal(t, SendPing, synca.GetFeedState())
+	go protocol.PumpCtx(ctx, &synca, &syncb)
+	time.Sleep(time.Millisecond * 90)
+
+	assert.Equal(t, SendLive, synca.GetFeedState())
+	assert.Equal(t, SendLive, syncb.GetFeedState())
+	assert.Equal(t, SendLive, synca.GetDrainState())
+	assert.Equal(t, SendLive, syncb.GetDrainState())
+	cancel()
+	syncb.Close()
+	synca.Close()
+	_ = a.Close()
+	_ = b.Close()
+}
+
+func TestChotki_SyncLivePingsFail(t *testing.T) {
+	dirs, clear := testdirs(0xa, 0xb)
+	defer clear()
+
+	a, err := Open(dirs[0], Options{Src: 0xa, Name: "test replica A", Logger: utils.NewDefaultLogger(slog.LevelInfo)})
+	assert.Nil(t, err)
+
+	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B", Logger: utils.NewDefaultLogger(slog.LevelInfo)})
+	assert.Nil(t, err)
+
+	synca := Syncer{
+		Host:       a,
+		PingPeriod: 100 * time.Millisecond,
+		PingWait:   100 * time.Millisecond,
+		Mode:       SyncRWLive, Name: "a",
+		Src:    a.src,
+		log:    utils.NewDefaultLogger(slog.LevelDebug),
+		oqueue: &FeedCloserTest{},
+	}
+	syncb := Syncer{
+		Host:       b,
+		PingPeriod: 100 * time.Second,
+		Mode:       SyncRWLive,
+		PingWait:   3 * time.Second,
+		Name:       "b",
+		Src:        b.src,
+		log:        utils.NewDefaultLogger(slog.LevelDebug),
+		oqueue:     &FeedCloserTest{},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go protocol.PumpCtxCallback(ctx, &synca, &syncb, func() bool {
+		return synca.GetFeedState() != SendPing
+	})
+	go protocol.PumpCtxCallback(ctx, &syncb, &synca, func() bool {
+		return syncb.GetFeedState() != SendPong
+	})
+	time.Sleep(time.Millisecond * 10)
+	assert.Equal(t, SendLive, synca.GetFeedState())
+	assert.Equal(t, SendLive, syncb.GetFeedState())
+	assert.Equal(t, SendDiff, synca.GetDrainState())
+	assert.Equal(t, SendDiff, syncb.GetDrainState())
+
+	time.Sleep(time.Millisecond * 110)
+	assert.Equal(t, SendPing, synca.GetFeedState())
+	go protocol.PumpCtx(ctx, &synca, &syncb)
+	time.Sleep(time.Millisecond * 200)
+
+	assert.Equal(t, SendNone, synca.GetFeedState())
+	assert.Equal(t, SendPong, syncb.GetFeedState())
+	assert.Equal(t, SendDiff, synca.GetDrainState())
+	assert.Equal(t, SendNone, syncb.GetDrainState())
+
+	cancel()
+	syncb.Close()
+	synca.Close()
 	_ = a.Close()
 	_ = b.Close()
 }

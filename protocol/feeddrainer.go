@@ -1,6 +1,9 @@
 package protocol
 
-import "io"
+import (
+	"context"
+	"io"
+)
 
 type Feeder interface {
 	// Feed reads and returns records.
@@ -45,6 +48,23 @@ func Relay(feeder Feeder, drainer Drainer) error {
 func Pump(feeder Feeder, drainer Drainer) (err error) {
 	for err == nil {
 		err = Relay(feeder, drainer)
+	}
+	return
+}
+
+func PumpCtx(ctx context.Context, feeder Feeder, drainer Drainer) (err error) {
+	for err == nil && ctx.Err() == nil {
+		err = Relay(feeder, drainer)
+	}
+	return
+}
+
+func PumpCtxCallback(ctx context.Context, feeder Feeder, drainer Drainer, f func() bool) (err error) {
+	for err == nil && ctx.Err() == nil {
+		err = Relay(feeder, drainer)
+		if !f() {
+			return
+		}
 	}
 	return
 }
