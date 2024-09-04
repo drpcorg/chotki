@@ -12,7 +12,7 @@ func (cho *Chotki) UpdateVTree(id, ref rdx.ID, pb *pebble.Batch) (err error) {
 	v := protocol.Record('V', id.ZipBytes())
 	err = pb.Merge(VKey(ref), v, &pebbleWriteOptions)
 	if err == nil {
-		err = pb.Merge(VKey(rdx.ID0), v, &pebbleWriteOptions)
+		err = pb.Merge(VKey0, v, &pebbleWriteOptions)
 	}
 	return
 }
@@ -35,7 +35,7 @@ func (cho *Chotki) ApplyH(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 	_, rest := protocol.Take('M', body)
 	var vbody []byte
 	vbody, _ = protocol.Take('V', rest)
-	err = batch.Merge(VKey(rdx.ID0), vbody, &pebbleWriteOptions)
+	err = batch.Merge(VKey0, vbody, &pebbleWriteOptions)
 	return
 }
 

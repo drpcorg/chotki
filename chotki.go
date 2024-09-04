@@ -367,8 +367,7 @@ func (cho *Chotki) Disconnect(addr string) error {
 }
 
 func (cho *Chotki) VersionVector() (vv rdx.VV, err error) {
-	key0 := VKey(rdx.ID0)
-	val, clo, err := cho.db.Get(key0)
+	val, clo, err := cho.db.Get(VKey0)
 	if err == nil {
 		vv = make(rdx.VV)
 		err = vv.PutTLV(val)
@@ -571,7 +570,7 @@ func (cho *Chotki) DumpVV(writer io.Writer) {
 	}
 	i := cho.db.NewIter(&io)
 	defer i.Close()
-	for i.SeekGE(VKey(rdx.ID0)); i.Valid(); i.Next() {
+	for i.SeekGE(VKey0); i.Valid(); i.Next() {
 		id := rdx.IDFromBytes(i.Key()[1:])
 		vv := make(rdx.VV)
 		_ = vv.PutTLV(i.Value())

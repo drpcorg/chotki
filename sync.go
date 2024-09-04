@@ -186,9 +186,8 @@ func (sync *Syncer) FeedHandshake() (vv protocol.Records, err error) {
 		UpperBound: []byte{'P'},
 	})
 
-	key0 := VKey(rdx.ID0)
-	ok := sync.vvit.SeekGE(key0)
-	if !ok || 0 != bytes.Compare(sync.vvit.Key(), key0) {
+	ok := sync.vvit.SeekGE(VKey0)
+	if !ok || 0 != bytes.Compare(sync.vvit.Key(), VKey0) {
 		return nil, rdx.ErrBadV0Record
 	}
 	sync.hostvv = make(rdx.VV)
@@ -235,7 +234,8 @@ func (sync *Syncer) FeedBlockDiff() (diff protocol.Records, err error) {
 		return protocol.Records{}, nil
 	}
 	block := VKeyId(sync.vvit.Key()).ZeroOff()
-	sync.ffit.SeekGE(OKey(rdx.ID0, 0))
+	key := OKey(block, 0)
+	sync.ffit.SeekGE(key)
 	bmark, parcel := protocol.OpenHeader(nil, 'D')
 	parcel = append(parcel, protocol.Record('T', sync.snaplast.ZipBytes())...)
 	parcel = append(parcel, protocol.Record('R', block.ZipBytes())...)

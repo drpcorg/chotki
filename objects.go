@@ -30,9 +30,11 @@ func OKeyIdRdt(key []byte) (id rdx.ID, rdt byte) {
 	return
 }
 
+var VKey0 = []byte{'V', 0, 0, 0, 0, 0, 0, 0, 0, 'V'}
+
 func VKey(id rdx.ID) (key []byte) {
 	var ret = [16]byte{'V'}
-	block := id & ^SyncBlockMask
+	block := id | SyncBlockMask
 	key = binary.BigEndian.AppendUint64(ret[:1], uint64(block))
 	key = append(key, 'V')
 	return
@@ -42,7 +44,7 @@ func VKeyId(key []byte) rdx.ID {
 	if len(key) != LidLKeyLen {
 		return rdx.BadId
 	}
-	return rdx.IDFromBytes(key[1:])
+	return rdx.IDFromBytes(key[1:]) & ^SyncBlockMask
 }
 
 // A class contains a number of fields. Each Field has
