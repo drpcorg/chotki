@@ -1,48 +1,65 @@
 package utils
 
 import (
+	"context"
 	"errors"
-	"sync/atomic"
+	"sync"
 	"time"
 )
 
 type FDQueue[S ~[]E, E any] struct {
-	closed  atomic.Bool
+	ctx     context.Context
+	close   context.CancelFunc
 	timeout time.Duration
 	ch      chan E
+	active  sync.WaitGroup
 }
 
 var ErrClosed = errors.New("[chotki] feed/drain queue is closed")
 
 func NewFDQueue[S ~[]E, E any](limit int, timeout time.Duration) *FDQueue[S, E] {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &FDQueue[S, E]{
 		timeout: timeout,
 		ch:      make(chan E, limit),
+		ctx:     ctx,
+		close:   cancel,
 	}
 }
 
 func (q *FDQueue[S, E]) Close() error {
-	q.closed.Store(true)
+	q.close()
+	q.active.Wait()
 	close(q.ch)
 	return nil
 }
 
 func (q *FDQueue[S, E]) Drain(recs S) error {
-	if closed := q.closed.Load(); closed {
+	if q.ctx.Err() != nil {
 		return ErrClosed
 	}
+	q.active.Add(1)
+	defer q.active.Done()
 	for _, pkg := range recs {
-		q.ch <- pkg
+		select {
+		case <-q.ctx.Done():
+			break
+		case q.ch <- pkg:
+		}
+
 	}
 	return nil
 }
 
 func (q *FDQueue[S, E]) Feed() (recs S, err error) {
-	if closed := q.closed.Load(); closed {
+	if q.ctx.Err() != nil {
 		return nil, ErrClosed
 	}
-
+	q.active.Add(1)
+	defer q.active.Done()
 	select {
+	case <-q.ctx.Done():
+		return
 	case <-time.After(q.timeout):
 		return
 	case pkg := <-q.ch:
