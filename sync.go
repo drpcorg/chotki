@@ -168,6 +168,7 @@ func (sync *Syncer) Feed() (recs protocol.Records, err error) {
 
 		select {
 		case <-time.After(sync.PingWait):
+			sync.log.Error("handshake took too long", "name", sync.Name)
 			sync.SetFeedState(SendEOF)
 			return
 		case <-sync.WaitDrainState(SendDiff):
