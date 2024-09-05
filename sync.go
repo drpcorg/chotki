@@ -165,7 +165,13 @@ func (sync *Syncer) Feed() (recs protocol.Records, err error) {
 		sync.SetFeedState(SendDiff)
 
 	case SendDiff:
-		sync.WaitDrainState(SendDiff)
+
+		select {
+		case <-time.After(sync.PingWait):
+			sync.SetFeedState(SendEOF)
+			return
+		case <-sync.WaitDrainState(SendDiff):
+		}
 		recs, err = sync.FeedBlockDiff()
 		if err == io.EOF {
 			recs2, _ := sync.FeedDiffVV()
@@ -224,7 +230,7 @@ func (sync *Syncer) Feed() (recs protocol.Records, err error) {
 		timer := time.AfterFunc(time.Second, func() {
 			sync.SetDrainState(SendNone)
 		})
-		sync.WaitDrainState(SendNone)
+		<-sync.WaitDrainState(SendNone)
 		timer.Stop()
 		err = io.EOF
 	}
@@ -354,17 +360,21 @@ func (sync *Syncer) SetDrainState(state SyncState) {
 	sync.lock.Unlock()
 }
 
-func (sync *Syncer) WaitDrainState(state SyncState) (ds SyncState) {
-	sync.lock.Lock()
-	if sync.cond.L == nil {
-		sync.cond.L = &sync.lock
-	}
-	for sync.drainState < state {
-		sync.cond.Wait()
-	}
-	ds = sync.drainState
-	sync.lock.Unlock()
-	return
+func (sync *Syncer) WaitDrainState(state SyncState) chan SyncState {
+	res := make(chan SyncState)
+	go func() {
+		sync.lock.Lock()
+		if sync.cond.L == nil {
+			sync.cond.L = &sync.lock
+		}
+		for sync.drainState < state {
+			sync.cond.Wait()
+		}
+		ds := sync.drainState
+		sync.lock.Unlock()
+		res <- ds
+	}()
+	return res
 }
 
 func LastLit(recs protocol.Records) byte {

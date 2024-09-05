@@ -278,8 +278,22 @@ func TestChotki_SyncGlobals(t *testing.T) {
 }
 
 func syncSimplex(a, b *Chotki) error {
-	synca := Syncer{Host: a, Mode: SyncRW, Name: "a", Src: a.src, log: utils.NewDefaultLogger(slog.LevelDebug)}
-	syncb := Syncer{Host: b, Mode: SyncRW, Name: "b", Src: b.src, log: utils.NewDefaultLogger(slog.LevelDebug)}
+	synca := Syncer{
+		Host:     a,
+		Mode:     SyncRW,
+		Name:     "a",
+		Src:      a.src,
+		log:      utils.NewDefaultLogger(slog.LevelDebug),
+		PingWait: time.Second,
+	}
+	syncb := Syncer{
+		Host:     b,
+		Mode:     SyncRW,
+		Name:     "b",
+		Src:      b.src,
+		log:      utils.NewDefaultLogger(slog.LevelDebug),
+		PingWait: time.Second,
+	}
 	defer syncb.Close()
 	defer synca.Close()
 	// send handshake from b to a
