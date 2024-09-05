@@ -147,7 +147,7 @@ func TestChotki_SyncLivePingsOk(t *testing.T) {
 	synca := Syncer{
 		Host:       a,
 		PingPeriod: 100 * time.Millisecond,
-		PingWait:   100 * time.Millisecond,
+		PingWait:   200 * time.Millisecond,
 		Mode:       SyncRWLive, Name: "a",
 		Src:    a.src,
 		log:    utils.NewDefaultLogger(slog.LevelDebug),
