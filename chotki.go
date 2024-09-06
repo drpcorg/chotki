@@ -528,6 +528,7 @@ func (cho *Chotki) Drain(recs protocol.Records) (err error) {
 			noApply = true
 
 		case 'B': // bye dear
+			cho.log.Info("received session end")
 			cho.syncs.Delete(id)
 		case 'A':
 			cho.log.Info("received ping")
