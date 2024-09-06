@@ -211,6 +211,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 				if err := q.Close(); err != nil {
 					cho.log.Error(fmt.Sprintf("couldn't close conn %s", name), "err", err)
 				}
+				cho.log.Warn(fmt.Sprintf("closed the old conn to %s", name))
 			}
 		})
 
