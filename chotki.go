@@ -72,11 +72,11 @@ func (o *Options) SetDefaults() {
 	}
 
 	if o.PingPeriod == 0 {
-		o.PingPeriod = 10 * time.Second
+		o.PingPeriod = 30 * time.Second
 	}
 
 	if o.PingWait == 0 {
-		o.PingWait = 3 * time.Second
+		o.PingWait = 10 * time.Second
 	}
 
 	o.Merger = &pebble.Merger{
