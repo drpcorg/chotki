@@ -31,6 +31,7 @@ func (q *FDQueue[S, E]) Close() error {
 	q.close()
 	q.active.Wait()
 	close(q.ch)
+	q.ch = nil
 	return nil
 }
 
