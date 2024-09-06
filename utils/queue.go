@@ -62,12 +62,14 @@ func (q *FDQueue[S, E]) Feed() (recs S, err error) {
 		return
 	case <-time.After(q.timeout):
 		return
-	case pkg := <-q.ch:
-		recs = append(recs, pkg)
-		for ok := false; ok; {
-			pkg, ok = <-q.ch
-			recs = append(recs, pkg)
+	case pkg, ok := <-q.ch:
+		if !ok {
+			return
 		}
-		return
+		recs = append(recs, pkg)
+		if len(q.ch) == 0 {
+			return
+		}
 	}
+	return
 }
