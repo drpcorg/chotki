@@ -131,7 +131,7 @@ func (sync *Syncer) Close() error {
 		sync.vvit = nil
 	}
 
-	sync.log.Debug("sync: connection %s closed: %v\n", sync.Name, sync.reason)
+	sync.log.Info("sync: connection %s closed: %v\n", sync.Name, sync.reason)
 
 	return nil
 }
@@ -346,14 +346,14 @@ func (sync *Syncer) FeedDiffVV() (vv protocol.Records, err error) {
 }
 
 func (sync *Syncer) SetFeedState(state SyncState) {
-	sync.log.Debug("sync: feed state", "name", sync.Name, "state", state.String())
+	sync.log.Info("sync: feed state", "name", sync.Name, "state", state.String())
 	sync.lock.Lock()
 	sync.feedState = state
 	sync.lock.Unlock()
 }
 
 func (sync *Syncer) SetDrainState(state SyncState) {
-	sync.log.Debug("sync: drain state", "name", sync.Name, "state", state.String())
+	sync.log.Info("sync: drain state", "name", sync.Name, "state", state.String())
 	sync.lock.Lock()
 	sync.drainState = state
 	if sync.cond.L == nil {

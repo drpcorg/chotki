@@ -132,7 +132,7 @@ func (n *Net) Listen(ctx context.Context, addr string) error {
 	}
 	n.listens.Store(addr, listener)
 
-	n.log.Debug("net: listening", "addr", addr)
+	n.log.Info("net: listening", "addr", addr)
 
 	n.wg.Add(1)
 	go func() {
@@ -181,7 +181,7 @@ func (n *Net) KeepConnecting(ctx context.Context, name string, addrs []string) {
 			continue
 		}
 
-		n.log.Debug("net: connected", "name", name)
+		n.log.Info("net: connected", "name", name)
 
 		connBackoff = MIN_RETRY_PERIOD
 		n.keepPeer(ctx, name, conn)
@@ -214,7 +214,7 @@ func (n *Net) KeepListening(ctx context.Context, addr string) {
 		}
 
 		remoteAddr := conn.RemoteAddr().String()
-		n.log.Debug("net: accept connection", "addr", addr, "remoteAddr", remoteAddr)
+		n.log.Info("net: accept connection", "addr", addr, "remoteAddr", remoteAddr)
 
 		n.wg.Add(1)
 		go func() {
@@ -229,7 +229,7 @@ func (n *Net) KeepListening(ctx context.Context, addr string) {
 		}
 	}
 
-	n.log.Debug("net: listener closed", "addr", addr)
+	n.log.Info("net: listener closed", "addr", addr)
 }
 
 func (n *Net) keepPeer(ctx context.Context, name string, conn net.Conn) {
