@@ -52,6 +52,15 @@ var (
 
 var pebbleWriteOptions = pebble.WriteOptions{Sync: true}
 
+var EventsMetric = prometheus.NewCounter(prometheus.CounterOpts{
+	Namespace: "chotki",
+	Name:      "packet_count",
+})
+var EventsOutboundMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Namespace: "chotki",
+	Name:      "outbound_packet_count",
+}, []string{"name"})
+
 type Options struct {
 	pebble.Options
 
@@ -430,6 +439,7 @@ func (cho *Chotki) Broadcast(records protocol.Records, except string) {
 	cho.outq.Range(func(name string, hose protocol.DrainCloser) bool {
 		if name != except {
 			if err := hose.Drain(records); err != nil {
+				EventsOutboundMetric.WithLabelValues(name).Add(float64(len(records)))
 				cho.log.Error("couldn't drain to hose", "err", err)
 				cho.outq.Delete(name)
 			}
@@ -457,13 +467,8 @@ func (cho *Chotki) CommitPacket(lit byte, ref rdx.ID, body protocol.Records) (id
 	return
 }
 
-var EventsMetric = prometheus.NewCounter(prometheus.CounterOpts{
-	Namespace: "chotki",
-	Name:      "packet_count",
-})
-
 func (cho *Chotki) Metrics() []prometheus.Collector {
-	return []prometheus.Collector{EventsMetric}
+	return []prometheus.Collector{EventsMetric, EventsOutboundMetric}
 }
 
 func (cho *Chotki) Drain(recs protocol.Records) (err error) {
