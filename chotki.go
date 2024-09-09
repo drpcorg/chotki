@@ -438,8 +438,8 @@ func (cho *Chotki) RemoveAllHooks(fid rdx.ID) {
 func (cho *Chotki) Broadcast(records protocol.Records, except string) {
 	cho.outq.Range(func(name string, hose protocol.DrainCloser) bool {
 		if name != except {
+			EventsOutboundMetric.WithLabelValues(name).Add(float64(len(records)))
 			if err := hose.Drain(records); err != nil {
-				EventsOutboundMetric.WithLabelValues(name).Add(float64(len(records)))
 				cho.log.Error("couldn't drain to hose", "err", err)
 				cho.outq.Delete(name)
 			}
