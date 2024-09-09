@@ -17,6 +17,7 @@ import (
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/drpcorg/chotki/utils"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
@@ -456,8 +457,19 @@ func (cho *Chotki) CommitPacket(lit byte, ref rdx.ID, body protocol.Records) (id
 	return
 }
 
+var EventsMetric = prometheus.NewCounter(prometheus.CounterOpts{
+	Namespace: "chotki",
+	Name:      "packet_count",
+})
+
+func (cho *Chotki) Metrics() []prometheus.Collector {
+	return []prometheus.Collector{EventsMetric}
+}
+
 func (cho *Chotki) Drain(recs protocol.Records) (err error) {
 	var calls []CallHook
+
+	EventsMetric.Add(float64(len(recs)))
 
 	for _, packet := range recs { // parse the packets
 		if err != nil {
