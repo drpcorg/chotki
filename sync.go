@@ -170,7 +170,7 @@ func (sync *Syncer) Feed() (recs protocol.Records, err error) {
 		defer cancel()
 		select {
 		case <-time.After(sync.PingWait):
-			sync.log.Error("handshake took too long", "name", sync.Name)
+			sync.log.Error("sync: handshake took too long", "name", sync.Name)
 			sync.SetFeedState(SendEOF)
 			return
 		case <-sync.WaitDrainState(ctx, SendDiff):
@@ -198,7 +198,7 @@ func (sync *Syncer) Feed() (recs protocol.Records, err error) {
 		sync.pingTimer.Stop()
 		sync.pingTimer = time.AfterFunc(sync.PingWait, func() {
 			sync.pingStage.Store(int32(PingBroken))
-			sync.log.Error("peer did not respond to ping", "name", sync.Name)
+			sync.log.Error("sync: peer did not respond to ping", "name", sync.Name)
 		})
 	case SendPong:
 		recs = protocol.Records{
@@ -209,6 +209,7 @@ func (sync *Syncer) Feed() (recs protocol.Records, err error) {
 	case SendLive:
 		recs, err = sync.oqueue.Feed()
 		if err == utils.ErrClosed {
+			sync.log.Info("sync: queue closed", "name", sync.Name)
 			sync.SetFeedState(SendEOF)
 			err = nil
 		}
