@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/drpcorg/chotki/utils"
+	"github.com/google/uuid"
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
@@ -101,7 +103,7 @@ func (n *Net) ConnectPool(ctx context.Context, name string, addrs []string) (err
 
 	n.wg.Add(1)
 	go func() {
-		n.KeepConnecting(ctx, name, addrs)
+		n.KeepConnecting(ctx, fmt.Sprintf("connect:%s", name), addrs)
 		n.wg.Done()
 	}()
 
@@ -218,7 +220,7 @@ func (n *Net) KeepListening(ctx context.Context, addr string) {
 
 		n.wg.Add(1)
 		go func() {
-			n.keepPeer(ctx, remoteAddr, conn)
+			n.keepPeer(ctx, fmt.Sprintf("listen:%s:%s", uuid.Must(uuid.NewV7()).String(), remoteAddr), conn)
 			defer n.wg.Done()
 		}()
 	}
@@ -233,8 +235,7 @@ func (n *Net) KeepListening(ctx context.Context, addr string) {
 }
 
 func (n *Net) keepPeer(ctx context.Context, name string, conn net.Conn) {
-	fullname := conn.RemoteAddr().String()
-	peer := &Peer{inout: n.onInstall(fullname), conn: conn}
+	peer := &Peer{inout: n.onInstall(name), conn: conn}
 	n.conns.Store(name, peer)
 
 	readErr, wrireErr, closeErr := peer.Keep(ctx)
@@ -249,7 +250,7 @@ func (n *Net) keepPeer(ctx context.Context, name string, conn net.Conn) {
 	}
 
 	n.conns.Delete(name)
-	n.onDestroy(fullname)
+	n.onDestroy(name)
 }
 
 func (n *Net) createListener(ctx context.Context, addr string) (net.Listener, error) {
