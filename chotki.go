@@ -496,7 +496,7 @@ func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error)
 
 		pb, noApply := pebble.Batch{}, false
 
-		cho.log.Debug("new packet", "type", string(lit), "packet", id.String())
+		cho.log.DebugCtx(ctx, "new packet", "type", string(lit), "packet", id.String())
 
 		switch lit {
 		case 'Y': // create replica log
