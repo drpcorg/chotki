@@ -99,8 +99,8 @@ type Syncer struct {
 	hostvv, peervv rdx.VV
 	vpack          []byte
 	reason         error
-	myTraceId      [TraceSize]byte
-	theirsTraceid  [TraceSize]byte
+	myTraceId      atomic.Pointer[[TraceSize]byte]
+	theirsTraceid  atomic.Pointer[[TraceSize]byte]
 
 	lock      sync.Mutex
 	cond      sync.Cond
@@ -288,14 +288,15 @@ func (sync *Syncer) FeedHandshake() (vv protocol.Records, err error) {
 		return nil, err
 	}
 	hash := sha1.Sum(uuid[:])
-	sync.myTraceId = [TraceSize]byte(hash[:TraceSize])
+	tracePart := [TraceSize]byte(hash[:TraceSize])
+	sync.myTraceId.Store(&tracePart)
 
 	// handshake: H(T{pro,src} M(mode) V(V{p,s}+), T(trace_ids))
 	hs := protocol.Record('H',
 		protocol.TinyRecord('T', sync.snaplast.ZipBytes()),
 		protocol.TinyRecord('M', mode),
 		protocol.Record('V', sync.vvit.Value()),
-		protocol.Record('S', sync.myTraceId[:]),
+		protocol.Record('S', tracePart[:]),
 	)
 
 	return protocol.Records{hs}, nil
@@ -505,8 +506,16 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 }
 
 func (sync *Syncer) getTraceId() string {
-	theirs := hex.EncodeToString(sync.theirsTraceid[:])
-	mine := hex.EncodeToString(sync.myTraceId[:])
+	theirsP := sync.theirsTraceid.Load()
+	if theirsP == nil {
+		theirsP = &[TraceSize]byte{}
+	}
+	theirs := hex.EncodeToString((*theirsP)[:])
+	mineP := sync.myTraceId.Load()
+	if mineP == nil {
+		mineP = &[TraceSize]byte{}
+	}
+	mine := hex.EncodeToString((*mineP)[:])
 	if strings.Compare(mine, theirs) >= 0 {
 		return mine + "-" + theirs
 	} else {
@@ -524,10 +533,11 @@ func (sync *Syncer) DrainHandshake(recs protocol.Records) (err error) {
 	mode, sync.peervv, trace_id, err = ParseHandshake(body)
 	sync.lock.Lock()
 	if trace_id != nil {
-		if len(trace_id) != len(sync.theirsTraceid) {
+		if len(trace_id) != TraceSize {
 			err = ErrBadHPacket
 		} else {
-			sync.theirsTraceid = [TraceSize]byte(trace_id)
+			traceId := [TraceSize]byte(trace_id)
+			sync.theirsTraceid.Store(&traceId)
 		}
 	}
 	sync.Mode &= mode
