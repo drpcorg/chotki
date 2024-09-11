@@ -452,8 +452,6 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 			break
 		}
 		fallthrough
-	case SendPong, SendPing:
-		panic("chotki: unacceptable sync-state")
 
 	case SendDiff:
 		lit := LastLit(recs)
@@ -488,6 +486,9 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		if err == nil {
 			sync.Host.Broadcast(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs, sync.Name)
 		}
+
+	case SendPong, SendPing:
+		panic("chotki: unacceptable sync-state")
 
 	case SendEOF, SendNone:
 		return ErrClosed
