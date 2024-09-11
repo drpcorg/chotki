@@ -367,7 +367,7 @@ func (sync *Syncer) FeedDiffVV() (vv protocol.Records, err error) {
 }
 
 func (sync *Syncer) SetFeedState(ctx context.Context, state SyncState) {
-	sync.log.InfoCtx(ctx, "sync: feed state")
+	sync.log.InfoCtx(ctx, "sync: feed state", sync.withDefaultArgs("state", state.String())...)
 	sync.lock.Lock()
 	sync.feedState = state
 	sync.lock.Unlock()
