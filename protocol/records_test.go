@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"io"
 	"testing"
 
@@ -19,14 +20,14 @@ func (fd *sliceFeedDrainer) Close() error {
 	return nil
 }
 
-func (fd *sliceFeedDrainer) Drain(recs Records) error {
+func (fd *sliceFeedDrainer) Drain(ctx context.Context, recs Records) error {
 	for _, rec := range recs {
 		fd.data = append(fd.data, rec...)
 	}
 	return nil
 }
 
-func (fd *sliceFeedDrainer) Feed() (recs Records, err error) {
+func (fd *sliceFeedDrainer) Feed(ctx context.Context) (recs Records, err error) {
 	for i := 0; i < 3 && len(fd.data) > 0; i++ {
 		recs = append(recs, fd.data[0:1])
 		fd.data = fd.data[1:]

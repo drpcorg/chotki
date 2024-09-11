@@ -54,7 +54,7 @@ func (p *Peer) keepRead(ctx context.Context) error {
 			time.Sleep(time.Millisecond)
 			continue
 		}
-		if err = p.inout.Drain(recs); err != nil {
+		if err = p.inout.Drain(ctx, recs); err != nil {
 			return err
 		}
 	}
@@ -71,7 +71,7 @@ func (p *Peer) keepWrite(ctx context.Context) error {
 			// continue
 		}
 
-		recs, err := p.inout.Feed()
+		recs, err := p.inout.Feed(ctx)
 		if err != nil {
 			return err
 		}

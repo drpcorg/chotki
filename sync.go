@@ -19,9 +19,9 @@ const SyncBlockBits = 28
 const SyncBlockMask = (rdx.ID(1) << SyncBlockBits) - 1
 
 type SyncHost interface {
+	protocol.Drainer
 	Snapshot() pebble.Reader
-	Drain(recs protocol.Records) (err error)
-	Broadcast(records protocol.Records, except string)
+	Broadcast(ctx context.Context, records protocol.Records, except string)
 }
 
 type SyncMode byte
@@ -100,8 +100,12 @@ type Syncer struct {
 	pingStage atomic.Int32
 }
 
+func (sync *Syncer) withDefaultArgs(args ...any) []any {
+	return append([]any{"name", sync.Name}, args...)
+}
+
 func (sync *Syncer) Close() error {
-	sync.SetFeedState(SendEOF)
+	sync.SetFeedState(context.Background(), SendEOF)
 
 	if sync.Host == nil {
 		return utils.ErrClosed
@@ -112,26 +116,26 @@ func (sync *Syncer) Close() error {
 
 	if sync.snap != nil {
 		if err := sync.snap.Close(); err != nil {
-			sync.log.Error("failed closing snapshot", "err", err)
+			sync.log.Error("failed closing snapshot", sync.withDefaultArgs("err", err)...)
 		}
 		sync.snap = nil
 	}
 
 	if sync.ffit != nil {
 		if err := sync.ffit.Close(); err != nil {
-			sync.log.Error("failed closing ffit", "err", err)
+			sync.log.Error("failed closing ffit", sync.withDefaultArgs("err", err)...)
 		}
 		sync.ffit = nil
 	}
 
 	if sync.vvit != nil {
 		if err := sync.vvit.Close(); err != nil {
-			sync.log.Error("failed closing vvit", "err", err)
+			sync.log.Error("failed closing vvit", sync.withDefaultArgs("err", err)...)
 		}
 		sync.vvit = nil
 	}
 
-	sync.log.Info("sync: connection %s closed: %v\n", sync.Name, sync.reason)
+	sync.log.Info("sync: connection %s closed: %v\n", sync.withDefaultArgs(sync.Name, sync.reason)...)
 
 	return nil
 }
@@ -141,15 +145,15 @@ func (sync *Syncer) GetFeedState() SyncState {
 	return sync.feedState
 }
 
-func (sync *Syncer) pingTransition() {
+func (sync *Syncer) pingTransition(ctx context.Context) {
 	//nolint:exhaustive
 	switch PingState(sync.pingStage.Load()) {
 	case Ping:
-		sync.SetFeedState(SendPing)
+		sync.SetFeedState(ctx, SendPing)
 	case Pong:
-		sync.SetFeedState(SendPong)
+		sync.SetFeedState(ctx, SendPong)
 	case PingBroken:
-		sync.SetFeedState(SendEOF)
+		sync.SetFeedState(ctx, SendEOF)
 	}
 }
 
@@ -159,19 +163,19 @@ func (sync *Syncer) GetDrainState() SyncState {
 	return sync.drainState
 }
 
-func (sync *Syncer) Feed() (recs protocol.Records, err error) {
+func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error) {
 	switch sync.GetFeedState() {
 	case SendHandshake:
 		recs, err = sync.FeedHandshake()
-		sync.SetFeedState(SendDiff)
+		sync.SetFeedState(ctx, SendDiff)
 
 	case SendDiff:
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		select {
 		case <-time.After(sync.PingWait):
-			sync.log.Error("sync: handshake took too long", "name", sync.Name)
-			sync.SetFeedState(SendEOF)
+			sync.log.ErrorCtx(ctx, "sync: handshake took too long", sync.withDefaultArgs()...)
+			sync.SetFeedState(ctx, SendEOF)
 			return
 		case <-sync.WaitDrainState(ctx, SendDiff):
 		}
@@ -180,10 +184,10 @@ func (sync *Syncer) Feed() (recs protocol.Records, err error) {
 			recs2, _ := sync.FeedDiffVV()
 			recs = append(recs, recs2...)
 			if (sync.Mode & SyncLive) != 0 {
-				sync.SetFeedState(SendLive)
+				sync.SetFeedState(ctx, SendLive)
 				sync.resetPingTimer()
 			} else {
-				sync.SetFeedState(SendEOF)
+				sync.SetFeedState(ctx, SendEOF)
 			}
 			_ = sync.snap.Close()
 			sync.snap = nil
@@ -193,27 +197,27 @@ func (sync *Syncer) Feed() (recs protocol.Records, err error) {
 		recs = protocol.Records{
 			protocol.Record('A', rdx.Stlv("ping")),
 		}
-		sync.SetFeedState(SendLive)
+		sync.SetFeedState(ctx, SendLive)
 		sync.pingStage.Store(int32(Inactive))
 		sync.pingTimer.Stop()
 		sync.pingTimer = time.AfterFunc(sync.PingWait, func() {
 			sync.pingStage.Store(int32(PingBroken))
-			sync.log.Error("sync: peer did not respond to ping", "name", sync.Name)
+			sync.log.ErrorCtx(ctx, "sync: peer did not respond to ping", sync.withDefaultArgs()...)
 		})
 	case SendPong:
 		recs = protocol.Records{
 			protocol.Record('Z', rdx.Stlv("pong")),
 		}
 		sync.pingStage.Store(int32(Inactive))
-		sync.SetFeedState(SendLive)
+		sync.SetFeedState(ctx, SendLive)
 	case SendLive:
-		recs, err = sync.oqueue.Feed()
+		recs, err = sync.oqueue.Feed(ctx)
 		if err == utils.ErrClosed {
-			sync.log.Info("sync: queue closed", "name", sync.Name)
-			sync.SetFeedState(SendEOF)
+			sync.log.InfoCtx(ctx, "sync: queue closed", sync.withDefaultArgs()...)
+			sync.SetFeedState(ctx, SendEOF)
 			err = nil
 		}
-		sync.pingTransition()
+		sync.pingTransition(ctx)
 
 	case SendEOF:
 		reason := []byte("closing")
@@ -228,11 +232,11 @@ func (sync *Syncer) Feed() (recs protocol.Records, err error) {
 			_ = sync.snap.Close()
 			sync.snap = nil
 		}
-		sync.SetFeedState(SendNone)
+		sync.SetFeedState(ctx, SendNone)
 
 	case SendNone:
 		timer := time.AfterFunc(time.Second, func() {
-			sync.SetDrainState(SendNone)
+			sync.SetDrainState(ctx, SendNone)
 		})
 		<-sync.WaitDrainState(context.Background(), SendNone)
 		timer.Stop()
@@ -346,15 +350,15 @@ func (sync *Syncer) FeedDiffVV() (vv protocol.Records, err error) {
 	return
 }
 
-func (sync *Syncer) SetFeedState(state SyncState) {
-	sync.log.Info("sync: feed state", "name", sync.Name, "state", state.String())
+func (sync *Syncer) SetFeedState(ctx context.Context, state SyncState) {
+	sync.log.InfoCtx(ctx, "sync: feed state")
 	sync.lock.Lock()
 	sync.feedState = state
 	sync.lock.Unlock()
 }
 
-func (sync *Syncer) SetDrainState(state SyncState) {
-	sync.log.Info("sync: drain state", "name", sync.Name, "state", state.String())
+func (sync *Syncer) SetDrainState(ctx context.Context, state SyncState) {
+	sync.log.InfoCtx(ctx, "sync: drain state", sync.withDefaultArgs("state", state.String())...)
 	sync.lock.Lock()
 	sync.drainState = state
 	if sync.cond.L == nil {
@@ -408,7 +412,7 @@ func (sync *Syncer) resetPingTimer() {
 	})
 }
 
-func (sync *Syncer) Drain(recs protocol.Records) (err error) {
+func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error) {
 	if len(recs) == 0 {
 		return nil
 	}
@@ -420,14 +424,14 @@ func (sync *Syncer) Drain(recs protocol.Records) (err error) {
 		}
 		err = sync.DrainHandshake(recs[0:1])
 		if err == nil {
-			err = sync.Host.Drain(recs[0:1])
+			err = sync.Host.Drain(utils.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs[0:1])
 		}
 		if err != nil {
 			return
 		}
-		sync.Host.Broadcast(recs[0:1], sync.Name)
+		sync.Host.Broadcast(utils.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs[0:1], sync.Name)
 		recs = recs[1:]
-		sync.SetDrainState(SendDiff)
+		sync.SetDrainState(ctx, SendDiff)
 		if len(recs) == 0 {
 			break
 		}
@@ -439,9 +443,9 @@ func (sync *Syncer) Drain(recs protocol.Records) (err error) {
 		lit := LastLit(recs)
 		if lit != 'D' && lit != 'V' {
 			if lit == 'B' {
-				sync.SetDrainState(SendNone)
+				sync.SetDrainState(ctx, SendNone)
 			} else {
-				sync.SetDrainState(SendLive)
+				sync.SetDrainState(ctx, SendLive)
 			}
 			if lit == 'A' {
 				sync.pingStage.Store(int32(Pong))
@@ -450,23 +454,23 @@ func (sync *Syncer) Drain(recs protocol.Records) (err error) {
 		if sync.Mode&SyncLive != 0 {
 			sync.resetPingTimer()
 		}
-		err = sync.Host.Drain(recs)
+		err = sync.Host.Drain(utils.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs)
 		if err == nil {
-			sync.Host.Broadcast(recs, sync.Name)
+			sync.Host.Broadcast(ctx, recs, sync.Name)
 		}
 
 	case SendLive:
 		sync.resetPingTimer()
 		lit := LastLit(recs)
 		if lit == 'B' {
-			sync.SetDrainState(SendNone)
+			sync.SetDrainState(ctx, SendNone)
 		}
 		if lit == 'A' {
 			sync.pingStage.Store(int32(Pong))
 		}
-		err = sync.Host.Drain(recs)
+		err = sync.Host.Drain(utils.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs)
 		if err == nil {
-			sync.Host.Broadcast(recs, sync.Name)
+			sync.Host.Broadcast(utils.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs, sync.Name)
 		}
 
 	case SendEOF, SendNone:
@@ -477,7 +481,7 @@ func (sync *Syncer) Drain(recs protocol.Records) (err error) {
 	}
 
 	if err != nil { // todo send the error msg
-		sync.SetDrainState(SendEOF)
+		sync.SetDrainState(ctx, SendEOF)
 	}
 
 	return

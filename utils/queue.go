@@ -35,7 +35,7 @@ func (q *FDQueue[S, E]) Close() error {
 	return nil
 }
 
-func (q *FDQueue[S, E]) Drain(recs S) error {
+func (q *FDQueue[S, E]) Drain(ctx context.Context, recs S) error {
 	if q.ctx.Err() != nil {
 		return ErrClosed
 	}
@@ -43,6 +43,8 @@ func (q *FDQueue[S, E]) Drain(recs S) error {
 	defer q.active.Done()
 	for _, pkg := range recs {
 		select {
+		case <-ctx.Done():
+			break
 		case <-q.ctx.Done():
 			break
 		case q.ch <- pkg:
@@ -52,7 +54,7 @@ func (q *FDQueue[S, E]) Drain(recs S) error {
 	return nil
 }
 
-func (q *FDQueue[S, E]) Feed() (recs S, err error) {
+func (q *FDQueue[S, E]) Feed(ctx context.Context) (recs S, err error) {
 	if q.ctx.Err() != nil {
 		return nil, ErrClosed
 	}
@@ -60,6 +62,8 @@ func (q *FDQueue[S, E]) Feed() (recs S, err error) {
 	defer q.active.Done()
 	select {
 	case <-q.ctx.Done():
+		return
+	case <-ctx.Done():
 		return
 	case <-time.After(q.timeout):
 		return

@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"encoding/binary"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ func TestBlockingRecordQueue_Drain(t *testing.T) {
 			for n := uint64(0); n < N; n++ {
 				var b [8]byte
 				binary.LittleEndian.PutUint64(b[:], i|n)
-				err := queue.Drain([][]byte{b[:]})
+				err := queue.Drain(context.Background(), [][]byte{b[:]})
 				assert.Nil(t, err)
 			}
 		}(k)
@@ -28,7 +29,7 @@ func TestBlockingRecordQueue_Drain(t *testing.T) {
 
 	check := [K]int{}
 	for i := uint64(0); i < N*K; {
-		nums, err := queue.Feed()
+		nums, err := queue.Feed(context.Background())
 		assert.Nil(t, err)
 		for _, num := range nums {
 			assert.Equal(t, 8, len(num))
@@ -43,8 +44,8 @@ func TestBlockingRecordQueue_Drain(t *testing.T) {
 
 	recs := [][]byte{{'a'}}
 	assert.Nil(t, queue.Close())
-	err := queue.Drain(recs)
+	err := queue.Drain(context.Background(), recs)
 	assert.Equal(t, ErrClosed, err)
-	_, err2 := queue.Feed()
+	_, err2 := queue.Feed(context.Background())
 	assert.Equal(t, ErrClosed, err2)
 }

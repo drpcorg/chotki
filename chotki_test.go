@@ -19,7 +19,7 @@ import (
 
 type FeedCloserTest struct{}
 
-func (t *FeedCloserTest) Feed() (recs protocol.Records, err error) {
+func (t *FeedCloserTest) Feed(context.Context) (recs protocol.Records, err error) {
 	return protocol.Records{}, nil
 }
 
@@ -104,14 +104,14 @@ func TestChotki_SyncEdit(t *testing.T) {
 	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B"})
 	assert.Nil(t, err)
 
-	cid, err := a.NewClass(rdx.ID0, Schema...)
+	cid, err := a.NewClass(context.Background(), rdx.ID0, Schema...)
 	assert.NoError(t, err)
 
 	obj := &Test{
 		Test: "test data",
 	}
 	orm := a.ObjectMapper()
-	err = orm.New(cid, obj)
+	err = orm.New(context.Background(), cid, obj)
 	assert.NoError(t, err)
 	objectId := orm.FindID(obj)
 	orm.Close()
@@ -121,7 +121,7 @@ func TestChotki_SyncEdit(t *testing.T) {
 	resa, err := orm.Load(objectId, &Test{})
 	assert.NoError(t, err)
 	resa.(*Test).Test = "edited text"
-	assert.NoError(t, orm.Save(resa))
+	assert.NoError(t, orm.Save(context.Background(), resa))
 	syncSimplex(a, b)
 
 	borm := b.ObjectMapper()
@@ -261,7 +261,7 @@ func TestChotki_SyncGlobals(t *testing.T) {
 	_, tlv, err := a.ObjectFieldTLV(IdNames)
 	assert.Nil(t, err)
 	delta := rdx.MdeltaTR(tlv, rdx.MapTR{"test": rdx.ID0.ToOff(100)}, nil)
-	_, err = a.EditFieldTLV(IdNames, protocol.Record('M', delta))
+	_, err = a.EditFieldTLV(context.Background(), IdNames, protocol.Record('M', delta))
 	assert.Nil(t, err)
 
 	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B"})
@@ -329,7 +329,7 @@ func TestChotki_Sync3(t *testing.T) {
 
 	ids := make(map[string]rdx.ID)
 
-	cid, err := a.NewClass(rdx.ID0, Schema...)
+	cid, err := a.NewClass(context.Background(), rdx.ID0, Schema...)
 	assert.NoError(t, err)
 
 	// sync class a -> b -> c
@@ -341,7 +341,7 @@ func TestChotki_Sync3(t *testing.T) {
 			Test: fmt.Sprintf("some data for %s", db.opts.Name),
 		}
 		orm := db.ObjectMapper()
-		err = orm.New(cid, obj)
+		err = orm.New(context.Background(), cid, obj)
 		assert.NoError(t, err)
 		ids[db.opts.Name] = orm.FindID(obj)
 		orm.Close()

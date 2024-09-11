@@ -2,6 +2,7 @@ package chotki
 
 import (
 	"bytes"
+	"context"
 	"sync"
 	"text/template"
 
@@ -36,7 +37,7 @@ func NewORM(host *Chotki, snap *pebble.Snapshot) *ORM {
 }
 
 // New object of the same type get persisted and registered with the ORM
-func (orm *ORM) New(cid rdx.ID, objs ...NativeObject) (err error) {
+func (orm *ORM) New(ctx context.Context, cid rdx.ID, objs ...NativeObject) (err error) {
 	fields, e := orm.Host.ClassFields(cid)
 	if e != nil {
 		return e
@@ -50,7 +51,7 @@ func (orm *ORM) New(cid rdx.ID, objs ...NativeObject) (err error) {
 			tlv = append(tlv, protocol.Record(field.RdxType, edit))
 		}
 		var id rdx.ID
-		id, err = orm.Host.CommitPacket('O', cid, tlv)
+		id, err = orm.Host.CommitPacket(ctx, 'O', cid, tlv)
 		if err == nil {
 			orm.ids.Store(obj, id)
 			orm.objects.Store(id, obj)
@@ -61,7 +62,7 @@ func (orm *ORM) New(cid rdx.ID, objs ...NativeObject) (err error) {
 
 // Save the registered object's changes.
 // Much faster than SaveALl() esp if you loaded many, modified few.
-func (orm *ORM) Save(objs ...NativeObject) (err error) {
+func (orm *ORM) Save(ctx context.Context, objs ...NativeObject) (err error) {
 	for _, obj := range objs {
 		id := orm.FindID(obj)
 		if id == rdx.BadId {
@@ -104,7 +105,7 @@ func (orm *ORM) Save(objs ...NativeObject) (err error) {
 		}
 		_ = it.Close()
 		if len(changes) != 0 {
-			_, err = orm.Host.CommitPacket('E', id, changes)
+			_, err = orm.Host.CommitPacket(ctx, 'E', id, changes)
 		}
 	}
 	return err
@@ -112,9 +113,9 @@ func (orm *ORM) Save(objs ...NativeObject) (err error) {
 
 // SaveAll the changed fields; this will scan the objects and
 // their database records.
-func (orm *ORM) SaveAll() (err error) {
+func (orm *ORM) SaveAll(ctx context.Context) (err error) {
 	orm.objects.Range(func(_ rdx.ID, obj NativeObject) bool {
-		err = orm.Save(obj)
+		err = orm.Save(ctx, obj)
 		return err == nil
 	})
 
@@ -191,8 +192,8 @@ func (orm *ORM) UpdateAll() (err error) {
 }
 
 // Saves all the changes, updates all the objects to the current db state.
-func (orm *ORM) SyncAll() (err error) {
-	err = orm.SaveAll()
+func (orm *ORM) SyncAll(ctx context.Context) (err error) {
+	err = orm.SaveAll(ctx)
 	if err == nil {
 		err = orm.UpdateAll()
 	}

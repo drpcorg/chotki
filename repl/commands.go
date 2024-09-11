@@ -191,7 +191,7 @@ func (repl *REPL) CommandClass(arg *rdx.RDX) (id rdx.ID, err error) {
 			decl = append(decl, protocol.Record('T', tok))
 			n++
 		}
-		id, err = repl.Host.CommitPacket('C', parent, decl)
+		id, err = repl.Host.CommitPacket(context.Background(), 'C', parent, decl)
 	} else { // todo array
 		return
 	}
@@ -267,7 +267,7 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 	} else {
 		return
 	}
-	id, err = repl.Host.CommitPacket('O', tid, tlvs)
+	id, err = repl.Host.CommitPacket(context.Background(), 'O', tid, tlvs)
 	return
 }
 
@@ -286,7 +286,7 @@ func (repl *REPL) CommandEdit(arg *rdx.RDX) (id rdx.ID, err error) {
 			return
 		}
 		oid := rdx.IDFromText(arg.Nested[1].Text)
-		return repl.Host.EditObjectRDX(oid, arg.Nested[2:])
+		return repl.Host.EditObjectRDX(context.Background(), oid, arg.Nested[2:])
 	} else { // todo
 		return
 	}
@@ -309,7 +309,7 @@ func (repl *REPL) CommandAdd(arg *rdx.RDX) (id rdx.ID, err error) {
 			if fid.Off() == 0 || err != nil {
 				return
 			}
-			id, err = repl.Host.AddToNField(fid, add)
+			id, err = repl.Host.AddToNField(context.Background(), fid, add)
 		}
 
 	} else {
@@ -330,7 +330,7 @@ func (repl *REPL) CommandInc(arg *rdx.RDX) (id rdx.ID, err error) {
 		if id.Off() == 0 {
 			return
 		}
-		id, err = repl.Host.IncNField(fid)
+		id, err = repl.Host.IncNField(context.Background(), fid)
 	}
 	return
 }
@@ -457,7 +457,7 @@ func (repl *REPL) CommandPing(arg *rdx.RDX) (id rdx.ID, err error) {
 	}
 	fmt.Printf("pinging through %s (field %s, previously %s)\n",
 		fid.String(), form[off].Name, rdx.Snative(fact[off]))
-	id, err = repl.Host.SetFieldTLV(fid, protocol.Record('S', rdx.Stlv("ping")))
+	id, err = repl.Host.SetFieldTLV(context.Background(), fid, protocol.Record('S', rdx.Stlv("ping")))
 	return
 }
 
@@ -477,7 +477,7 @@ func KeepOddEven(oddeven uint64, cho *chotki.Chotki, fid rdx.ID) error {
 			protocol.Record('F', rdx.ZipUint64(fid.Off())),
 			protocol.Record(rdx.Natural, protocol.Record(rdx.Term, rdx.ZipUint64Pair(mine+1, src))),
 		}
-		_, err = cho.CommitPacket('E', fid.ZeroOff(), tlvs)
+		_, err = cho.CommitPacket(context.Background(), 'E', fid.ZeroOff(), tlvs)
 	}
 	return err
 }
@@ -548,7 +548,7 @@ var HelpTinc = errors.New("tinc b0b-12-2, tinc {fid:b0b-12-2,ms:1000,count:100}"
 func (repl *REPL) doTinc(fid rdx.ID, delay time.Duration, count int64) {
 	var err error
 	for ; count > 0 && err == nil; count-- {
-		_, err = repl.Host.IncNField(fid)
+		_, err = repl.Host.IncNField(context.Background(), fid)
 		if delay > time.Duration(0) {
 			time.Sleep(delay)
 		}
@@ -602,7 +602,7 @@ func (repl *REPL) doSinc(fid rdx.ID, delay time.Duration, count int64, mine uint
 			protocol.Record('F', rdx.ZipUint64(fid.Off())),
 			protocol.Record(rdx.Natural, protocol.Record(rdx.Term, rdx.ZipUint64Pair(mine, src))),
 		}
-		til, err = repl.Host.CommitPacket('E', fid.ZeroOff(), tlvs)
+		til, err = repl.Host.CommitPacket(context.Background(), 'E', fid.ZeroOff(), tlvs)
 		if delay > time.Duration(0) {
 			time.Sleep(delay)
 		}
@@ -696,7 +696,7 @@ func (repl *REPL) CommandName(arg *rdx.RDX) (id rdx.ID, err error) {
 		_, tlv, _ := repl.Host.ObjectFieldTLV(chotki.IdNames)
 		parsed := rdx.MparseTR(arg)
 		delta := protocol.Record('M', rdx.MdeltaTR(tlv, parsed, repl.Host.Clock()))
-		id, err = repl.Host.EditFieldTLV(chotki.IdNames, delta)
+		id, err = repl.Host.EditFieldTLV(context.Background(), chotki.IdNames, delta)
 	} else {
 		err = HelpName
 	}

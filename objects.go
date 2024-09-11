@@ -1,6 +1,7 @@
 package chotki
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"unicode/utf8"
@@ -316,7 +317,7 @@ func (cho *Chotki) ObjectVVField(fid rdx.ID) (vv rdx.VV, err error) {
 	return
 }
 
-func (cho *Chotki) NewClass(parent rdx.ID, fields ...Field) (id rdx.ID, err error) {
+func (cho *Chotki) NewClass(ctx context.Context, parent rdx.ID, fields ...Field) (id rdx.ID, err error) {
 	var fspecs protocol.Records
 	maxidx := int64(-1)
 	for _, field := range fields {
@@ -334,15 +335,15 @@ func (cho *Chotki) NewClass(parent rdx.ID, fields ...Field) (id rdx.ID, err erro
 		fspecs = append(fspecs, protocol.Record('T', rdx.FIRSTtlv(maxidx, 0, name)))
 	}
 	//head := protocol.AppendHeader(nil) fspecs.TotalLen()
-	return cho.CommitPacket('C', parent, fspecs)
+	return cho.CommitPacket(ctx, 'C', parent, fspecs)
 }
 
 // Creates a new object from enveloped TLV fields; no class checks.
-func (cho *Chotki) NewObjectTLV(tid rdx.ID, fields protocol.Records) (id rdx.ID, err error) {
-	return cho.CommitPacket('O', tid, fields)
+func (cho *Chotki) NewObjectTLV(ctx context.Context, tid rdx.ID, fields protocol.Records) (id rdx.ID, err error) {
+	return cho.CommitPacket(ctx, 'O', tid, fields)
 }
 
-func (cho *Chotki) NewObject(tid rdx.ID, fields ...string) (id rdx.ID, err error) {
+func (cho *Chotki) NewObject(ctx context.Context, tid rdx.ID, fields ...string) (id rdx.ID, err error) {
 	var form Fields
 	form, err = cho.ClassFields(tid)
 	if err != nil {
@@ -360,11 +361,11 @@ func (cho *Chotki) NewObject(tid rdx.ID, fields ...string) (id rdx.ID, err error
 		}
 		packet = append(packet, protocol.Record(rdt, tlv))
 	}
-	return cho.NewObjectTLV(tid, packet)
+	return cho.NewObjectTLV(ctx, tid, packet)
 }
 
 // Deprecated: does not handle non-trivial cases
-func (cho *Chotki) EditObject(oid rdx.ID, fields ...string) (id rdx.ID, err error) {
+func (cho *Chotki) EditObject(ctx context.Context, oid rdx.ID, fields ...string) (id rdx.ID, err error) {
 	formula, err := cho.ClassFields(oid)
 	if err != nil {
 		return rdx.BadId, err
@@ -387,7 +388,7 @@ func (cho *Chotki) EditObject(oid rdx.ID, fields ...string) (id rdx.ID, err erro
 		packet = append(packet, protocol.Record('F', rdx.ZipUint64(uint64(i))))
 		packet = append(packet, protocol.Record(rdt, tlv))
 	}
-	return cho.CommitPacket('E', oid, packet)
+	return cho.CommitPacket(ctx, 'E', oid, packet)
 }
 
 /*func (cho *Chotki) GetObject(oid rdx.ID) (tid rdx.ID, fields []string, err error) {
@@ -423,7 +424,7 @@ func (cho *Chotki) ObjectString(oid rdx.ID) (txt string, err error) {
 	return
 }
 
-func (cho *Chotki) EditObjectRDX(oid rdx.ID, pairs []rdx.RDX) (id rdx.ID, err error) {
+func (cho *Chotki) EditObjectRDX(ctx context.Context, oid rdx.ID, pairs []rdx.RDX) (id rdx.ID, err error) {
 	tlvs := protocol.Records{}
 	_, form, fact, e := cho.ObjectFields(oid)
 	if e != nil {
@@ -449,18 +450,18 @@ func (cho *Chotki) EditObjectRDX(oid rdx.ID, pairs []rdx.RDX) (id rdx.ID, err er
 			tlvs = append(tlvs, tmp[i])
 		}
 	}
-	return cho.CommitPacket('E', oid, tlvs)
+	return cho.CommitPacket(ctx, 'E', oid, tlvs)
 }
 
-func (cho *Chotki) SetFieldTLV(fid rdx.ID, tlve []byte) (id rdx.ID, err error) {
+func (cho *Chotki) SetFieldTLV(ctx context.Context, fid rdx.ID, tlve []byte) (id rdx.ID, err error) {
 	oid := fid.ZeroOff()
 	f := protocol.Record('F', rdx.ZipUint64(uint64(fid.Off())))
-	return cho.CommitPacket('E', oid, protocol.Records{f, tlve})
+	return cho.CommitPacket(ctx, 'E', oid, protocol.Records{f, tlve})
 }
 
 var ErrWrongFieldType = errors.New("wrong field type")
 
-func (cho *Chotki) AddToNField(fid rdx.ID, count uint64) (id rdx.ID, err error) {
+func (cho *Chotki) AddToNField(ctx context.Context, fid rdx.ID, count uint64) (id rdx.ID, err error) {
 	rdt, tlv, err := cho.ObjectFieldTLV(fid)
 	if err != nil || rdt != rdx.Natural {
 		return rdx.BadId, ErrWrongFieldType
@@ -471,12 +472,12 @@ func (cho *Chotki) AddToNField(fid rdx.ID, count uint64) (id rdx.ID, err error) 
 		protocol.Record('F', rdx.ZipUint64(fid.Off())),
 		protocol.Record(rdx.Natural, rdx.Ntlvt(mine+count, src)),
 	}
-	id, err = cho.CommitPacket('E', fid.ZeroOff(), tlvs)
+	id, err = cho.CommitPacket(ctx, 'E', fid.ZeroOff(), tlvs)
 	return
 }
 
-func (cho *Chotki) IncNField(fid rdx.ID) (id rdx.ID, err error) {
-	return cho.AddToNField(fid, 1)
+func (cho *Chotki) IncNField(ctx context.Context, fid rdx.ID) (id rdx.ID, err error) {
+	return cho.AddToNField(ctx, fid, 1)
 }
 
 func (cho *Chotki) MapTRField(fid rdx.ID) (themap rdx.MapTR, err error) {
@@ -504,7 +505,7 @@ func (cho *Chotki) MapSSField(fid rdx.ID) (themap rdx.MapSS, err error) {
 }
 
 // Adds/removes elements to/from a map (removed should map to nil)
-func (cho *Chotki) AddToMapTRField(fid rdx.ID, changes rdx.MapTR) (id rdx.ID, err error) {
+func (cho *Chotki) AddToMapTRField(ctx context.Context, fid rdx.ID, changes rdx.MapTR) (id rdx.ID, err error) {
 	rdt, tlv := cho.GetFieldTLV(fid) // todo error?
 	if rdt != rdx.Mapping {
 		return rdx.BadId, ErrWrongFieldType
@@ -518,11 +519,11 @@ func (cho *Chotki) AddToMapTRField(fid rdx.ID, changes rdx.MapTR) (id rdx.ID, er
 		protocol.Record('F', rdx.ZipUint64(fid.Off())),
 		protocol.Record(rdx.Mapping, dtlv),
 	}
-	id, err = cho.CommitPacket('E', fid.ZeroOff(), packet)
+	id, err = cho.CommitPacket(ctx, 'E', fid.ZeroOff(), packet)
 	return
 }
 
-func (cho *Chotki) SetMapTRField(fid rdx.ID, changes rdx.MapTR) (id rdx.ID, err error) {
+func (cho *Chotki) SetMapTRField(ctx context.Context, fid rdx.ID, changes rdx.MapTR) (id rdx.ID, err error) {
 	rdt, tlv := cho.GetFieldTLV(fid) // todo error?
 	if rdt != rdx.Mapping {
 		return rdx.BadId, ErrWrongFieldType
@@ -536,11 +537,11 @@ func (cho *Chotki) SetMapTRField(fid rdx.ID, changes rdx.MapTR) (id rdx.ID, err 
 		protocol.Record('F', rdx.ZipUint64(fid.Off())),
 		protocol.Record(rdx.Mapping, dtlv),
 	}
-	id, err = cho.CommitPacket('E', fid.ZeroOff(), packet)
+	id, err = cho.CommitPacket(ctx, 'E', fid.ZeroOff(), packet)
 	return
 }
 
-func (cho *Chotki) AddToMapSSField(fid rdx.ID, changes rdx.MapSS) (id rdx.ID, err error) {
+func (cho *Chotki) AddToMapSSField(ctx context.Context, fid rdx.ID, changes rdx.MapSS) (id rdx.ID, err error) {
 	rdt, tlv := cho.GetFieldTLV(fid) // todo error?
 	if rdt != rdx.Mapping {
 		return rdx.BadId, ErrWrongFieldType
@@ -554,11 +555,11 @@ func (cho *Chotki) AddToMapSSField(fid rdx.ID, changes rdx.MapSS) (id rdx.ID, er
 		protocol.Record('F', rdx.ZipUint64(fid.Off())),
 		protocol.Record(rdx.Mapping, dtlv),
 	}
-	id, err = cho.CommitPacket('E', fid.ZeroOff(), packet)
+	id, err = cho.CommitPacket(ctx, 'E', fid.ZeroOff(), packet)
 	return
 }
 
-func (cho *Chotki) SetMapSSField(fid rdx.ID, changes rdx.MapSS) (id rdx.ID, err error) {
+func (cho *Chotki) SetMapSSField(ctx context.Context, fid rdx.ID, changes rdx.MapSS) (id rdx.ID, err error) {
 	rdt, tlv := cho.GetFieldTLV(fid) // todo error?
 	if rdt != rdx.Mapping {
 		return rdx.BadId, ErrWrongFieldType
@@ -572,7 +573,7 @@ func (cho *Chotki) SetMapSSField(fid rdx.ID, changes rdx.MapSS) (id rdx.ID, err 
 		protocol.Record('F', rdx.ZipUint64(fid.Off())),
 		protocol.Record(rdx.Mapping, dtlv),
 	}
-	id, err = cho.CommitPacket('E', fid.ZeroOff(), packet)
+	id, err = cho.CommitPacket(ctx, 'E', fid.ZeroOff(), packet)
 	return
 }
 
@@ -599,10 +600,10 @@ func EditTLV(off uint64, rdt byte, tlv []byte) (edit []byte) {
 	return
 }
 
-func (cho *Chotki) EditFieldTLV(fid rdx.ID, delta []byte) (id rdx.ID, err error) {
+func (cho *Chotki) EditFieldTLV(ctx context.Context, fid rdx.ID, delta []byte) (id rdx.ID, err error) {
 	tlvs := protocol.Records{}
 	tlvs = append(tlvs, protocol.TinyRecord('F', rdx.ZipUint64(fid.Off())))
 	tlvs = append(tlvs, delta)
-	id, err = cho.CommitPacket('E', fid.ZeroOff(), tlvs)
+	id, err = cho.CommitPacket(ctx, 'E', fid.ZeroOff(), tlvs)
 	return
 }

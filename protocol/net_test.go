@@ -85,10 +85,10 @@ func TestTCPDepot_Connect(t *testing.T) {
 	time.Sleep(time.Second) // Wait connection, todo use events
 
 	// send a record
-	err = cCon.Drain(Records{Record('M', []byte("Hi there"))})
+	err = cCon.Drain(context.Background(), Records{Record('M', []byte("Hi there"))})
 	assert.Nil(t, err)
 
-	rec, err := lCon.Feed()
+	rec, err := lCon.Feed(context.Background())
 	assert.Nil(t, err)
 	assert.Greater(t, len(rec), 0)
 
@@ -98,10 +98,10 @@ func TestTCPDepot_Connect(t *testing.T) {
 	assert.Equal(t, 0, len(rest))
 
 	// respond to that
-	err = lCon.Drain(Records{Record('M', []byte("Re: Hi there"))})
+	err = lCon.Drain(context.Background(), Records{Record('M', []byte("Re: Hi there"))})
 	assert.Nil(t, err)
 
-	rerec, err := cCon.Feed()
+	rerec, err := cCon.Feed(context.Background())
 	assert.Nil(t, err)
 	assert.Greater(t, len(rerec), 0)
 

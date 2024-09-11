@@ -1,6 +1,7 @@
 package examples
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -17,7 +18,7 @@ func TestPlainObjectORM(t *testing.T) {
 	assert.Nil(t, err)
 	orma := a.ObjectMapper()
 
-	tid, err := a.NewClass(rdx.ID0,
+	tid, err := a.NewClass(context.Background(), rdx.ID0,
 		chotki.Field{Name: "Name", RdxType: rdx.String},
 		chotki.Field{Name: "Group", RdxType: rdx.Reference},
 		chotki.Field{Name: "Score", RdxType: rdx.Natural},
@@ -29,7 +30,7 @@ func TestPlainObjectORM(t *testing.T) {
 		Score: 123,
 	}
 	// todo StudentClassId -- init from a file (codegen it?)
-	err = orma.New(tid, &sidorov)
+	err = orma.New(context.Background(), tid, &sidorov)
 	assert.Nil(t, err)
 
 	id := orma.FindID(&sidorov)
@@ -53,7 +54,7 @@ func TestPlainObjectORM(t *testing.T) {
 	assert.Equal(t, uint64(123), sidorov2.Score)
 
 	sidorov2.Score = 124
-	err = orma2.Save(&sidorov2)
+	err = orma2.Save(context.Background(), &sidorov2)
 	assert.Nil(t, err)
 	assert.Equal(t, uint64(124), sidorov2.Score)
 	a2.DumpAll(os.Stderr)

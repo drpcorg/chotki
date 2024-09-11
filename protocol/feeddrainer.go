@@ -10,7 +10,7 @@ type Feeder interface {
 	// The EoF convention follows that of io.Reader:
 	// can either return `records, EoF` or
 	// `records, nil` followed by `nil/{}, EoF`
-	Feed() (recs Records, err error)
+	Feed(ctx context.Context) (recs Records, err error)
 }
 
 type FeedCloser interface {
@@ -19,7 +19,7 @@ type FeedCloser interface {
 }
 
 type Drainer interface {
-	Drain(recs Records) error
+	Drain(ctx context.Context, recs Records) error
 }
 
 type DrainCloser interface {
@@ -34,14 +34,14 @@ type FeedDrainCloser interface {
 }
 
 func Relay(feeder Feeder, drainer Drainer) error {
-	recs, err := feeder.Feed()
+	recs, err := feeder.Feed(context.Background())
 	if err != nil {
 		if len(recs) > 0 {
-			_ = drainer.Drain(recs)
+			_ = drainer.Drain(context.Background(), recs)
 		}
 		return err
 	}
-	err = drainer.Drain(recs)
+	err = drainer.Drain(context.Background(), recs)
 	return err
 }
 
@@ -81,9 +81,9 @@ func PumpThenClose(feed FeedCloser, drain DrainCloser) error {
 	var ferr, derr error
 	for ferr == nil && derr == nil {
 		var recs Records
-		recs, ferr = feed.Feed()
+		recs, ferr = feed.Feed(context.Background())
 		if len(recs) > 0 { // e.g. Feed() may return data AND EOF
-			derr = drain.Drain(recs)
+			derr = drain.Drain(context.Background(), recs)
 		}
 	}
 	_ = feed.Close()

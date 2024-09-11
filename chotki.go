@@ -238,7 +238,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			protocol.Record('S', rdx.Stlv("")),
 		))
 
-		if err = cho.Drain(init); err != nil {
+		if err = cho.Drain(context.Background(), init); err != nil {
 			return nil, err
 		}
 	}
@@ -318,7 +318,7 @@ func (cho *Chotki) KeepAlive() error {
 		protocol.Record('F', rdx.ZipUint64(2)),
 		protocol.Record('V', tlv_delta),
 	}
-	_, err = cho.CommitPacket('E', oid, d)
+	_, err = cho.CommitPacket(context.Background(), 'E', oid, d)
 	return err
 }
 
@@ -435,11 +435,11 @@ func (cho *Chotki) RemoveAllHooks(fid rdx.ID) {
 	cho.hooks.Delete(fid)
 }
 
-func (cho *Chotki) Broadcast(records protocol.Records, except string) {
+func (cho *Chotki) Broadcast(ctx context.Context, records protocol.Records, except string) {
 	cho.outq.Range(func(name string, hose protocol.DrainCloser) bool {
 		if name != except {
 			EventsOutboundMetric.WithLabelValues(name).Add(float64(len(records)))
-			if err := hose.Drain(records); err != nil {
+			if err := hose.Drain(ctx, records); err != nil {
 				cho.log.Error("couldn't drain to hose", "err", err)
 				cho.outq.Delete(name)
 			}
@@ -450,7 +450,7 @@ func (cho *Chotki) Broadcast(records protocol.Records, except string) {
 }
 
 // Here new packets are timestamped and queued for save
-func (cho *Chotki) CommitPacket(lit byte, ref rdx.ID, body protocol.Records) (id rdx.ID, err error) {
+func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body protocol.Records) (id rdx.ID, err error) {
 	cho.lock.Lock()
 	defer cho.lock.Unlock()
 
@@ -462,8 +462,8 @@ func (cho *Chotki) CommitPacket(lit byte, ref rdx.ID, body protocol.Records) (id
 	r := protocol.Record('R', ref.ZipBytes())
 	packet := protocol.Record(lit, i, r, protocol.Join(body...))
 	recs := protocol.Records{packet}
-	err = cho.Drain(recs)
-	cho.Broadcast(recs, "")
+	err = cho.Drain(ctx, recs)
+	cho.Broadcast(ctx, recs, "")
 	return
 }
 
@@ -471,7 +471,7 @@ func (cho *Chotki) Metrics() []prometheus.Collector {
 	return []prometheus.Collector{EventsMetric, EventsOutboundMetric}
 }
 
-func (cho *Chotki) Drain(recs protocol.Records) (err error) {
+func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error) {
 	var calls []CallHook
 
 	EventsMetric.Add(float64(len(recs)))
@@ -546,12 +546,12 @@ func (cho *Chotki) Drain(recs protocol.Records) (err error) {
 			noApply = true
 
 		case 'B': // bye dear
-			cho.log.Info("received session end")
+			cho.log.InfoCtx(ctx, "received session end", "id", id.String())
 			cho.syncs.Delete(id)
 		case 'A':
-			cho.log.Info("received ping")
+			cho.log.InfoCtx(ctx, "received ping")
 		case 'Z':
-			cho.log.Info("received pong")
+			cho.log.InfoCtx(ctx, "received pong")
 		default:
 			return fmt.Errorf("unsupported packet type %c", lit)
 		}
