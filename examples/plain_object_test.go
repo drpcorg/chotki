@@ -35,7 +35,7 @@ func TestPlainObjectORM(t *testing.T) {
 
 	id := orma.FindID(&sidorov)
 	assert.NotEqual(t, rdx.BadId, id)
-
+	orma.Close()
 	//a.DumpAll()
 	_ = a.Close()
 
@@ -59,6 +59,7 @@ func TestPlainObjectORM(t *testing.T) {
 	assert.Equal(t, uint64(124), sidorov2.Score)
 	a2.DumpAll(os.Stderr)
 
+	orma2.Close()
 	_ = a2.Close()
 
 	a3, err := chotki.Open("cho10", chotki.Options{Src: 0x10, Name: "test replica A"})
