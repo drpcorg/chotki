@@ -440,12 +440,12 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		}
 		err = sync.DrainHandshake(recs[0:1])
 		if err == nil {
-			err = sync.Host.Drain(utils.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs[0:1])
+			err = sync.Host.Drain(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs[0:1])
 		}
 		if err != nil {
 			return
 		}
-		sync.Host.Broadcast(utils.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs[0:1], sync.Name)
+		sync.Host.Broadcast(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs[0:1], sync.Name)
 		recs = recs[1:]
 		sync.SetDrainState(ctx, SendDiff)
 		if len(recs) == 0 {
@@ -470,7 +470,7 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		if sync.Mode&SyncLive != 0 {
 			sync.resetPingTimer()
 		}
-		err = sync.Host.Drain(utils.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs)
+		err = sync.Host.Drain(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs)
 		if err == nil {
 			sync.Host.Broadcast(ctx, recs, sync.Name)
 		}
@@ -484,9 +484,9 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		if lit == 'A' {
 			sync.pingStage.Store(int32(Pong))
 		}
-		err = sync.Host.Drain(utils.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs)
+		err = sync.Host.Drain(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs)
 		if err == nil {
-			sync.Host.Broadcast(utils.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs, sync.Name)
+			sync.Host.Broadcast(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs, sync.Name)
 		}
 
 	case SendEOF, SendNone:

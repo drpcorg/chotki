@@ -15,6 +15,7 @@ type Logger interface {
 	InfoCtx(ctx context.Context, msg string, args ...any)
 	WarnCtx(ctx context.Context, msg string, args ...any)
 	ErrorCtx(ctx context.Context, msg string, args ...any)
+	WithDefaultArgs(ctx context.Context, args ...any) context.Context
 }
 
 type DefaultLogger struct {
@@ -57,7 +58,7 @@ func getDefaultArgs(ctx context.Context) []any {
 	return ctxargs.([]any)
 }
 
-func WithDefaultArgs(ctx context.Context, args ...any) context.Context {
+func (d *DefaultLogger) WithDefaultArgs(ctx context.Context, args ...any) context.Context {
 	dargs := getDefaultArgs(ctx)
 	dargs = append(dargs, args...)
 	return context.WithValue(ctx, &DefaultArgs, dargs)
