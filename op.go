@@ -34,28 +34,32 @@ func ParsePacket(pack []byte) (lit byte, id, ref rdx.ID, body []byte, err error)
 	return
 }
 
-func ParseHandshake(body []byte) (mode SyncMode, vv rdx.VV, err error) {
-	// handshake: H(T{pro,src} M(mode) V(V{p,s}+) ...)
+func ParseHandshake(body []byte) (mode SyncMode, vv rdx.VV, trace_id []byte, err error) {
+	// handshake: H(T{pro,src} M(mode) V(V{p,s}+), T(trace_id) ...)
 	var mbody, vbody []byte
 	rest := body
 	mbody, rest = protocol.Take('M', rest)
 	if mbody == nil {
-		return 0, nil, ErrBadHPacket
+		return 0, nil, nil, ErrBadHPacket
 	}
 
-	vbody, _ = protocol.Take('V', rest)
+	vbody, rest = protocol.Take('V', rest)
 	if vbody == nil {
-		return 0, nil, ErrBadHPacket
+		return 0, nil, nil, ErrBadHPacket
 	}
 
 	vv = make(rdx.VV)
 	if err := vv.PutTLV(vbody); err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 
 	if err := mode.Unzip(mbody); err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 
-	return mode, vv, nil
+	trace_id, _ = protocol.Take('S', rest)
+	if trace_id == nil {
+		return 0, nil, nil, ErrBadHPacket
+	}
+	return mode, vv, trace_id, nil
 }
