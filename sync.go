@@ -522,6 +522,7 @@ func (sync *Syncer) DrainHandshake(recs protocol.Records) (err error) {
 	var mode SyncMode
 	var trace_id []byte
 	mode, sync.peervv, trace_id, err = ParseHandshake(body)
+	sync.lock.Lock()
 	if trace_id != nil {
 		if len(trace_id) != len(sync.theirsTraceid) {
 			err = ErrBadHPacket
@@ -529,7 +530,6 @@ func (sync *Syncer) DrainHandshake(recs protocol.Records) (err error) {
 			sync.theirsTraceid = [TraceSize]byte(trace_id)
 		}
 	}
-	sync.lock.Lock()
 	sync.Mode &= mode
 	sync.lock.Unlock()
 	return
