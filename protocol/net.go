@@ -33,7 +33,7 @@ const (
 	MIN_RETRY_PERIOD = time.Second / 2
 )
 
-type InstallCallback func(name string) FeedDrainCloser
+type InstallCallback func(name string) FeedDrainCloserTraced
 type DestroyCallback func(name string)
 
 // A TCP/TLS/QUIC server/client for the use case of real-time async communication.
@@ -240,13 +240,13 @@ func (n *Net) keepPeer(ctx context.Context, name string, conn net.Conn) {
 
 	readErr, wrireErr, closeErr := peer.Keep(ctx)
 	if readErr != nil {
-		n.log.Error("net: couldn't read from peer", "name", name, "err", readErr)
+		n.log.Error("net: couldn't read from peer", "name", name, "err", readErr, "trace_id", peer.GetTraceId())
 	}
 	if wrireErr != nil {
-		n.log.Error("net: couldn't write to peer", "name", name, "err", wrireErr)
+		n.log.Error("net: couldn't write to peer", "name", name, "err", wrireErr, "trace_id", peer.GetTraceId())
 	}
 	if closeErr != nil {
-		n.log.Error("net: couldn't correct close peer", "name", name, "err", closeErr)
+		n.log.Error("net: couldn't correct close peer", "name", name, "err", closeErr, "trace_id", peer.GetTraceId())
 	}
 
 	n.conns.Delete(name)

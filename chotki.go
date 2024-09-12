@@ -193,7 +193,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 	}
 
 	cho.net = protocol.NewNet(cho.log, opts.TlsConfig,
-		func(name string) protocol.FeedDrainCloser { // new connection
+		func(name string) protocol.FeedDrainCloserTraced { // new connection
 			const outQueueLimit = 1 << 20
 
 			queue := utils.NewFDQueue[protocol.Records](outQueueLimit, time.Millisecond)

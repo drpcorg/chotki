@@ -64,20 +64,32 @@ func tlsConfig(servername string) *tls.Config {
 	}
 }
 
+type TracedQueue[S ~[]E, E any] struct {
+	*utils.FDQueue[S, E]
+}
+
+func (t *TracedQueue[S, E]) GetTraceId() string {
+	return ""
+}
+
 func TestTCPDepot_Connect(t *testing.T) {
 	loop := "tls://127.0.0.1:32000"
 
 	log := utils.NewDefaultLogger(slog.LevelDebug)
 
 	lCon := utils.NewFDQueue[Records](16, time.Millisecond)
-	l := NewNet(log, nil, func(_ string) FeedDrainCloser { return lCon }, func(_ string) { lCon.Close() })
+	l := NewNet(log, nil, func(_ string) FeedDrainCloserTraced {
+		return &TracedQueue[Records, []byte]{lCon}
+	}, func(_ string) { lCon.Close() })
 	l.TlsConfig = tlsConfig("a.chotki.local")
 
 	err := l.Listen(context.Background(), loop)
 	assert.Nil(t, err)
 
 	cCon := utils.NewFDQueue[Records](16, time.Millisecond)
-	c := NewNet(log, nil, func(_ string) FeedDrainCloser { return cCon }, func(_ string) { cCon.Close() })
+	c := NewNet(log, nil, func(_ string) FeedDrainCloserTraced {
+		return &TracedQueue[Records, []byte]{cCon}
+	}, func(_ string) { cCon.Close() })
 	c.TlsConfig = tlsConfig("b.chotki.local")
 
 	err = c.Connect(context.Background(), loop)
@@ -124,7 +136,9 @@ func TestTCPDepot_ConnectFailed(t *testing.T) {
 	log := utils.NewDefaultLogger(slog.LevelDebug)
 
 	cCon := utils.NewFDQueue[Records](16, time.Millisecond)
-	c := NewNet(log, nil, func(_ string) FeedDrainCloser { return cCon }, func(_ string) { cCon.Close() })
+	c := NewNet(log, nil, func(_ string) FeedDrainCloserTraced {
+		return &TracedQueue[Records, []byte]{cCon}
+	}, func(_ string) { cCon.Close() })
 	c.TlsConfig = tlsConfig("b.chotki.local")
 
 	err := c.Connect(context.Background(), loop)

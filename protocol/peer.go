@@ -16,7 +16,7 @@ type Peer struct {
 	wg     sync.WaitGroup
 
 	conn  net.Conn
-	inout FeedDrainCloser
+	inout FeedDrainCloserTraced
 }
 
 func (p *Peer) keepRead(ctx context.Context) error {
@@ -60,6 +60,10 @@ func (p *Peer) keepRead(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (p *Peer) GetTraceId() string {
+	return p.inout.GetTraceId()
 }
 
 func (p *Peer) keepWrite(ctx context.Context) error {

@@ -109,7 +109,7 @@ type Syncer struct {
 }
 
 func (sync *Syncer) withDefaultArgs(args ...any) []any {
-	return append([]any{"name", sync.Name, "trace_id", sync.getTraceId()}, args...)
+	return append([]any{"name", sync.Name, "trace_id", sync.GetTraceId()}, args...)
 }
 
 func (sync *Syncer) Close() error {
@@ -505,7 +505,7 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 	return
 }
 
-func (sync *Syncer) getTraceId() string {
+func (sync *Syncer) GetTraceId() string {
 	theirsP := sync.theirsTraceid.Load()
 	if theirsP == nil {
 		theirsP = &[TraceSize]byte{}
