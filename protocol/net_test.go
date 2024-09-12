@@ -100,6 +100,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 	err = cCon.Drain(context.Background(), Records{Record('M', []byte("Hi there"))})
 	assert.Nil(t, err)
 
+	time.Sleep(100 * time.Millisecond)
 	rec, err := lCon.Feed(context.Background())
 	assert.Nil(t, err)
 	assert.Greater(t, len(rec), 0)
