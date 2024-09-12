@@ -54,17 +54,21 @@ type Net struct {
 	conns   *xsync.MapOf[string, *Peer]
 	listens *xsync.MapOf[string, net.Listener]
 
-	TlsConfig *tls.Config
+	TlsConfig          *tls.Config
+	ReadBufferTcpSize  int
+	WriteBufferTcpSize int
 }
 
 func NewNet(log utils.Logger, tlsConfig *tls.Config, install InstallCallback, destroy DestroyCallback) *Net {
 	return &Net{
-		log:       log,
-		conns:     xsync.NewMapOf[string, *Peer](),
-		listens:   xsync.NewMapOf[string, net.Listener](),
-		onInstall: install,
-		onDestroy: destroy,
-		TlsConfig: tlsConfig,
+		log:                log,
+		conns:              xsync.NewMapOf[string, *Peer](),
+		listens:            xsync.NewMapOf[string, net.Listener](),
+		onInstall:          install,
+		onDestroy:          destroy,
+		TlsConfig:          tlsConfig,
+		ReadBufferTcpSize:  131072,
+		WriteBufferTcpSize: 131072,
 	}
 }
 
@@ -206,8 +210,8 @@ func (n *Net) setTCPBuffersSize(ctx context.Context, conn net.Conn) {
 		n.log.WarnCtx(ctx, "net: unable to set buffers, because unknown connection type")
 		return
 	}
-	tconn.SetReadBuffer(65536)
-	tconn.SetWriteBuffer(65536)
+	tconn.SetReadBuffer(n.ReadBufferTcpSize)
+	tconn.SetWriteBuffer(n.WriteBufferTcpSize)
 }
 
 func (n *Net) KeepListening(ctx context.Context, addr string) {

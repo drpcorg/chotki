@@ -283,6 +283,11 @@ func (cho *Chotki) Close() error {
 	return nil
 }
 
+func (cho *Chotki) SetTcpBufferSize(writeSize, readSize int) {
+	cho.net.ReadBufferTcpSize = readSize
+	cho.net.WriteBufferTcpSize = readSize
+}
+
 func (cho *Chotki) KeepAliveLoop() {
 	var err error
 	for err == nil {
