@@ -111,10 +111,10 @@ func TestTCPDepot_Connect(t *testing.T) {
 
 	// respond to that
 	err = lCon.Drain(context.Background(), Records{Record('M', []byte("Re: Hi there"))})
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 
 	rerec, err := cCon.Feed(context.Background())
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Greater(t, len(rerec), 0)
 
 	relit, rebody, rerest := TakeAny(rerec[0])
