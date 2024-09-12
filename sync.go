@@ -491,7 +491,7 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		}
 		err = sync.Host.Drain(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs)
 		if err == nil {
-			sync.Host.Broadcast(ctx, recs, sync.Name)
+			sync.Host.Broadcast(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs, sync.Name)
 		}
 
 	case SendLive:
