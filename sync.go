@@ -432,10 +432,11 @@ func (sync *Syncer) resetPingTimer() {
 	})
 }
 
-func (sync *Syncer) processPings(recs protocol.Records) {
-	for _, rec := range recs {
+func (sync *Syncer) processPings(recs protocol.Records) protocol.Records {
+	for i, rec := range recs {
 		if protocol.Lit(rec) == 'P' {
 			body, _ := protocol.Take('P', rec)
+			recs = append(recs[:i], recs[i+1:]...)
 			switch rdx.Snative(body) {
 			case PingVal:
 				sync.log.Info("ping received", sync.withDefaultArgs()...)
@@ -446,6 +447,7 @@ func (sync *Syncer) processPings(recs protocol.Records) {
 			}
 		}
 	}
+	return recs
 }
 
 func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error) {
@@ -453,7 +455,7 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		return nil
 	}
 
-	sync.processPings(recs)
+	recs = sync.processPings(recs)
 
 	switch sync.drainState {
 	case SendHandshake:
