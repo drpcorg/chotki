@@ -182,12 +182,32 @@ func (n *Net) KeepConnecting(ctx context.Context, name string, addrs []string) {
 
 			continue
 		}
-
+		n.setTCPBuffersSize(n.log.WithDefaultArgs(ctx, "name", name), conn)
 		n.log.Info("net: connected", "name", name)
 
 		connBackoff = MIN_RETRY_PERIOD
 		n.keepPeer(ctx, name, conn)
 	}
+}
+
+func (n *Net) setTCPBuffersSize(ctx context.Context, conn net.Conn) {
+	var tconn *net.TCPConn
+	switch res := conn.(type) {
+	case *tls.Conn:
+		nconn, ok := res.NetConn().(*net.TCPConn)
+		if !ok {
+			n.log.WarnCtx(ctx, "net: unable to set buffers, because tls conn is strange")
+			return
+		}
+		tconn = nconn
+	case *net.TCPConn:
+		tconn = res
+	default:
+		n.log.WarnCtx(ctx, "net: unable to set buffers, because unknown connection type")
+		return
+	}
+	tconn.SetReadBuffer(65536)
+	tconn.SetWriteBuffer(65536)
 }
 
 func (n *Net) KeepListening(ctx context.Context, addr string) {
@@ -217,7 +237,7 @@ func (n *Net) KeepListening(ctx context.Context, addr string) {
 
 		remoteAddr := conn.RemoteAddr().String()
 		n.log.Info("net: accept connection", "addr", addr, "remoteAddr", remoteAddr)
-
+		n.setTCPBuffersSize(n.log.WithDefaultArgs(ctx, "addr", addr, "remoteAdds", remoteAddr), conn)
 		n.wg.Add(1)
 		go func() {
 			n.keepPeer(ctx, fmt.Sprintf("listen:%s:%s", uuid.Must(uuid.NewV7()).String(), remoteAddr), conn)
