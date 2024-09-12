@@ -175,6 +175,10 @@ func (sync *Syncer) GetDrainState() SyncState {
 }
 
 func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error) {
+	// other side closed the connection already
+	if sync.GetDrainState() == SendNone {
+		sync.SetFeedState(ctx, SendNone)
+	}
 	switch sync.GetFeedState() {
 	case SendHandshake:
 		recs, err = sync.FeedHandshake()
