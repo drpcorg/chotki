@@ -483,7 +483,7 @@ func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error)
 
 		lit, id, ref, body, parseErr := ParsePacket(packet)
 		if parseErr != nil {
-			cho.log.Warn("bad packet", "err", parseErr)
+			cho.log.WarnCtx(ctx, "bad packet", "err", parseErr)
 			return parseErr
 		}
 
