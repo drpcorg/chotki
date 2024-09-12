@@ -53,6 +53,9 @@ func (m *SyncMode) Unzip(raw []byte) error {
 	return nil
 }
 
+const PingVal = "ping"
+const PongVal = "pong"
+
 type SyncState int
 
 const (
@@ -203,7 +206,7 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 		}
 	case SendPing:
 		recs = protocol.Records{
-			protocol.Record('A', rdx.Stlv("ping")),
+			protocol.Record('P', rdx.Stlv(PingVal)),
 		}
 		sync.SetFeedState(ctx, SendLive)
 		sync.pingStage.Store(int32(Inactive))
@@ -214,7 +217,7 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 		})
 	case SendPong:
 		recs = protocol.Records{
-			protocol.Record('Z', rdx.Stlv("pong")),
+			protocol.Record('P', rdx.Stlv(PongVal)),
 		}
 		sync.pingStage.Store(int32(Inactive))
 		sync.SetFeedState(ctx, SendLive)
@@ -429,10 +432,28 @@ func (sync *Syncer) resetPingTimer() {
 	})
 }
 
+func (sync *Syncer) processPings(recs protocol.Records) {
+	for _, rec := range recs {
+		if protocol.Lit(rec) == 'P' {
+			body, _ := protocol.Take('P', rec)
+			switch rdx.Snative(body) {
+			case PingVal:
+				sync.log.Info("ping received", sync.withDefaultArgs()...)
+				// go to pong state next time
+				sync.pingStage.Store(int32(Pong))
+			case PongVal:
+				sync.log.Info("pong received", sync.withDefaultArgs()...)
+			}
+		}
+	}
+}
+
 func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error) {
 	if len(recs) == 0 {
 		return nil
 	}
+
+	sync.processPings(recs)
 
 	switch sync.drainState {
 	case SendHandshake:
@@ -462,9 +483,6 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 			} else {
 				sync.SetDrainState(ctx, SendLive)
 			}
-			if lit == 'A' {
-				sync.pingStage.Store(int32(Pong))
-			}
 		}
 		if sync.Mode&SyncLive != 0 {
 			sync.resetPingTimer()
@@ -479,9 +497,6 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		lit := LastLit(recs)
 		if lit == 'B' {
 			sync.SetDrainState(ctx, SendNone)
-		}
-		if lit == 'A' {
-			sync.pingStage.Store(int32(Pong))
 		}
 		err = sync.Host.Drain(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs)
 		if err == nil {

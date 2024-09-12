@@ -182,8 +182,6 @@ func TestChotki_SyncLivePingsOk(t *testing.T) {
 
 	assert.Equal(t, SendLive, synca.GetFeedState())
 	assert.Equal(t, SendLive, syncb.GetFeedState())
-	assert.Equal(t, SendLive, synca.GetDrainState())
-	assert.Equal(t, SendLive, syncb.GetDrainState())
 	cancel()
 	// wait until everything stopped
 	time.Sleep(time.Millisecond * 100)

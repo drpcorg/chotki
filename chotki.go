@@ -548,10 +548,7 @@ func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error)
 		case 'B': // bye dear
 			cho.log.InfoCtx(ctx, "received session end", "id", id.String())
 			cho.syncs.Delete(id)
-		case 'A':
-			cho.log.InfoCtx(ctx, "received ping")
-		case 'Z':
-			cho.log.InfoCtx(ctx, "received pong")
+		case 'P': // ping noop
 		default:
 			return fmt.Errorf("unsupported packet type %c", lit)
 		}
