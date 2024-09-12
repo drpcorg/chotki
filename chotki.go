@@ -215,13 +215,13 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 				oqueue:     queue,
 			}
 		},
-		func(name string) { // destroy connection
+		func(name string, p protocol.Traced) { // destroy connection
 			if q, deleted := cho.outq.LoadAndDelete(name); deleted && q != nil {
-				cho.log.Warn(fmt.Sprintf("closing the old conn to %s", name))
+				cho.log.Warn(fmt.Sprintf("closing the old conn to %s", name), "trace_id", p.GetTraceId())
 				if err := q.Close(); err != nil {
-					cho.log.Error(fmt.Sprintf("couldn't close conn %s", name), "err", err)
+					cho.log.Error(fmt.Sprintf("couldn't close conn %s", name), "err", err, "trace_id", p.GetTraceId())
 				}
-				cho.log.Warn(fmt.Sprintf("closed the old conn to %s", name))
+				cho.log.Warn(fmt.Sprintf("closed the old conn to %s", name), "trace_id", p.GetTraceId())
 			}
 		})
 

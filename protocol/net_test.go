@@ -80,7 +80,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 	lCon := utils.NewFDQueue[Records](16, time.Millisecond)
 	l := NewNet(log, nil, func(_ string) FeedDrainCloserTraced {
 		return &TracedQueue[Records, []byte]{lCon}
-	}, func(_ string) { lCon.Close() })
+	}, func(_ string, t Traced) { lCon.Close() })
 	l.TlsConfig = tlsConfig("a.chotki.local")
 
 	err := l.Listen(context.Background(), loop)
@@ -89,7 +89,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 	cCon := utils.NewFDQueue[Records](16, time.Millisecond)
 	c := NewNet(log, nil, func(_ string) FeedDrainCloserTraced {
 		return &TracedQueue[Records, []byte]{cCon}
-	}, func(_ string) { cCon.Close() })
+	}, func(_ string, t Traced) { cCon.Close() })
 	c.TlsConfig = tlsConfig("b.chotki.local")
 
 	err = c.Connect(context.Background(), loop)
@@ -138,7 +138,7 @@ func TestTCPDepot_ConnectFailed(t *testing.T) {
 	cCon := utils.NewFDQueue[Records](16, time.Millisecond)
 	c := NewNet(log, nil, func(_ string) FeedDrainCloserTraced {
 		return &TracedQueue[Records, []byte]{cCon}
-	}, func(_ string) { cCon.Close() })
+	}, func(_ string, t Traced) { cCon.Close() })
 	c.TlsConfig = tlsConfig("b.chotki.local")
 
 	err := c.Connect(context.Background(), loop)

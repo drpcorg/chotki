@@ -33,9 +33,13 @@ type FeedDrainCloser interface {
 	io.Closer
 }
 
+type Traced interface {
+	GetTraceId() string
+}
+
 type FeedDrainCloserTraced interface {
 	FeedDrainCloser
-	GetTraceId() string
+	Traced
 }
 
 func Relay(feeder Feeder, drainer Drainer) error {

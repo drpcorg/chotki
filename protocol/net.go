@@ -34,7 +34,7 @@ const (
 )
 
 type InstallCallback func(name string) FeedDrainCloserTraced
-type DestroyCallback func(name string)
+type DestroyCallback func(name string, p Traced)
 
 // A TCP/TLS/QUIC server/client for the use case of real-time async communication.
 // Differently from the case of request-response (like HTTP), we do not
@@ -250,7 +250,7 @@ func (n *Net) keepPeer(ctx context.Context, name string, conn net.Conn) {
 	}
 
 	n.conns.Delete(name)
-	n.onDestroy(name)
+	n.onDestroy(name, peer)
 }
 
 func (n *Net) createListener(ctx context.Context, addr string) (net.Listener, error) {
