@@ -238,12 +238,12 @@ func (n *Net) keepPeer(ctx context.Context, name string, conn net.Conn) {
 	peer := &Peer{inout: n.onInstall(name), conn: conn}
 	n.conns.Store(name, peer)
 
-	readErr, wrireErr, closeErr := peer.Keep(ctx)
+	readErr, writeErr, closeErr := peer.Keep(ctx)
 	if readErr != nil {
 		n.log.Error("net: couldn't read from peer", "name", name, "err", readErr, "trace_id", peer.GetTraceId())
 	}
-	if wrireErr != nil {
-		n.log.Error("net: couldn't write to peer", "name", name, "err", wrireErr, "trace_id", peer.GetTraceId())
+	if writeErr != nil {
+		n.log.Error("net: couldn't write to peer", "name", name, "err", writeErr, "trace_id", peer.GetTraceId())
 	}
 	if closeErr != nil {
 		n.log.Error("net: couldn't correct close peer", "name", name, "err", closeErr, "trace_id", peer.GetTraceId())
