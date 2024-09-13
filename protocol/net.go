@@ -61,15 +61,30 @@ type Net struct {
 
 func NewNet(log utils.Logger, tlsConfig *tls.Config, install InstallCallback, destroy DestroyCallback) *Net {
 	return &Net{
-		log:                log,
-		conns:              xsync.NewMapOf[string, *Peer](),
-		listens:            xsync.NewMapOf[string, net.Listener](),
-		onInstall:          install,
-		onDestroy:          destroy,
-		TlsConfig:          tlsConfig,
-		ReadBufferTcpSize:  131072,
-		WriteBufferTcpSize: 131072,
+		log:       log,
+		conns:     xsync.NewMapOf[string, *Peer](),
+		listens:   xsync.NewMapOf[string, net.Listener](),
+		onInstall: install,
+		onDestroy: destroy,
+		TlsConfig: tlsConfig,
 	}
+}
+
+type NetStats struct {
+	ReadBuffers map[string]int32
+}
+
+func (n *Net) GetStats() NetStats {
+	stats := NetStats{
+		ReadBuffers: make(map[string]int32),
+	}
+	n.conns.Range(func(name string, peer *Peer) bool {
+		if peer != nil {
+			stats.ReadBuffers[name] = peer.GetIncomingPacketBufferSize()
+		}
+		return true
+	})
+	return stats
 }
 
 func (n *Net) Close() error {
@@ -210,8 +225,12 @@ func (n *Net) setTCPBuffersSize(ctx context.Context, conn net.Conn) {
 		n.log.WarnCtx(ctx, "net: unable to set buffers, because unknown connection type")
 		return
 	}
-	tconn.SetReadBuffer(n.ReadBufferTcpSize)
-	tconn.SetWriteBuffer(n.WriteBufferTcpSize)
+	if n.ReadBufferTcpSize > 0 {
+		tconn.SetReadBuffer(n.ReadBufferTcpSize)
+	}
+	if n.WriteBufferTcpSize > 0 {
+		tconn.SetWriteBuffer(n.WriteBufferTcpSize)
+	}
 }
 
 func (n *Net) KeepListening(ctx context.Context, addr string) {

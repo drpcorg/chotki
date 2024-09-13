@@ -472,8 +472,35 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 	return
 }
 
+type NetCollector struct {
+	net *protocol.Net
+	d   *prometheus.Desc
+}
+
+func NewNetCollector(net *protocol.Net) *NetCollector {
+	return &NetCollector{
+		net: net,
+		d:   prometheus.NewDesc("chotki_net_read_buffer_size", "", []string{"peer"}, prometheus.Labels{}),
+	}
+}
+
+func (n *NetCollector) Describe(d chan<- *prometheus.Desc) {
+	d <- n.d
+}
+
+func (n *NetCollector) Collect(m chan<- prometheus.Metric) {
+	stats := n.net.GetStats()
+	for name, v := range stats.ReadBuffers {
+		m <- prometheus.MustNewConstMetric(n.d, prometheus.GaugeValue, float64(v), name)
+	}
+}
+
 func (cho *Chotki) Metrics() []prometheus.Collector {
-	return []prometheus.Collector{EventsMetric, EventsOutboundMetric}
+	return []prometheus.Collector{
+		EventsMetric,
+		EventsOutboundMetric,
+		NewNetCollector(cho.net),
+	}
 }
 
 func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error) {

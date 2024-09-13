@@ -15,21 +15,41 @@ type Peer struct {
 	closed atomic.Bool
 	wg     sync.WaitGroup
 
-	conn  net.Conn
-	inout FeedDrainCloserTraced
+	conn           net.Conn
+	inout          FeedDrainCloserTraced
+	incomingBuffer atomic.Int32
 }
 
 func (p *Peer) keepRead(ctx context.Context) error {
 	var buf bytes.Buffer
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	reading := make(chan Records, 20000)
+	processErrors := make(chan error)
+	defer close(reading)
+	defer close(processErrors)
+	defer p.incomingBuffer.Store(0)
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case recs, ok := <-reading:
+				// closed
+				if !ok {
+					return
+				}
+				if err := p.inout.Drain(ctx, recs); err != nil {
+					processErrors <- err
+					return
+				}
+				p.incomingBuffer.Add(-int32(len(recs)))
+			}
+		}
+	}()
 
 	for !p.closed.Load() {
-		select {
-		case <-ctx.Done():
-			break
-		default:
-			// continue
-		}
-
 		if buf.Available() < TYPICAL_MTU {
 			buf.Grow(TYPICAL_MTU)
 		}
@@ -54,8 +74,13 @@ func (p *Peer) keepRead(ctx context.Context) error {
 			time.Sleep(time.Millisecond)
 			continue
 		}
-		if err = p.inout.Drain(ctx, recs); err != nil {
+		p.incomingBuffer.Add(int32(len(recs)))
+		select {
+		case <-ctx.Done():
+			break
+		case err := <-processErrors:
 			return err
+		case reading <- recs:
 		}
 	}
 
@@ -64,6 +89,10 @@ func (p *Peer) keepRead(ctx context.Context) error {
 
 func (p *Peer) GetTraceId() string {
 	return p.inout.GetTraceId()
+}
+
+func (p *Peer) GetIncomingPacketBufferSize() int32 {
+	return p.incomingBuffer.Load()
 }
 
 func (p *Peer) keepWrite(ctx context.Context) error {
