@@ -50,8 +50,6 @@ var (
 	ErrCausalityBroken = errors.New("chotki: order fail: refs an unknown op")
 )
 
-var pebbleWriteOptions = pebble.WriteOptions{Sync: true}
-
 var EventsMetric = prometheus.NewCounter(prometheus.CounterOpts{
 	Namespace: "chotki",
 	Name:      "packet_count",
@@ -64,14 +62,15 @@ var EventsOutboundMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 type Options struct {
 	pebble.Options
 
-	Src          uint64
-	Name         string
-	Log1         protocol.Records
-	MaxLogLen    int64
-	RelaxedOrder bool
-	Logger       utils.Logger
-	PingPeriod   time.Duration
-	PingWait     time.Duration
+	Src                uint64
+	Name               string
+	Log1               protocol.Records
+	MaxLogLen          int64
+	RelaxedOrder       bool
+	Logger             utils.Logger
+	PingPeriod         time.Duration
+	PingWait           time.Duration
+	PebbleWriteOptions *pebble.WriteOptions
 
 	TlsConfig *tls.Config
 }
@@ -87,6 +86,10 @@ func (o *Options) SetDefaults() {
 
 	if o.PingWait == 0 {
 		o.PingWait = 10 * time.Second
+	}
+
+	if o.PebbleWriteOptions == nil {
+		o.PebbleWriteOptions = &pebble.WriteOptions{Sync: true}
 	}
 
 	o.Merger = &pebble.Merger{
@@ -572,7 +575,7 @@ func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error)
 			}
 			err = cho.ApplyV(id, ref, body, d)
 			if err == nil {
-				err = cho.db.Apply(d, &pebbleWriteOptions)
+				err = cho.db.Apply(d, cho.opts.PebbleWriteOptions)
 				cho.syncs.Delete(id)
 			}
 			noApply = true
@@ -586,7 +589,7 @@ func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error)
 		}
 
 		if !noApply && err == nil {
-			if err := cho.db.Apply(&pb, &pebbleWriteOptions); err != nil {
+			if err := cho.db.Apply(&pb, cho.opts.PebbleWriteOptions); err != nil {
 				return err
 			}
 		}
