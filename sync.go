@@ -448,6 +448,7 @@ func (sync *Syncer) resetPingTimer() {
 	defer sync.lock.Unlock()
 	if sync.pingTimer != nil && sync.pingStage.Load() != int32(WaitingForPing) {
 		sync.pingTimer.Reset(sync.PingPeriod)
+		sync.pingStage.CompareAndSwap(int32(Ping), int32(Inactive))
 	} else {
 		if sync.pingTimer != nil {
 			sync.pingTimer.Stop()
@@ -455,8 +456,8 @@ func (sync *Syncer) resetPingTimer() {
 		sync.pingTimer = time.AfterFunc(sync.PingPeriod, func() {
 			sync.pingStage.Store(int32(Ping))
 		})
+		sync.pingStage.CompareAndSwap(int32(WaitingForPing), int32(Inactive))
 	}
-	sync.pingStage.Store(int32(Inactive))
 }
 
 func (sync *Syncer) processPings(recs protocol.Records) protocol.Records {
