@@ -8,22 +8,24 @@ import (
 )
 
 type FDQueue[S ~[]E, E any] struct {
-	ctx     context.Context
-	close   context.CancelFunc
-	timeout time.Duration
-	ch      chan E
-	active  sync.WaitGroup
+	ctx       context.Context
+	close     context.CancelFunc
+	timelimit time.Duration
+	ch        chan E
+	active    sync.WaitGroup
+	batchSize int
 }
 
 var ErrClosed = errors.New("[chotki] feed/drain queue is closed")
 
-func NewFDQueue[S ~[]E, E any](limit int, timeout time.Duration) *FDQueue[S, E] {
+func NewFDQueue[S ~[]E, E any](limit int, timelimit time.Duration, batchSize int) *FDQueue[S, E] {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &FDQueue[S, E]{
-		timeout: timeout,
-		ch:      make(chan E, limit),
-		ctx:     ctx,
-		close:   cancel,
+		timelimit: timelimit,
+		ch:        make(chan E, limit),
+		ctx:       ctx,
+		close:     cancel,
+		batchSize: batchSize,
 	}
 }
 
@@ -60,21 +62,23 @@ func (q *FDQueue[S, E]) Feed(ctx context.Context) (recs S, err error) {
 	}
 	q.active.Add(1)
 	defer q.active.Done()
-	select {
-	case <-q.ctx.Done():
-		return
-	case <-ctx.Done():
-		return
-	case <-time.After(q.timeout):
-		return
-	case pkg, ok := <-q.ch:
-		if !ok {
+	timelimit := time.After(q.timelimit)
+	for {
+		select {
+		case <-q.ctx.Done():
 			return
-		}
-		recs = append(recs, pkg)
-		if len(q.ch) == 0 {
+		case <-ctx.Done():
 			return
+		case <-timelimit:
+			return
+		case pkg, ok := <-q.ch:
+			if !ok {
+				return
+			}
+			recs = append(recs, pkg)
+			if len(recs) > q.batchSize {
+				return
+			}
 		}
 	}
-	return
 }

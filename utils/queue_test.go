@@ -13,7 +13,7 @@ func TestBlockingRecordQueue_Drain(t *testing.T) {
 	const N = 1 << 10 // 8K
 	const K = 1 << 4  // 16
 
-	queue := NewFDQueue[[][]byte](1024, time.Millisecond)
+	queue := NewFDQueue[[][]byte](1024, time.Millisecond, 0)
 
 	for k := 0; k < K; k++ {
 		go func(k int) {

@@ -71,6 +71,8 @@ type Options struct {
 	PingPeriod         time.Duration
 	PingWait           time.Duration
 	PebbleWriteOptions *pebble.WriteOptions
+	BroadcastBatchSize int
+	BroadcastTimeLimit time.Duration
 
 	TlsConfig *tls.Config
 }
@@ -90,6 +92,10 @@ func (o *Options) SetDefaults() {
 
 	if o.PebbleWriteOptions == nil {
 		o.PebbleWriteOptions = &pebble.WriteOptions{Sync: true}
+	}
+
+	if o.BroadcastTimeLimit == 0 {
+		o.BroadcastTimeLimit = time.Millisecond
 	}
 
 	o.Merger = &pebble.Merger{
@@ -199,7 +205,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		func(name string) protocol.FeedDrainCloserTraced { // new connection
 			const outQueueLimit = 1 << 20
 
-			queue := utils.NewFDQueue[protocol.Records](outQueueLimit, time.Millisecond)
+			queue := utils.NewFDQueue[protocol.Records](outQueueLimit, cho.opts.BroadcastTimeLimit, cho.opts.BroadcastBatchSize)
 			if q, loaded := cho.outq.LoadAndStore(name, queue); loaded && q != nil {
 				cho.log.Warn(fmt.Sprintf("closing the old conn to %s", name))
 				if err := q.Close(); err != nil {

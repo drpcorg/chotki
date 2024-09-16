@@ -77,7 +77,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 
 	log := utils.NewDefaultLogger(slog.LevelDebug)
 
-	lCon := utils.NewFDQueue[Records](16, time.Millisecond)
+	lCon := utils.NewFDQueue[Records](16, time.Millisecond, 0)
 	l := NewNet(log, nil, func(_ string) FeedDrainCloserTraced {
 		return &TracedQueue[Records, []byte]{lCon}
 	}, func(_ string, t Traced) { lCon.Close() })
@@ -86,7 +86,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 	err := l.Listen(context.Background(), loop)
 	assert.Nil(t, err)
 
-	cCon := utils.NewFDQueue[Records](16, time.Millisecond)
+	cCon := utils.NewFDQueue[Records](16, time.Millisecond, 0)
 	c := NewNet(log, nil, func(_ string) FeedDrainCloserTraced {
 		return &TracedQueue[Records, []byte]{cCon}
 	}, func(_ string, t Traced) { cCon.Close() })
@@ -136,7 +136,7 @@ func TestTCPDepot_ConnectFailed(t *testing.T) {
 
 	log := utils.NewDefaultLogger(slog.LevelDebug)
 
-	cCon := utils.NewFDQueue[Records](16, time.Millisecond)
+	cCon := utils.NewFDQueue[Records](16, time.Millisecond, 0)
 	c := NewNet(log, nil, func(_ string) FeedDrainCloserTraced {
 		return &TracedQueue[Records, []byte]{cCon}
 	}, func(_ string, t Traced) { cCon.Close() })
