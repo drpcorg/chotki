@@ -26,11 +26,11 @@ func (p *Peer) keepRead(ctx context.Context) error {
 	defer cancel()
 	reading := make(chan Records, 20000)
 	processErrors := make(chan error)
-	defer close(reading)
-	defer close(processErrors)
 	defer p.incomingBuffer.Store(0)
 
 	go func() {
+		defer close(reading)
+		defer close(processErrors)
 		for {
 			select {
 			case <-ctx.Done():
@@ -41,7 +41,10 @@ func (p *Peer) keepRead(ctx context.Context) error {
 					return
 				}
 				if err := p.inout.Drain(ctx, recs); err != nil {
-					processErrors <- err
+					select {
+					case processErrors <- err:
+					case <-ctx.Done():
+					}
 					return
 				}
 				p.incomingBuffer.Add(-int32(len(recs)))
