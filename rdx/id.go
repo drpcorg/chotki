@@ -3,7 +3,7 @@ package rdx
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
+	"strconv"
 
 	"github.com/drpcorg/chotki/protocol"
 )
@@ -136,9 +136,9 @@ func (id ID) String() string {
 	off := id.Off()
 	src := id.Src()
 	if off == 0 {
-		return fmt.Sprintf("%x-%x", src, seq)
+		return strconv.FormatInt(int64(src), 16) + "-" + strconv.FormatInt(int64(seq), 16)
 	} else {
-		return fmt.Sprintf("%x-%x-%x", src, seq, off)
+		return strconv.FormatInt(int64(src), 16) + "-" + strconv.FormatInt(int64(seq), 16) + "-" + strconv.FormatInt(int64(off), 16)
 	}
 }
 

@@ -75,6 +75,7 @@ const (
 	Ping
 	Pong
 	PingBroken
+	WaitingForPing
 )
 
 func (s SyncState) String() string {
@@ -109,10 +110,26 @@ type Syncer struct {
 	cond      sync.Cond
 	pingTimer *time.Timer
 	pingStage atomic.Int32
+	lctx      atomic.Pointer[context.Context]
 }
 
-func (sync *Syncer) withDefaultArgs(args ...any) []any {
-	return append([]any{"name", sync.Name, "trace_id", sync.GetTraceId()}, args...)
+func (sync *Syncer) withDefaultArgs(reset bool) context.Context {
+	lctx := sync.lctx.Load()
+
+	if lctx == nil || reset {
+		nlctx := sync.log.WithDefaultArgs(context.Background(), "name", sync.Name, "trace_id", sync.GetTraceId())
+		if !reset {
+			sync.lctx.CompareAndSwap(lctx, &nlctx)
+		} else {
+			sync.lctx.Store(&nlctx)
+		}
+		lctx = &nlctx
+	}
+	return *lctx
+}
+
+func (sync *Syncer) logCtx(ctx context.Context) context.Context {
+	return sync.log.WithArgsFromCtx(ctx, sync.withDefaultArgs(false))
 }
 
 func (sync *Syncer) Close() error {
@@ -127,26 +144,26 @@ func (sync *Syncer) Close() error {
 
 	if sync.snap != nil {
 		if err := sync.snap.Close(); err != nil {
-			sync.log.Error("failed closing snapshot", sync.withDefaultArgs("err", err)...)
+			sync.log.ErrorCtx(sync.logCtx(context.Background()), "failed closing snapshot", "err", err)
 		}
 		sync.snap = nil
 	}
 
 	if sync.ffit != nil {
 		if err := sync.ffit.Close(); err != nil {
-			sync.log.Error("failed closing ffit", sync.withDefaultArgs("err", err)...)
+			sync.log.ErrorCtx(sync.logCtx(context.Background()), "failed closing ffit", "err", err)
 		}
 		sync.ffit = nil
 	}
 
 	if sync.vvit != nil {
 		if err := sync.vvit.Close(); err != nil {
-			sync.log.Error("failed closing vvit", sync.withDefaultArgs("err", err)...)
+			sync.log.ErrorCtx(sync.logCtx(context.Background()), "failed closing vvit", "err", err)
 		}
 		sync.vvit = nil
 	}
 
-	sync.log.Info("sync: connection %s closed: %v\n", sync.withDefaultArgs(sync.Name, sync.reason)...)
+	sync.log.InfoCtx(sync.logCtx(context.Background()), "sync: connection %s closed: %v\n", sync.Name, sync.reason)
 
 	return nil
 }
@@ -189,7 +206,7 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 		defer cancel()
 		select {
 		case <-time.After(sync.PingWait):
-			sync.log.ErrorCtx(ctx, "sync: handshake took too long", sync.withDefaultArgs()...)
+			sync.log.ErrorCtx(sync.logCtx(ctx), "sync: handshake took too long")
 			sync.SetFeedState(ctx, SendEOF)
 			return
 		case <-sync.WaitDrainState(ctx, SendDiff):
@@ -213,12 +230,12 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 			protocol.Record('P', rdx.Stlv(PingVal)),
 		}
 		sync.SetFeedState(ctx, SendLive)
-		sync.pingStage.Store(int32(Inactive))
 		sync.pingTimer.Stop()
 		sync.pingTimer = time.AfterFunc(sync.PingWait, func() {
 			sync.pingStage.Store(int32(PingBroken))
-			sync.log.ErrorCtx(ctx, "sync: peer did not respond to ping", sync.withDefaultArgs()...)
+			sync.log.ErrorCtx(sync.logCtx(ctx), "sync: peer did not respond to ping")
 		})
+		sync.pingStage.Store(int32(WaitingForPing))
 	case SendPong:
 		recs = protocol.Records{
 			protocol.Record('P', rdx.Stlv(PongVal)),
@@ -228,7 +245,7 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 	case SendLive:
 		recs, err = sync.oqueue.Feed(ctx)
 		if err == utils.ErrClosed {
-			sync.log.InfoCtx(ctx, "sync: queue closed", sync.withDefaultArgs()...)
+			sync.log.InfoCtx(sync.logCtx(ctx), "sync: queue closed")
 			sync.SetFeedState(ctx, SendEOF)
 			err = nil
 		}
@@ -297,6 +314,7 @@ func (sync *Syncer) FeedHandshake() (vv protocol.Records, err error) {
 	hash := sha1.Sum(uuid[:])
 	tracePart := [TraceSize]byte(hash[:TraceSize])
 	sync.myTraceId.Store(&tracePart)
+	sync.withDefaultArgs(true)
 
 	// handshake: H(T{pro,src} M(mode) V(V{p,s}+), T(trace_ids))
 	hs := protocol.Record('H',
@@ -375,14 +393,14 @@ func (sync *Syncer) FeedDiffVV() (vv protocol.Records, err error) {
 }
 
 func (sync *Syncer) SetFeedState(ctx context.Context, state SyncState) {
-	sync.log.InfoCtx(ctx, "sync: feed state", sync.withDefaultArgs("state", state.String())...)
+	sync.log.InfoCtx(sync.logCtx(ctx), "sync: feed state", "state", state.String())
 	sync.lock.Lock()
 	sync.feedState = state
 	sync.lock.Unlock()
 }
 
 func (sync *Syncer) SetDrainState(ctx context.Context, state SyncState) {
-	sync.log.InfoCtx(ctx, "sync: drain state", sync.withDefaultArgs("state", state.String())...)
+	sync.log.InfoCtx(sync.logCtx(ctx), "sync: drain state", "state", state.String())
 	sync.lock.Lock()
 	sync.drainState = state
 	if sync.cond.L == nil {
@@ -428,12 +446,17 @@ func LastLit(recs protocol.Records) byte {
 func (sync *Syncer) resetPingTimer() {
 	sync.lock.Lock()
 	defer sync.lock.Unlock()
-	if sync.pingTimer != nil {
-		sync.pingTimer.Stop()
+	if sync.pingTimer != nil && sync.pingStage.Load() != int32(WaitingForPing) {
+		sync.pingTimer.Reset(sync.PingPeriod)
+	} else {
+		if sync.pingTimer != nil {
+			sync.pingTimer.Stop()
+		}
+		sync.pingTimer = time.AfterFunc(sync.PingPeriod, func() {
+			sync.pingStage.Store(int32(Ping))
+		})
 	}
-	sync.pingTimer = time.AfterFunc(sync.PingPeriod, func() {
-		sync.pingStage.Store(int32(Ping))
-	})
+	sync.pingStage.Store(int32(Inactive))
 }
 
 func (sync *Syncer) processPings(recs protocol.Records) protocol.Records {
@@ -443,11 +466,11 @@ func (sync *Syncer) processPings(recs protocol.Records) protocol.Records {
 			recs = append(recs[:i], recs[i+1:]...)
 			switch rdx.Snative(body) {
 			case PingVal:
-				sync.log.Info("ping received", sync.withDefaultArgs()...)
+				sync.log.InfoCtx(sync.logCtx(context.Background()), "ping received")
 				// go to pong state next time
 				sync.pingStage.Store(int32(Pong))
 			case PongVal:
-				sync.log.Info("pong received", sync.withDefaultArgs()...)
+				sync.log.InfoCtx(sync.logCtx(context.Background()), "pong received")
 			}
 		}
 	}
@@ -468,12 +491,12 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		}
 		err = sync.DrainHandshake(recs[0:1])
 		if err == nil {
-			err = sync.Host.Drain(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs[0:1])
+			err = sync.Host.Drain(sync.logCtx(ctx), recs[0:1])
 		}
 		if err != nil {
 			return
 		}
-		sync.Host.Broadcast(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs[0:1], sync.Name)
+		sync.Host.Broadcast(sync.logCtx(ctx), recs[0:1], sync.Name)
 		recs = recs[1:]
 		sync.SetDrainState(ctx, SendDiff)
 		if len(recs) == 0 {
@@ -493,9 +516,9 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		if sync.Mode&SyncLive != 0 {
 			sync.resetPingTimer()
 		}
-		err = sync.Host.Drain(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs)
+		err = sync.Host.Drain(sync.logCtx(ctx), recs)
 		if err == nil {
-			sync.Host.Broadcast(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs, sync.Name)
+			sync.Host.Broadcast(sync.logCtx(ctx), recs, sync.Name)
 		}
 
 	case SendLive:
@@ -504,9 +527,9 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		if lit == 'B' {
 			sync.SetDrainState(ctx, SendNone)
 		}
-		err = sync.Host.Drain(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs)
+		err = sync.Host.Drain(sync.logCtx(ctx), recs)
 		if err == nil {
-			sync.Host.Broadcast(sync.log.WithDefaultArgs(ctx, sync.withDefaultArgs()...), recs, sync.Name)
+			sync.Host.Broadcast(sync.logCtx(ctx), recs, sync.Name)
 		}
 
 	case SendPong, SendPing:
@@ -559,6 +582,7 @@ func (sync *Syncer) DrainHandshake(recs protocol.Records) (err error) {
 		} else {
 			traceId := [TraceSize]byte(trace_id)
 			sync.theirsTraceid.Store(&traceId)
+			sync.withDefaultArgs(true)
 		}
 	}
 	sync.Mode &= mode
