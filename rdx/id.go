@@ -132,14 +132,21 @@ func TakeIDWary(lit byte, pack []byte) (id ID, rest []byte, err error) {
 }
 
 func (id ID) String() string {
-	seq := id.Seq()
-	off := id.Off()
-	src := id.Src()
-	if off == 0 {
-		return strconv.FormatInt(int64(src), 16) + "-" + strconv.FormatInt(int64(seq), 16)
-	} else {
-		return strconv.FormatInt(int64(src), 16) + "-" + strconv.FormatInt(int64(seq), 16) + "-" + strconv.FormatInt(int64(off), 16)
+
+	var buf [64]byte
+	b := buf[:0]
+
+	b = strconv.AppendInt(b, int64(id.Src()), 16)
+	b = append(b, '-')
+	b = strconv.AppendInt(b, int64(id.Seq()), 16)
+
+	if off := id.Off(); off != 0 {
+		b = append(b, '-')
+		b = strconv.AppendInt(b, int64(off), 16)
 	}
+
+	return string(b)
+
 }
 
 const Hex = "0123456789abcdef"
