@@ -59,6 +59,12 @@ var EventsOutboundMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 	Name:      "outbound_packet_count",
 }, []string{"name"})
 
+var EventsBatchSize = prometheus.NewHistogram(prometheus.HistogramOpts{
+	Namespace: "chotki",
+	Name:      "batch_size",
+	Buckets:   []float64{0, 1, 10, 50, 100, 500, 1000, 10000},
+})
+
 type Options struct {
 	pebble.Options
 
@@ -509,6 +515,7 @@ func (cho *Chotki) Metrics() []prometheus.Collector {
 		EventsMetric,
 		EventsOutboundMetric,
 		NewNetCollector(cho.net),
+		EventsBatchSize,
 	}
 }
 
@@ -516,6 +523,7 @@ func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error)
 	var calls []CallHook
 
 	EventsMetric.Add(float64(len(recs)))
+	EventsBatchSize.Observe(float64(len(recs)))
 
 	for _, packet := range recs { // parse the packets
 		if err != nil {
