@@ -40,16 +40,17 @@ func (p *Peer) keepRead(ctx context.Context) error {
 			}
 			time := time.After(p.readAccumtTimeLimit)
 			var buff Records
+		BUFFER:
 			for len(buff) <= p.readBatchSize {
 				select {
 				case <-time:
-					break
+					break BUFFER
 				case <-ctx.Done():
-					break
+					break BUFFER
 				case recs, ok := <-reading:
 					// closed
 					if !ok {
-						break
+						break BUFFER
 					}
 					buff = append(buff, recs...)
 				}
