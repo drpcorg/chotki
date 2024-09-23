@@ -54,20 +54,60 @@ type Net struct {
 	conns   *xsync.MapOf[string, *Peer]
 	listens *xsync.MapOf[string, net.Listener]
 
-	TlsConfig          *tls.Config
-	ReadBufferTcpSize  int
-	WriteBufferTcpSize int
+	tlsConfig          *tls.Config
+	readBufferTcpSize  int
+	writeBufferTcpSize int
+	readAccumTimeLimit time.Duration
+	readMaxBatchSize   int
+	readMaxBufferSize  int
 }
 
-func NewNet(log utils.Logger, tlsConfig *tls.Config, install InstallCallback, destroy DestroyCallback) *Net {
-	return &Net{
+type NetOpt interface {
+	Apply(*Net)
+}
+
+type NetTlsConfigOpt struct {
+	Config *tls.Config
+}
+
+func (opt *NetTlsConfigOpt) Apply(n *Net) {
+	n.tlsConfig = opt.Config
+}
+
+type NetReadBatchOpt struct {
+	MaxBatchSize       int
+	ReadAccumTimeLimit time.Duration
+	MaxBufferSize      int
+}
+
+func (opt *NetReadBatchOpt) Apply(n *Net) {
+	n.readMaxBatchSize = opt.MaxBatchSize
+	n.readAccumTimeLimit = opt.ReadAccumTimeLimit
+	n.readMaxBufferSize = opt.MaxBufferSize
+}
+
+type TcpBufferSizeOpt struct {
+	Read  int
+	Write int
+}
+
+func (opt *TcpBufferSizeOpt) Apply(n *Net) {
+	n.readBufferTcpSize = opt.Read
+	n.writeBufferTcpSize = opt.Write
+}
+
+func NewNet(log utils.Logger, install InstallCallback, destroy DestroyCallback, opts ...NetOpt) *Net {
+	net := &Net{
 		log:       log,
 		conns:     xsync.NewMapOf[string, *Peer](),
 		listens:   xsync.NewMapOf[string, net.Listener](),
 		onInstall: install,
 		onDestroy: destroy,
-		TlsConfig: tlsConfig,
 	}
+	for _, o := range opts {
+		o.Apply(net)
+	}
+	return net
 }
 
 type NetStats struct {
@@ -225,11 +265,11 @@ func (n *Net) setTCPBuffersSize(ctx context.Context, conn net.Conn) {
 		n.log.WarnCtx(ctx, "net: unable to set buffers, because unknown connection type")
 		return
 	}
-	if n.ReadBufferTcpSize > 0 {
-		tconn.SetReadBuffer(n.ReadBufferTcpSize)
+	if n.readBufferTcpSize > 0 {
+		tconn.SetReadBuffer(n.readBufferTcpSize)
 	}
-	if n.WriteBufferTcpSize > 0 {
-		tconn.SetWriteBuffer(n.WriteBufferTcpSize)
+	if n.writeBufferTcpSize > 0 {
+		tconn.SetWriteBuffer(n.writeBufferTcpSize)
 	}
 }
 
@@ -278,7 +318,7 @@ func (n *Net) KeepListening(ctx context.Context, addr string) {
 }
 
 func (n *Net) keepPeer(ctx context.Context, name string, conn net.Conn) {
-	peer := &Peer{inout: n.onInstall(name), conn: conn}
+	peer := &Peer{inout: n.onInstall(name), conn: conn, readAccumtTimeLimit: n.readAccumTimeLimit, readBatchSize: n.readMaxBatchSize, readMaxQueueSize: n.readMaxBufferSize}
 	n.conns.Store(name, peer)
 
 	readErr, writeErr, closeErr := peer.Keep(ctx)
@@ -316,7 +356,7 @@ func (n *Net) createListener(ctx context.Context, addr string) (net.Listener, er
 			return nil, err
 		}
 
-		listener = tls.NewListener(listener, n.TlsConfig)
+		listener = tls.NewListener(listener, n.tlsConfig)
 
 	case QUIC:
 		return nil, errors.New("QUIC unimplemented")
@@ -340,7 +380,7 @@ func (n *Net) createConn(ctx context.Context, addr string) (net.Conn, error) {
 		}
 
 	case TLS:
-		d := tls.Dialer{Config: n.TlsConfig}
+		d := tls.Dialer{Config: n.tlsConfig}
 
 		if conn, err = d.DialContext(ctx, "tcp", address); err != nil {
 			return nil, err

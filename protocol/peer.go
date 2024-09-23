@@ -15,16 +15,19 @@ type Peer struct {
 	closed atomic.Bool
 	wg     sync.WaitGroup
 
-	conn           net.Conn
-	inout          FeedDrainCloserTraced
-	incomingBuffer atomic.Int32
+	conn                net.Conn
+	inout               FeedDrainCloserTraced
+	incomingBuffer      atomic.Int32
+	readAccumtTimeLimit time.Duration
+	readBatchSize       int
+	readMaxQueueSize    int
 }
 
 func (p *Peer) keepRead(ctx context.Context) error {
 	var buf bytes.Buffer
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	reading := make(chan Records, 20000)
+	reading := make(chan Records, p.readMaxQueueSize)
 	processErrors := make(chan error)
 	defer p.incomingBuffer.Store(0)
 
@@ -32,23 +35,33 @@ func (p *Peer) keepRead(ctx context.Context) error {
 		defer close(reading)
 		defer close(processErrors)
 		for {
-			select {
-			case <-ctx.Done():
+			if ctx.Err() != nil {
 				return
-			case recs, ok := <-reading:
-				// closed
-				if !ok {
-					return
-				}
-				if err := p.inout.Drain(ctx, recs); err != nil {
-					select {
-					case processErrors <- err:
-					case <-ctx.Done():
-					}
-					return
-				}
-				p.incomingBuffer.Add(-int32(len(recs)))
 			}
+			time := time.After(p.readAccumtTimeLimit)
+			var buff Records
+			for len(buff) <= p.readBatchSize {
+				select {
+				case <-time:
+					break
+				case <-ctx.Done():
+					break
+				case recs, ok := <-reading:
+					// closed
+					if !ok {
+						break
+					}
+					buff = append(buff, recs...)
+				}
+			}
+			if err := p.inout.Drain(ctx, buff); err != nil {
+				select {
+				case processErrors <- err:
+				case <-ctx.Done():
+				}
+				return
+			}
+			p.incomingBuffer.Add(-int32(len(buff)))
 		}
 	}()
 

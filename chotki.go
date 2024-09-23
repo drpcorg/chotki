@@ -79,6 +79,11 @@ type Options struct {
 	PebbleWriteOptions *pebble.WriteOptions
 	BroadcastBatchSize int
 	BroadcastTimeLimit time.Duration
+	ReadAccumTimeLimit time.Duration
+	ReadMaxBatchSize   int
+	ReadMaxBufferSize  int
+	TcpReadBufferSize  int
+	TcpWriteBufferSize int
 
 	TlsConfig *tls.Config
 }
@@ -96,12 +101,19 @@ func (o *Options) SetDefaults() {
 		o.PingWait = 10 * time.Second
 	}
 
+	if o.ReadMaxBufferSize == 0 {
+		o.ReadMaxBufferSize = 100
+	}
+
 	if o.PebbleWriteOptions == nil {
 		o.PebbleWriteOptions = &pebble.WriteOptions{Sync: true}
 	}
 
 	if o.BroadcastTimeLimit == 0 {
 		o.BroadcastTimeLimit = time.Millisecond
+	}
+	if o.ReadAccumTimeLimit == 0 {
+		o.ReadAccumTimeLimit = time.Millisecond
 	}
 
 	o.Merger = &pebble.Merger{
@@ -207,7 +219,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		types: xsync.NewMapOf[rdx.ID, Fields](),
 	}
 
-	cho.net = protocol.NewNet(cho.log, opts.TlsConfig,
+	cho.net = protocol.NewNet(cho.log,
 		func(name string) protocol.FeedDrainCloserTraced { // new connection
 			const outQueueLimit = 1 << 20
 
@@ -238,7 +250,11 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 				}
 				cho.log.Warn(fmt.Sprintf("closed the old conn to %s", name), "trace_id", p.GetTraceId())
 			}
-		})
+		},
+		&protocol.NetTlsConfigOpt{Config: opts.TlsConfig},
+		&protocol.NetReadBatchOpt{MaxBatchSize: cho.opts.ReadMaxBatchSize, ReadAccumTimeLimit: cho.opts.ReadAccumTimeLimit},
+		&protocol.TcpBufferSizeOpt{Read: cho.opts.TcpReadBufferSize, Write: cho.opts.TcpWriteBufferSize},
+	)
 
 	if !exists {
 		id0 := rdx.IDFromSrcSeqOff(opts.Src, 0, 0)
@@ -296,11 +312,6 @@ func (cho *Chotki) Close() error {
 	cho.last = rdx.ID0
 
 	return nil
-}
-
-func (cho *Chotki) SetTcpBufferSize(writeSize, readSize int) {
-	cho.net.ReadBufferTcpSize = readSize
-	cho.net.WriteBufferTcpSize = readSize
 }
 
 func (cho *Chotki) KeepAliveLoop() {

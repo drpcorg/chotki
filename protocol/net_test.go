@@ -78,19 +78,17 @@ func TestTCPDepot_Connect(t *testing.T) {
 	log := utils.NewDefaultLogger(slog.LevelDebug)
 
 	lCon := utils.NewFDQueue[Records](16, time.Millisecond, 0)
-	l := NewNet(log, nil, func(_ string) FeedDrainCloserTraced {
+	l := NewNet(log, func(_ string) FeedDrainCloserTraced {
 		return &TracedQueue[Records, []byte]{lCon}
-	}, func(_ string, t Traced) { lCon.Close() })
-	l.TlsConfig = tlsConfig("a.chotki.local")
+	}, func(_ string, t Traced) { lCon.Close() }, &NetTlsConfigOpt{tlsConfig("a.chotki.local")})
 
 	err := l.Listen(context.Background(), loop)
 	assert.Nil(t, err)
 
 	cCon := utils.NewFDQueue[Records](16, time.Millisecond, 0)
-	c := NewNet(log, nil, func(_ string) FeedDrainCloserTraced {
+	c := NewNet(log, func(_ string) FeedDrainCloserTraced {
 		return &TracedQueue[Records, []byte]{cCon}
-	}, func(_ string, t Traced) { cCon.Close() })
-	c.TlsConfig = tlsConfig("b.chotki.local")
+	}, func(_ string, t Traced) { cCon.Close() }, &NetTlsConfigOpt{tlsConfig("b.chotki.local")})
 
 	err = c.Connect(context.Background(), loop)
 	assert.Nil(t, err)
@@ -137,10 +135,9 @@ func TestTCPDepot_ConnectFailed(t *testing.T) {
 	log := utils.NewDefaultLogger(slog.LevelDebug)
 
 	cCon := utils.NewFDQueue[Records](16, time.Millisecond, 0)
-	c := NewNet(log, nil, func(_ string) FeedDrainCloserTraced {
+	c := NewNet(log, func(_ string) FeedDrainCloserTraced {
 		return &TracedQueue[Records, []byte]{cCon}
-	}, func(_ string, t Traced) { cCon.Close() })
-	c.TlsConfig = tlsConfig("b.chotki.local")
+	}, func(_ string, t Traced) { cCon.Close() }, &NetTlsConfigOpt{tlsConfig("b.chotki.local")})
 
 	err := c.Connect(context.Background(), loop)
 	assert.Nil(t, err)
