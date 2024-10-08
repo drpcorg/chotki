@@ -498,9 +498,9 @@ func MdeltaTR(tlv []byte, changes MapTR, clock Clock) (tlv_delta []byte) {
 			continue
 		}
 		new_rev := NextRev(it.Val.revz)
-		tlv_delta = append(tlv_delta, protocol.Record(Term, FIRSTtlv(new_rev, 0, it.Val.val))...)
+		tlv_delta = append(tlv_delta, protocol.Record(Term, FIRSTtlv(new_rev, 0, it.Key.val))...)
 		tlv_delta = append(tlv_delta, protocol.Record(Reference, FIRSTtlv(new_rev, 0, change.ZipBytes()))...)
-		delete(changes, string(it.Val.val)) // fixme
+		delete(changes, string(it.Key.val))
 	}
 	for key, val := range changes {
 		tlv_delta = append(tlv_delta, protocol.Record(Term, Ttlv(key))...)
