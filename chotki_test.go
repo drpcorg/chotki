@@ -277,6 +277,75 @@ func TestChotki_SyncGlobals(t *testing.T) {
 	_ = b.Close()
 }
 
+func TestChotki_CheckMdeltaTR(t *testing.T) {
+	dirs, clear := testdirs(0xa, 0xb)
+	defer clear()
+
+	a, err := Open(dirs[0], Options{Src: 0xa, Name: "test replica A"})
+	assert.Nil(t, err)
+
+	_, tlv, err := a.ObjectFieldTLV(IdNames)
+	a.ObjectMapper()
+	assert.Nil(t, err)
+
+	names, err := a.MapTRField(IdNames)
+	assert.Nil(t, err)
+	keysCount := len(names)
+
+	// add one field
+	delta := rdx.MdeltaTR(tlv, rdx.MapTR{"test": rdx.ID0.ToOff(100)}, nil)
+	_, err = a.EditFieldTLV(context.Background(), IdNames, protocol.Record('M', delta))
+	assert.Nil(t, err)
+
+	// check
+	names, err = a.MapTRField(IdNames)
+	assert.Nil(t, err)
+	assert.Equal(t, names["test"], rdx.ID0.ToOff(100))
+	assert.Equal(t, len(names), keysCount+1)
+
+	//edit that field
+	_, tlv, err = a.ObjectFieldTLV(IdNames)
+	assert.Nil(t, err)
+	delta = rdx.MdeltaTR(tlv, rdx.MapTR{"test": rdx.ID0.ToOff(101)}, nil)
+	_, err = a.EditFieldTLV(context.Background(), IdNames, protocol.Record('M', delta))
+	assert.Nil(t, err)
+
+	// check
+	names, err = a.MapTRField(IdNames)
+	assert.Nil(t, err)
+	assert.Equal(t, names["test"], rdx.ID0.ToOff(101))
+	assert.Equal(t, len(names), keysCount+1)
+
+	//edit one field and add another
+	_, tlv, err = a.ObjectFieldTLV(IdNames)
+	assert.Nil(t, err)
+	delta = rdx.MdeltaTR(tlv, rdx.MapTR{"test": rdx.ID0.ToOff(102), "test2": rdx.ID0.ToOff(103)}, nil)
+	_, err = a.EditFieldTLV(context.Background(), IdNames, protocol.Record('M', delta))
+	assert.Nil(t, err)
+
+	//check on first replica
+	names, err = a.MapTRField(IdNames)
+	assert.Nil(t, err)
+	assert.Equal(t, names["test"], rdx.ID0.ToOff(102))
+	assert.Equal(t, names["test2"], rdx.ID0.ToOff(103))
+	assert.Equal(t, len(names), keysCount+2)
+
+	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B"})
+	assert.Nil(t, err)
+
+	syncDuplex(a, b)
+
+	//check on second replica
+	names, err = b.MapTRField(IdNames)
+	assert.Nil(t, err)
+	assert.Equal(t, names["test"], rdx.ID0.ToOff(102))
+	assert.Equal(t, names["test2"], rdx.ID0.ToOff(103))
+	assert.Equal(t, len(names), keysCount+2)
+
+	_ = a.Close()
+	_ = b.Close()
+}
+
 func syncSimplex(a, b *Chotki) error {
 	synca := Syncer{
 		Host:     a,
