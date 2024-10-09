@@ -85,7 +85,7 @@ func TestChotki_Sync(t *testing.T) {
 	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B"})
 	assert.Nil(t, err)
 
-	syncSimplex(a, b)
+	syncData(a, b)
 
 	bvv, err := b.VersionVector()
 	assert.Nil(t, err)
@@ -115,14 +115,14 @@ func TestChotki_SyncEdit(t *testing.T) {
 	assert.NoError(t, err)
 	objectId := orm.FindID(obj)
 	orm.Close()
-	syncSimplex(a, b)
+	syncData(a, b)
 
 	orm = a.ObjectMapper()
 	resa, err := orm.Load(objectId, &Test{})
 	assert.NoError(t, err)
 	resa.(*Test).Test = "edited text"
 	assert.NoError(t, orm.Save(context.Background(), resa))
-	syncSimplex(a, b)
+	syncData(a, b)
 
 	borm := b.ObjectMapper()
 	res, err := borm.Load(objectId, &Test{})
@@ -267,7 +267,7 @@ func TestChotki_SyncGlobals(t *testing.T) {
 	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B"})
 	assert.Nil(t, err)
 
-	syncDuplex(a, b)
+	syncData(a, b)
 
 	names, err := b.MapTRField(IdNames)
 	assert.Nil(t, err)
@@ -333,7 +333,7 @@ func TestChotki_CheckMdeltaTR(t *testing.T) {
 	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B"})
 	assert.Nil(t, err)
 
-	syncDuplex(a, b)
+	syncData(a, b)
 
 	//check on second replica
 	names, err = b.MapTRField(IdNames)
@@ -346,22 +346,24 @@ func TestChotki_CheckMdeltaTR(t *testing.T) {
 	_ = b.Close()
 }
 
-func syncSimplex(a, b *Chotki) error {
+func syncData(a, b *Chotki) error {
 	synca := Syncer{
-		Host:     a,
-		Mode:     SyncRW,
-		Name:     "a",
-		Src:      a.src,
-		log:      utils.NewDefaultLogger(slog.LevelDebug),
-		PingWait: time.Second,
+		Host:          a,
+		Mode:          SyncRW,
+		Name:          "a",
+		WaitUntilNone: time.Millisecond,
+		Src:           a.src,
+		log:           utils.NewDefaultLogger(slog.LevelError),
+		PingWait:      time.Second,
 	}
 	syncb := Syncer{
-		Host:     b,
-		Mode:     SyncRW,
-		Name:     "b",
-		Src:      b.src,
-		log:      utils.NewDefaultLogger(slog.LevelDebug),
-		PingWait: time.Second,
+		Host:          b,
+		Mode:          SyncRW,
+		WaitUntilNone: time.Millisecond,
+		Name:          "b",
+		Src:           b.src,
+		log:           utils.NewDefaultLogger(slog.LevelError),
+		PingWait:      time.Second,
 	}
 	defer syncb.Close()
 	defer synca.Close()
@@ -370,17 +372,10 @@ func syncSimplex(a, b *Chotki) error {
 	if err != nil {
 		return err
 	}
+	go protocol.Pump(&syncb, &synca)
 	// send data a -> b
 	return protocol.Pump(&synca, &syncb)
 
-}
-
-func syncDuplex(a, b *Chotki) error {
-	err := syncSimplex(a, b)
-	if err != nil && err != io.EOF {
-		return err
-	}
-	return syncSimplex(b, a)
 }
 
 func TestChotki_Sync3(t *testing.T) {
@@ -402,8 +397,8 @@ func TestChotki_Sync3(t *testing.T) {
 	assert.NoError(t, err)
 
 	// sync class a -> b -> c
-	assert.Equal(t, io.EOF, syncDuplex(a, b))
-	assert.Equal(t, io.EOF, syncDuplex(b, c))
+	assert.Equal(t, io.EOF, syncData(a, b))
+	assert.Equal(t, io.EOF, syncData(b, c))
 
 	for _, db := range []*Chotki{a, b, c} {
 		obj := &Test{
@@ -416,9 +411,9 @@ func TestChotki_Sync3(t *testing.T) {
 		orm.Close()
 	}
 
-	assert.Equal(t, io.EOF, syncDuplex(b, c))
-	assert.Equal(t, io.EOF, syncDuplex(a, b))
-	assert.Equal(t, io.EOF, syncDuplex(b, c))
+	assert.Equal(t, io.EOF, syncData(b, c))
+	assert.Equal(t, io.EOF, syncData(a, b))
+	assert.Equal(t, io.EOF, syncData(b, c))
 
 	for _, db := range []*Chotki{a, b, c} {
 		orm := db.ObjectMapper()
