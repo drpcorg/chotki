@@ -17,7 +17,6 @@ import (
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/drpcorg/chotki/utils"
-	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/puzpuzpuz/xsync/v3"
 )
@@ -85,7 +84,6 @@ type Options struct {
 	ReadMaxBufferSize  int
 	TcpReadBufferSize  int
 	TcpWriteBufferSize int
-	CounterCacheSize   int
 
 	TlsConfig *tls.Config
 }
@@ -93,10 +91,6 @@ type Options struct {
 func (o *Options) SetDefaults() {
 	if o.MaxLogLen == 0 {
 		o.MaxLogLen = 1 << 23
-	}
-
-	if o.CounterCacheSize == 0 {
-		o.CounterCacheSize = 1000
 	}
 
 	if o.PingPeriod == 0 {
@@ -164,7 +158,7 @@ type Chotki struct {
 	dir          string
 	opts         Options
 	log          utils.Logger
-	counterCache *lru.Cache[rdx.ID, *AtomicCounter]
+	counterCache sync.Map
 
 	outq  *xsync.MapOf[string, protocol.DrainCloser] // queues to broadcast all new packets
 	syncs *xsync.MapOf[rdx.ID, *pebble.Batch]
@@ -212,10 +206,6 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		return nil, err
 	}
 
-	lruCache, err := lru.New[rdx.ID, *AtomicCounter](opts.CounterCacheSize)
-	if err != nil {
-		return nil, err
-	}
 	cho := Chotki{
 		db:    db,
 		src:   opts.Src,
@@ -224,11 +214,10 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		opts:  opts,
 		clock: &rdx.LocalLogicalClock{Source: opts.Src},
 
-		outq:         xsync.NewMapOf[string, protocol.DrainCloser](),
-		syncs:        xsync.NewMapOf[rdx.ID, *pebble.Batch](),
-		hooks:        xsync.NewMapOf[rdx.ID, []Hook](),
-		types:        xsync.NewMapOf[rdx.ID, Fields](),
-		counterCache: lruCache,
+		outq:  xsync.NewMapOf[string, protocol.DrainCloser](),
+		syncs: xsync.NewMapOf[rdx.ID, *pebble.Batch](),
+		hooks: xsync.NewMapOf[rdx.ID, []Hook](),
+		types: xsync.NewMapOf[rdx.ID, Fields](),
 	}
 
 	cho.net = protocol.NewNet(cho.log,
@@ -327,10 +316,8 @@ func (cho *Chotki) Close() error {
 }
 
 func (cho *Chotki) Counter(rid rdx.ID, offset uint64, updatePeriod time.Duration) *AtomicCounter {
-	counter, _, _ := cho.counterCache.PeekOrAdd(rid.ToOff(offset),
-		NewAtomicCounter(cho, rid, offset, updatePeriod))
-	cho.counterCache.Get(rid.ToOff(offset))
-	return counter
+	counter, _ := cho.counterCache.LoadOrStore(rid.ToOff(offset), NewAtomicCounter(cho, rid, offset, updatePeriod))
+	return counter.(*AtomicCounter)
 }
 
 func (cho *Chotki) KeepAliveLoop() {
