@@ -2,8 +2,9 @@ package rdx
 
 import (
 	"fmt"
-	"github.com/drpcorg/chotki/protocol"
 	"strconv"
+
+	"github.com/drpcorg/chotki/protocol"
 )
 
 // N is an increment-only uint64 counter
@@ -93,26 +94,21 @@ func N2string(tlv []byte, new_val string, src uint64) (tlv_delta []byte) {
 // return nil on error, empty slice for "no changes"
 func Ndelta(tlv []byte, new_val uint64, clock Clock) (tlv_delta []byte) {
 	it := FIRSTIterator{TLV: tlv}
-	max_revz := uint64(0)
 	mysrc := clock.Src()
 	old_val := uint64(0)
 	sum := uint64(0)
 	for it.Next() {
-		if it.revz > max_revz {
-			max_revz = it.revz
-		}
-		val := UnzipUint64(it.val)
 		if it.src == mysrc {
-			old_val = val
+			old_val = it.revz
 		}
-		sum += val
+		sum += it.revz
 	}
 	if new_val < sum {
 		return nil
 	} else if new_val == sum {
 		return []byte{}
 	}
-	return Ntlv(new_val - sum + old_val)
+	return Ntlvt(new_val-sum+old_val, clock.Src())
 }
 
 // checks a TLV value for validity (format violations)
@@ -181,6 +177,13 @@ func Ztlv(i int64) (tlv []byte) {
 	)
 }
 
+func Ztlvt(i int64, src uint64, rev int64) (tlv []byte) {
+	return protocol.Record('I',
+		protocol.TinyRecord('T', ZipIntUint64Pair(rev, src)),
+		ZipInt64(i),
+	)
+}
+
 // convert a TLV value to a native golang value
 func Znative(tlv []byte) (sum int64) {
 	rest := tlv
@@ -194,17 +197,18 @@ func Znative(tlv []byte) (sum int64) {
 	return
 }
 
-func Znative2(tlv []byte, src uint64) (sum, mine int64) {
+func Znative3(tlv []byte, src uint64) (sum, mine, minerev int64) {
 	rest := tlv
 	for len(rest) > 0 {
 		var one []byte
 		one, rest = protocol.Take('I', rest)
 		stamp, body := protocol.Take('T', one)
 		inc := UnzipInt64(body)
-		_, recsrc := UnzipIntUint64Pair(stamp)
+		rev, recsrc := UnzipIntUint64Pair(stamp)
 		sum += inc
 		if recsrc == src {
 			mine = inc
+			minerev = rev
 		}
 	}
 	return
@@ -224,11 +228,11 @@ func Zmerge(tlvs [][]byte) (merged []byte) {
 
 // produce an op that turns the old value into the new one
 func Zdelta(tlv []byte, new_val int64, clock Clock) (tlv_delta []byte) {
-	sum, mine := Znative2(tlv, clock.Src())
+	sum, mine, rev := Znative3(tlv, clock.Src())
 	if new_val == sum {
 		return []byte{}
 	}
-	return Ztlv(new_val + mine - sum)
+	return Ztlvt(new_val+mine-sum, clock.Src(), rev+1)
 }
 
 // checks a TLV value for validity (format violations)

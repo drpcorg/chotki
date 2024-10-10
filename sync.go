@@ -85,12 +85,13 @@ func (s SyncState) String() string {
 const TraceSize = 10
 
 type Syncer struct {
-	Src        uint64
-	Name       string
-	Host       SyncHost
-	Mode       SyncMode
-	PingPeriod time.Duration
-	PingWait   time.Duration
+	Src           uint64
+	Name          string
+	Host          SyncHost
+	Mode          SyncMode
+	PingPeriod    time.Duration
+	PingWait      time.Duration
+	WaitUntilNone time.Duration
 
 	log        utils.Logger
 	vvit, ffit *pebble.Iterator
@@ -267,7 +268,11 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 		sync.SetFeedState(ctx, SendNone)
 
 	case SendNone:
-		timer := time.AfterFunc(time.Second, func() {
+		wait := sync.WaitUntilNone
+		if wait == 0 {
+			wait = time.Second
+		}
+		timer := time.AfterFunc(wait, func() {
 			sync.SetDrainState(ctx, SendNone)
 		})
 		<-sync.WaitDrainState(context.Background(), SendNone)
