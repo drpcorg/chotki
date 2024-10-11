@@ -12,6 +12,7 @@ import (
 )
 
 var ErrNotCounter error = fmt.Errorf("not a counter")
+var ErrCounterNotLoaded error = fmt.Errorf("counter not loaded")
 
 type AtomicCounter struct {
 	db           *Chotki
@@ -74,9 +75,10 @@ func (a *AtomicCounter) Increment(ctx context.Context, val int64) (int64, error)
 	if err != nil {
 		return 0, err
 	}
-	if val == 2 {
-		fmt.Println(1)
+	if !a.loaded.Load() {
+		return 0, ErrCounterNotLoaded
 	}
+
 	rdt := a.rdt.Load().(byte)
 	a.localValue.Add(val)
 	var dtlv []byte
@@ -88,6 +90,7 @@ func (a *AtomicCounter) Increment(ctx context.Context, val int64) (int64, error)
 	case rdx.ZCounter:
 		dtlv = rdx.Zdelta(tlv, a.localValue.Load(), a.db.Clock())
 	default:
+		a.lock.Unlock()
 		return 0, ErrNotCounter
 	}
 	a.tlv.Store(dtlv)
@@ -95,6 +98,6 @@ func (a *AtomicCounter) Increment(ctx context.Context, val int64) (int64, error)
 	changes := make(protocol.Records, 0)
 	changes = append(changes, protocol.Record('F', rdx.ZipUint64(uint64(a.offset))))
 	changes = append(changes, protocol.Record(rdt, dtlv))
-	a.db.CommitPacket(ctx, 'E', a.rid, changes)
+	a.db.CommitPacket(ctx, 'E', a.rid.ZeroOff(), changes)
 	return a.localValue.Load(), nil
 }
