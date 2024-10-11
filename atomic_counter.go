@@ -82,18 +82,21 @@ func (a *AtomicCounter) Increment(ctx context.Context, val int64) (int64, error)
 	rdt := a.rdt.Load().(byte)
 	a.localValue.Add(val)
 	var dtlv []byte
+	var mtlv []byte
 	a.lock.Lock()
 	tlv := a.tlv.Load().([]byte)
 	switch rdt {
 	case rdx.Natural:
 		dtlv = rdx.Ndelta(tlv, uint64(a.localValue.Load()), a.db.Clock())
+		mtlv = rdx.Nmerge([][]byte{tlv, dtlv})
 	case rdx.ZCounter:
 		dtlv = rdx.Zdelta(tlv, a.localValue.Load(), a.db.Clock())
+		mtlv = rdx.Zmerge([][]byte{tlv, dtlv})
 	default:
 		a.lock.Unlock()
 		return 0, ErrNotCounter
 	}
-	a.tlv.Store(dtlv)
+	a.tlv.Store(mtlv)
 	a.lock.Unlock()
 	changes := make(protocol.Records, 0)
 	changes = append(changes, protocol.Record('F', rdx.ZipUint64(uint64(a.offset))))
