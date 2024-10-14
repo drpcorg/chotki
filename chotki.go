@@ -191,14 +191,14 @@ func Exists(dirname string) (bool, error) {
 func Open(dirname string, opts Options) (*Chotki, error) {
 	exists, err := Exists(dirname)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(fmt.Errorf("error when checking db directory"), err)
 	}
 
 	opts.SetDefaults() // todo param
 
 	db, err := pebble.Open(dirname, &opts.Options)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, fmt.Errorf("error opening pebble"))
 	}
 
 	absdir, err := filepath.Abs(dirname)
@@ -271,13 +271,13 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		))
 
 		if err = cho.Drain(context.Background(), init); err != nil {
-			return nil, err
+			return nil, errors.Join(err, fmt.Errorf("unable to drain initial data to chotki"))
 		}
 	}
 
 	vv, err := cho.VersionVector()
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(fmt.Errorf("unable to get version vector"), err)
 	}
 
 	cho.last = vv.GetID(cho.src)
