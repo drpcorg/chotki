@@ -18,6 +18,20 @@ func replicaDirName(rno uint64) string {
 	return fmt.Sprintf("cho%x", rno)
 }
 
+func (repl *REPL) idFromNameOrText(a *rdx.RDX) (id rdx.ID, err error) {
+	switch a.RdxType {
+	case rdx.Reference:
+		id = rdx.IDFromText(a.Text)
+	case rdx.Term:
+		var names rdx.MapTR
+		names, err = repl.Host.MapTRField(chotki.IdNames)
+		id = names[a.String()]
+	default:
+		err = fmt.Errorf("Wrong type")
+	}
+	return
+}
+
 var HelpCreate = errors.New("create zone/1 {Name:\"Name\",Description:\"long text\"}")
 
 func (repl *REPL) CommandCreate(arg *rdx.RDX) (id rdx.ID, err error) {
@@ -173,10 +187,10 @@ func (repl *REPL) CommandClass(arg *rdx.RDX) (id rdx.ID, err error) {
 			key := fields[i]
 			val := fields[i+1]
 			if string(key.Text) == "_ref" {
-				if val.RdxType != rdx.Reference || parent != rdx.ID0 {
+				if val.RdxType != rdx.Reference && val.RdxType != rdx.Term || parent != rdx.ID0 {
 					return
 				}
-				parent = rdx.IDFromText(val.Text)
+				parent, err = repl.idFromNameOrText(&val)
 				continue
 			}
 			if key.RdxType != rdx.Term || val.RdxType != rdx.Term {
@@ -225,7 +239,10 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 	} else if arg.RdxType == rdx.Mapping {
 		pairs := arg.Nested
 		if len(pairs) >= 2 && pairs[0].String() == "_ref" {
-			tid = rdx.IDFromText(pairs[1].Text)
+			if pairs[1].RdxType != rdx.Reference && pairs[1].RdxType != rdx.Term {
+				return
+			}
+			tid, err = repl.idFromNameOrText(&pairs[1])
 			pairs = pairs[2:]
 		}
 		var fields chotki.Fields
@@ -282,10 +299,11 @@ func (repl *REPL) CommandEdit(arg *rdx.RDX) (id rdx.ID, err error) {
 		return
 	}
 	if arg.Nested[0].String() == "_id" {
-		if arg.Nested[1].RdxType != rdx.Reference {
+		if arg.Nested[1].RdxType != rdx.Reference && arg.Nested[1].RdxType != rdx.Term {
 			return
 		}
-		oid := rdx.IDFromText(arg.Nested[1].Text)
+		var oid rdx.ID
+		oid, err = repl.idFromNameOrText(&arg.Nested[1])
 		return repl.Host.EditObjectRDX(context.Background(), oid, arg.Nested[2:])
 	} else { // todo
 		return
@@ -300,10 +318,11 @@ func (repl *REPL) CommandAdd(arg *rdx.RDX) (id rdx.ID, err error) {
 	if arg.RdxType == rdx.Mapping {
 		pairs := arg.Nested
 		for i := 0; i+1 < len(pairs) && err == nil; i += 2 {
-			if pairs[i].RdxType != rdx.Reference || pairs[i+1].RdxType != rdx.Integer {
+			if pairs[i].RdxType != rdx.Reference && pairs[i].RdxType != rdx.Term || pairs[i+1].RdxType != rdx.Integer {
 				return rdx.BadId, HelpAdd
 			}
-			fid := rdx.IDFromText(pairs[i].Text)
+			var fid rdx.ID
+			fid, err = repl.idFromNameOrText(&pairs[i])
 			var add uint64
 			_, err = fmt.Sscanf(string(pairs[i+1].Text), "%d", &add)
 			if fid.Off() == 0 || err != nil {
@@ -325,7 +344,7 @@ var HelpInc = errors.New(
 func (repl *REPL) CommandInc(arg *rdx.RDX) (id rdx.ID, err error) {
 	id = rdx.BadId
 	err = HelpInc
-	if arg.RdxType == rdx.Reference {
+	if arg.RdxType == rdx.Reference || arg.RdxType == rdx.Term {
 		fid := rdx.IDFromText(arg.Text)
 		if id.Off() == 0 {
 			return
