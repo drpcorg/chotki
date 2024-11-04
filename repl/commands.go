@@ -25,7 +25,12 @@ func (repl *REPL) idFromNameOrText(a *rdx.RDX) (id rdx.ID, err error) {
 	case rdx.Term:
 		var names rdx.MapTR
 		names, err = repl.Host.MapTRField(chotki.IdNames)
-		id = names[a.String()]
+		if oid, ok := names[a.String()]; !ok {
+			err = fmt.Errorf("No such name")
+			return
+		} else {
+			id = oid
+		}
 	default:
 		err = fmt.Errorf("Wrong type")
 	}
@@ -414,10 +419,11 @@ var HelpCat = errors.New(
 func (repl *REPL) CommandCat(arg *rdx.RDX) (id rdx.ID, err error) {
 	id = rdx.BadId
 	err = HelpCat
-	if arg == nil || arg.RdxType != rdx.Reference {
+	if arg == nil || arg.RdxType != rdx.Reference && arg.RdxType != rdx.Term {
 		return
 	}
-	oid := rdx.IDFromText(arg.Text)
+	var oid rdx.ID
+	oid, err = repl.idFromNameOrText(arg)
 	var txt string
 	txt, err = repl.Host.ObjectString(oid)
 	if err != nil {
