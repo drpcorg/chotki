@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -785,4 +786,10 @@ func (repl *REPL) CommandCompile(arg *rdx.RDX) (id rdx.ID, err error) {
 		fmt.Println(code)
 	}
 	return
+}
+
+func (repl *REPL) CommandSwagger(arg *rdx.RDX) () {
+	fs := http.FileServer(http.Dir("../swagger/swagger-ui-5.18.2/dist"))
+	http.Handle("/swaggerui/", http.StripPrefix("/swaggerui/", fs))
+	go http.ListenAndServe("localhost:"+"8000", fs)
 }
