@@ -788,8 +788,10 @@ func (repl *REPL) CommandCompile(arg *rdx.RDX) (id rdx.ID, err error) {
 	return
 }
 
-func (repl *REPL) CommandSwagger(arg *rdx.RDX) () {
-	fs := http.FileServer(http.Dir("../swagger/swagger-ui-5.18.2/dist"))
-	http.Handle("/swaggerui/", http.StripPrefix("/swaggerui/", fs))
-	go http.ListenAndServe("localhost:"+"8000", fs)
+func (repl *REPL) CommandSwagger(arg *rdx.RDX) {
+	fs1 := http.FileServer(http.Dir("./swagger/swagger-ui-5.18.2/dist"))
+	fs2 := http.FileServer(http.Dir("./swagger"))
+	http.Handle("/swaggerui/", http.StripPrefix("/swaggerui/", fs1))
+	http.Handle("/", fs2)
+	go http.ListenAndServe("localhost:"+"8000", nil) // maybe cringe because fs passed into other thread
 }
