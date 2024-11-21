@@ -41,8 +41,8 @@ func (p *Peer) keepRead(ctx context.Context) error {
 	defer close(readChannel)
 	defer close(signal)
 	go func() {
+		defer close(errChannel)
 		for ctx.Err() == nil {
-			defer close(errChannel)
 			_, ok := <-signal
 			if !ok {
 				return
