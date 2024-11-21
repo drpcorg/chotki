@@ -39,10 +39,10 @@ func (p *Peer) keepRead(ctx context.Context) error {
 	errChannel := make(chan error)
 	signal := make(chan struct{})
 	defer close(readChannel)
-	defer close(errChannel)
 	defer close(signal)
 	go func() {
 		for ctx.Err() == nil {
+			defer close(errChannel)
 			_, ok := <-signal
 			if !ok {
 				return
@@ -55,8 +55,12 @@ func (p *Peer) keepRead(ctx context.Context) error {
 				continue
 			}
 			if err := p.inout.Drain(ctx, recs); err != nil {
-				errChannel <- err
-				return
+				select {
+				case <-ctx.Done():
+					return
+				case errChannel <- err:
+					return
+				}
 			}
 		}
 	}()
