@@ -88,7 +88,7 @@ func (p *Peer) keepRead(ctx context.Context) error {
 		}
 		p.incomingBuffer.Store(int32(buf.Len()))
 
-		if time.Now().After(*timelimit) || buf.Len() >= p.bufferMinToProcess || buf.Len() >= p.bufferMaxSize {
+		if (timelimit != nil && time.Now().After(*timelimit)) || buf.Len() >= p.bufferMinToProcess || buf.Len() >= p.bufferMaxSize {
 			select {
 			case signal <- struct{}{}:
 				recs, err := Split(&buf)
