@@ -62,7 +62,7 @@ var EventsOutboundMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 var EventsBatchSize = prometheus.NewHistogram(prometheus.HistogramOpts{
 	Namespace: "chotki",
 	Name:      "batch_size",
-	Buckets:   []float64{0, 1, 10, 50, 100, 500, 1000, 10000},
+	Buckets:   []float64{0, 1, 10, 50, 100, 500, 1000, 10000, 100000, 1000000},
 })
 
 type Options struct {
