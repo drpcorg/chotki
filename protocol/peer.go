@@ -51,6 +51,9 @@ func (p *Peer) keepRead(ctx context.Context) error {
 			if !ok {
 				return
 			}
+			if len(recs) == 0 {
+				continue
+			}
 			if err := p.inout.Drain(ctx, recs); err != nil {
 				errChannel <- err
 				return
@@ -91,11 +94,6 @@ func (p *Peer) keepRead(ctx context.Context) error {
 				recs, err := Split(&buf)
 				if err != nil {
 					return err
-				}
-				if len(recs) == 0 {
-					time.Sleep(time.Millisecond)
-					timelimit = nil
-					continue
 				}
 				// this will allow us to start accumulate next buffer while processing previous one
 				readChannel <- recs
