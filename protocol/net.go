@@ -58,8 +58,8 @@ type Net struct {
 	readBufferTcpSize  int
 	writeBufferTcpSize int
 	readAccumTimeLimit time.Duration
-	readMaxBatchSize   int
-	readMaxBufferSize  int
+	bufferMaxSize      int
+	bufferMinToProcess int
 }
 
 type NetOpt interface {
@@ -75,15 +75,15 @@ func (opt *NetTlsConfigOpt) Apply(n *Net) {
 }
 
 type NetReadBatchOpt struct {
-	MaxBatchSize       int
 	ReadAccumTimeLimit time.Duration
-	MaxBufferSize      int
+	BufferMaxSize      int
+	BufferMinToProcess int
 }
 
 func (opt *NetReadBatchOpt) Apply(n *Net) {
-	n.readMaxBatchSize = opt.MaxBatchSize
 	n.readAccumTimeLimit = opt.ReadAccumTimeLimit
-	n.readMaxBufferSize = opt.MaxBufferSize
+	n.bufferMaxSize = opt.BufferMaxSize
+	n.bufferMinToProcess = opt.BufferMinToProcess
 }
 
 type TcpBufferSizeOpt struct {
@@ -318,7 +318,13 @@ func (n *Net) KeepListening(ctx context.Context, addr string) {
 }
 
 func (n *Net) keepPeer(ctx context.Context, name string, conn net.Conn) {
-	peer := &Peer{inout: n.onInstall(name), conn: conn, readAccumtTimeLimit: n.readAccumTimeLimit, readBatchSize: n.readMaxBatchSize, readMaxQueueSize: n.readMaxBufferSize}
+	peer := &Peer{
+		inout:               n.onInstall(name),
+		conn:                conn,
+		readAccumtTimeLimit: n.readAccumTimeLimit,
+		bufferMaxSize:       n.bufferMaxSize,
+		bufferMinToProcess:  n.bufferMinToProcess,
+	}
 	n.conns.Store(name, peer)
 
 	readErr, writeErr, closeErr := peer.Keep(ctx)

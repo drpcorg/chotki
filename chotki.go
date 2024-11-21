@@ -68,22 +68,22 @@ var EventsBatchSize = prometheus.NewHistogram(prometheus.HistogramOpts{
 type Options struct {
 	pebble.Options
 
-	Src                uint64
-	Name               string
-	Log1               protocol.Records
-	MaxLogLen          int64
-	RelaxedOrder       bool
-	Logger             utils.Logger
-	PingPeriod         time.Duration
-	PingWait           time.Duration
-	PebbleWriteOptions *pebble.WriteOptions
-	BroadcastBatchSize int
-	BroadcastTimeLimit time.Duration
-	ReadAccumTimeLimit time.Duration
-	ReadMaxBatchSize   int
-	ReadMaxBufferSize  int
-	TcpReadBufferSize  int
-	TcpWriteBufferSize int
+	Src                        uint64
+	Name                       string
+	Log1                       protocol.Records
+	MaxLogLen                  int64
+	RelaxedOrder               bool
+	Logger                     utils.Logger
+	PingPeriod                 time.Duration
+	PingWait                   time.Duration
+	PebbleWriteOptions         *pebble.WriteOptions
+	BroadcastBatchSize         int
+	BroadcastTimeLimit         time.Duration
+	ReadAccumTimeLimit         time.Duration
+	ReadMaxBufferSize          int
+	ReadMinBufferSizeToProcess int
+	TcpReadBufferSize          int
+	TcpWriteBufferSize         int
 
 	TlsConfig *tls.Config
 }
@@ -102,7 +102,10 @@ func (o *Options) SetDefaults() {
 	}
 
 	if o.ReadMaxBufferSize == 0 {
-		o.ReadMaxBufferSize = 100
+		o.ReadMaxBufferSize = 1024 * 1024 * 1000 // 1000MB
+	}
+	if o.ReadMinBufferSizeToProcess == 0 {
+		o.ReadMinBufferSizeToProcess = 10 * 1024 // 10kb
 	}
 
 	if o.PebbleWriteOptions == nil {
@@ -113,7 +116,7 @@ func (o *Options) SetDefaults() {
 		o.BroadcastTimeLimit = time.Millisecond
 	}
 	if o.ReadAccumTimeLimit == 0 {
-		o.ReadAccumTimeLimit = time.Millisecond
+		o.ReadAccumTimeLimit = 5 * time.Second
 	}
 
 	o.Merger = &pebble.Merger{
@@ -253,7 +256,11 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			}
 		},
 		&protocol.NetTlsConfigOpt{Config: opts.TlsConfig},
-		&protocol.NetReadBatchOpt{MaxBatchSize: cho.opts.ReadMaxBatchSize, ReadAccumTimeLimit: cho.opts.ReadAccumTimeLimit},
+		&protocol.NetReadBatchOpt{
+			ReadAccumTimeLimit: cho.opts.ReadAccumTimeLimit,
+			BufferMaxSize:      cho.opts.ReadMaxBufferSize,
+			BufferMinToProcess: cho.opts.ReadMinBufferSizeToProcess,
+		},
 		&protocol.TcpBufferSizeOpt{Read: cho.opts.TcpReadBufferSize, Write: cho.opts.TcpWriteBufferSize},
 	)
 
