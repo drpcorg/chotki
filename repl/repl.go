@@ -134,6 +134,8 @@ func (repl *REPL) REPL(line string) (id rdx.ID, err error) {
 		id, err = repl.CommandOpenDir(line)
 	case "swagger":
 		repl.CommandSwagger(arg)
+	case "servehttp":
+		go repl.CommandServeHttp(arg)
 	case "checkpoint", "cp":
 		id, err = repl.CommandCheckpoint(arg)
 	case "close":

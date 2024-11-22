@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -797,4 +799,38 @@ func (repl *REPL) CommandSwagger(arg *rdx.RDX) {
 	})
 
 	go http.ListenAndServe("127.0.0.1:8000", nil) // maybe cringe because fs passed into other thread
+}
+
+func (repl *REPL) CommandServeHttp(arg *rdx.RDX) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/listen", listenHandler(repl))
+	log.Fatal(http.ListenAndServe("127.0.0.1:8001", mux))
+}
+
+func listenHandler(repl *REPL) func(w http.ResponseWriter, req *http.Request) {
+	return func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == "POST" {
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			arg, err := rdx.ParseRDX(body)
+			if arg == nil || arg.RdxType != rdx.String {
+				http.Error(w, fmt.Sprintf("Argument must be string"), http.StatusUnprocessableEntity)
+				return
+			}
+			addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
+			if err == nil {
+				err = repl.Host.Listen(context.Background(), addr)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, fmt.Sprintf("Unsupported method %s", req.Method), http.StatusMethodNotAllowed)
+	}
 }
