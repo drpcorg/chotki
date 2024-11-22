@@ -395,37 +395,37 @@ func (cho *Chotki) ObjectMapper() *ORM {
 	return NewORM(cho, cho.db.NewSnapshot())
 }
 
-func (cho *Chotki) RestoreNet(ctx context.Context) error {
+func (cho *Chotki) RestoreNet() error {
 	i := cho.db.NewIter(&pebble.IterOptions{})
 	defer i.Close()
 
 	for i.SeekGE([]byte{'l'}); i.Valid() && i.Key()[0] == 'L'; i.Next() {
 		address := string(i.Key()[1:])
-		_ = cho.net.Listen(ctx, address)
+		_ = cho.net.Listen(address)
 	}
 
 	for i.SeekGE([]byte{'c'}); i.Valid() && i.Key()[0] == 'C'; i.Next() {
 		address := string(i.Key()[1:])
-		_ = cho.net.Connect(ctx, address)
+		_ = cho.net.Connect(address)
 	}
 
 	return nil
 }
 
-func (cho *Chotki) Listen(ctx context.Context, addr string) error {
-	return cho.net.Listen(ctx, addr)
+func (cho *Chotki) Listen(addr string) error {
+	return cho.net.Listen(addr)
 }
 
 func (cho *Chotki) Unlisten(addr string) error {
 	return cho.net.Unlisten(addr)
 }
 
-func (cho *Chotki) Connect(ctx context.Context, addr string) error {
-	return cho.net.Connect(ctx, addr)
+func (cho *Chotki) Connect(addr string) error {
+	return cho.net.Connect(addr)
 }
 
-func (cho *Chotki) ConnectPool(ctx context.Context, name string, addrs []string) error {
-	return cho.net.ConnectPool(ctx, name, addrs)
+func (cho *Chotki) ConnectPool(name string, addrs []string) error {
+	return cho.net.ConnectPool(name, addrs)
 }
 
 func (cho *Chotki) Disconnect(addr string) error {

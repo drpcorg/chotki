@@ -421,7 +421,7 @@ func (repl *REPL) CommandListen(arg *rdx.RDX) (id rdx.ID, err error) {
 	}
 	addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
 	if err == nil {
-		err = repl.Host.Listen(context.Background(), addr)
+		err = repl.Host.Listen(addr)
 	}
 	return
 }
@@ -434,7 +434,7 @@ func (repl *REPL) CommandConnect(arg *rdx.RDX) (id rdx.ID, err error) {
 	}
 	addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
 	if err == nil {
-		err = repl.Host.Connect(context.Background(), addr)
+		err = repl.Host.Connect(addr)
 	}
 	return
 }
