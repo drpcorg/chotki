@@ -236,7 +236,11 @@ func (n *Net) KeepConnecting(ctx context.Context, name string, addrs []string) {
 		if err != nil {
 			n.log.Error("net: couldn't connect", "name", name, "err", err)
 
-			time.Sleep(connBackoff)
+			select {
+			case <-time.After(connBackoff):
+			case <-ctx.Done():
+				break
+			}
 			connBackoff = min(MAX_RETRY_PERIOD, connBackoff*2)
 
 			continue
