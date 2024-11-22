@@ -798,18 +798,32 @@ func (repl *REPL) CommandSwagger(arg *rdx.RDX) {
 		http.ServeFile(w, r, "./swagger/swagger.yaml")
 	})
 
-	go http.ListenAndServe("127.0.0.1:8000", nil) // maybe cringe because fs passed into other thread
+	http.ListenAndServe("127.0.0.1:8000", nil)
 }
 
 func (repl *REPL) CommandServeHttp(arg *rdx.RDX) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/listen", listenHandler(repl))
+	mux.HandleFunc("/listen", addCorsHeaders(listenHandler(repl)))
 	log.Fatal(http.ListenAndServe("127.0.0.1:8001", mux))
+}
+
+func addCorsHeaders(f func(w http.ResponseWriter, req *http.Request)) func(w http.ResponseWriter, req *http.Request) {
+	return func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+		f(w, req)
+	}
 }
 
 func listenHandler(repl *REPL) func(w http.ResponseWriter, req *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
-		if req.Method == "POST" {
+		switch method := req.Method; method {
+		case "OPTIONS":
+			w.Header().Set("Access-Control-Allow-Methods", "POST")
+			w.WriteHeader(http.StatusNoContent)
+		case "POST":
 			body, err := io.ReadAll(req.Body)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -829,8 +843,8 @@ func listenHandler(repl *REPL) func(w http.ResponseWriter, req *http.Request) {
 				}
 			}
 			w.WriteHeader(http.StatusOK)
-			return
+		default:
+			http.Error(w, fmt.Sprintf("Unsupported method %s", req.Method), http.StatusMethodNotAllowed)
 		}
-		http.Error(w, fmt.Sprintf("Unsupported method %s", req.Method), http.StatusMethodNotAllowed)
 	}
 }

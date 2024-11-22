@@ -133,7 +133,7 @@ func (repl *REPL) REPL(line string) (id rdx.ID, err error) {
 	case "opendir":
 		id, err = repl.CommandOpenDir(line)
 	case "swagger":
-		repl.CommandSwagger(arg)
+		go repl.CommandSwagger(arg)
 	case "servehttp":
 		go repl.CommandServeHttp(arg)
 	case "checkpoint", "cp":
