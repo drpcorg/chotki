@@ -285,7 +285,6 @@ func TestChotki_CheckMdeltaTR(t *testing.T) {
 	assert.Nil(t, err)
 
 	_, tlv, err := a.ObjectFieldTLV(IdNames)
-	a.ObjectMapper()
 	assert.Nil(t, err)
 
 	names, err := a.MapTRField(IdNames)

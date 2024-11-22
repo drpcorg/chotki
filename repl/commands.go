@@ -114,12 +114,15 @@ func (repl *REPL) CommandOpen(arg *rdx.RDX) (rdx.ID, error) {
 	return repl.Host.Last(), nil
 }
 
-func (repl *REPL) CommandOpenDir(dirname string) (rdx.ID, error) {
-
+func (repl *REPL) CommandOpenDir(arg *rdx.RDX) (rdx.ID, error) {
+	if arg.RdxType != rdx.String {
+		return rdx.BadId, fmt.Errorf("unable to open")
+	}
 	var err error
-	repl.Host, err = chotki.Open(dirname, chotki.Options{
+	fmt.Println(rdx.Snative(rdx.Sparse(string(arg.Text))))
+	repl.Host, err = chotki.Open(rdx.Snative(rdx.Sparse(string(arg.Text))), chotki.Options{
 		Src:     0xa,
-		Options: pebble.Options{ErrorIfNotExists: true},
+		Options: pebble.Options{},
 	})
 	if err != nil {
 		return rdx.BadId, err
@@ -443,7 +446,7 @@ func (repl *REPL) CommandListen(arg *rdx.RDX) (id rdx.ID, err error) {
 	}
 	addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
 	if err == nil {
-		err = repl.Host.Listen(context.Background(), addr)
+		err = repl.Host.Listen(addr)
 	}
 	return
 }
@@ -456,7 +459,7 @@ func (repl *REPL) CommandConnect(arg *rdx.RDX) (id rdx.ID, err error) {
 	}
 	addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
 	if err == nil {
-		err = repl.Host.Connect(context.Background(), addr)
+		err = repl.Host.Connect(addr)
 	}
 	return
 }

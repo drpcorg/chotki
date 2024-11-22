@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,85 +20,92 @@ type Peer struct {
 	inout               FeedDrainCloserTraced
 	incomingBuffer      atomic.Int32
 	readAccumtTimeLimit time.Duration
-	readBatchSize       int
-	readMaxQueueSize    int
+	bufferMaxSize       int
+	bufferMinToProcess  int
+}
+
+func (p *Peer) getReadTimeLimit() time.Duration {
+	if p.readAccumtTimeLimit != 0 {
+		return p.readAccumtTimeLimit
+	}
+	return 5 * time.Second
 }
 
 func (p *Peer) keepRead(ctx context.Context) error {
 	var buf bytes.Buffer
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	reading := make(chan Records, p.readMaxQueueSize)
-	processErrors := make(chan error)
-	defer p.incomingBuffer.Store(0)
-
+	readChannel := make(chan Records)
+	errChannel := make(chan error)
+	signal := make(chan struct{})
+	defer close(readChannel)
+	defer close(signal)
 	go func() {
-		defer close(reading)
-		defer close(processErrors)
-		for {
-			if ctx.Err() != nil {
+		defer close(errChannel)
+		for ctx.Err() == nil {
+			_, ok := <-signal
+			if !ok {
 				return
 			}
-			time := time.After(p.readAccumtTimeLimit)
-			var buff Records
-		BUFFER:
-			for len(buff) <= p.readBatchSize {
-				select {
-				case <-time:
-					break BUFFER
-				case <-ctx.Done():
-					break BUFFER
-				case recs, ok := <-reading:
-					// closed
-					if !ok {
-						break BUFFER
-					}
-					buff = append(buff, recs...)
-				}
-			}
-			if err := p.inout.Drain(ctx, buff); err != nil {
-				select {
-				case processErrors <- err:
-				case <-ctx.Done():
-				}
+			recs, ok := <-readChannel
+			if !ok {
 				return
 			}
-			p.incomingBuffer.Add(-int32(len(buff)))
-		}
-	}()
-
-	for !p.closed.Load() {
-		if buf.Available() < TYPICAL_MTU {
-			buf.Grow(TYPICAL_MTU)
-		}
-
-		idle := buf.AvailableBuffer()[:buf.Available()]
-		if n, err := p.conn.Read(idle); err != nil {
-			if errors.Is(err, io.EOF) {
-				time.Sleep(time.Millisecond)
+			if len(recs) == 0 {
 				continue
 			}
+			if err := p.inout.Drain(ctx, recs); err != nil {
+				select {
+				case <-ctx.Done():
+					return
+				case errChannel <- err:
+					return
+				}
+			}
+		}
+	}()
+	var timelimit *time.Time
+	for !p.closed.Load() {
+		if len(errChannel) > 0 {
+			return <-errChannel
+		}
+		if buf.Len() <= p.bufferMaxSize {
+			if buf.Available() < TYPICAL_MTU {
+				buf.Grow(TYPICAL_MTU)
+			}
 
-			return err
-		} else {
-			buf.Write(idle[:n])
+			idle := buf.AvailableBuffer()[:buf.Available()]
+			if timelimit == nil {
+				t := time.Now().Add(p.getReadTimeLimit())
+				timelimit = &t
+			}
+			p.conn.SetReadDeadline(*timelimit)
+			if n, err := p.conn.Read(idle); err != nil {
+				if errors.Is(err, io.EOF) || errors.Is(err, os.ErrDeadlineExceeded) {
+					time.Sleep(time.Millisecond)
+				} else {
+					return err
+				}
+			} else {
+				buf.Write(idle[:n])
+			}
 		}
+		p.incomingBuffer.Store(int32(buf.Len()))
 
-		recs, err := Split(&buf)
-		if err != nil {
-			return err
-		}
-		if len(recs) == 0 {
-			time.Sleep(time.Millisecond)
-			continue
-		}
-		p.incomingBuffer.Add(int32(len(recs)))
-		select {
-		case <-ctx.Done():
-			break
-		case err := <-processErrors:
-			return err
-		case reading <- recs:
+		if (timelimit != nil && time.Now().After(*timelimit)) || buf.Len() >= p.bufferMinToProcess || buf.Len() >= p.bufferMaxSize {
+			select {
+			case signal <- struct{}{}:
+				recs, err := Split(&buf)
+				if err != nil {
+					return err
+				}
+				// this will allow us to start accumulate next buffer while processing previous one
+				readChannel <- recs
+				timelimit = nil
+			case <-ctx.Done():
+				return nil
+			default:
+			}
 		}
 	}
 

@@ -82,7 +82,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 		return &TracedQueue[Records, []byte]{lCon}
 	}, func(_ string, t Traced) { lCon.Close() }, &NetTlsConfigOpt{tlsConfig("a.chotki.local")})
 
-	err := l.Listen(context.Background(), loop)
+	err := l.Listen(loop)
 	assert.Nil(t, err)
 
 	cCon := utils.NewFDQueue[Records](16, time.Millisecond, 0)
@@ -90,7 +90,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 		return &TracedQueue[Records, []byte]{cCon}
 	}, func(_ string, t Traced) { cCon.Close() }, &NetTlsConfigOpt{tlsConfig("b.chotki.local")})
 
-	err = c.Connect(context.Background(), loop)
+	err = c.Connect(loop)
 	assert.Nil(t, err)
 	time.Sleep(time.Second) // Wait connection, todo use events
 
@@ -139,7 +139,7 @@ func TestTCPDepot_ConnectFailed(t *testing.T) {
 		return &TracedQueue[Records, []byte]{cCon}
 	}, func(_ string, t Traced) { cCon.Close() }, &NetTlsConfigOpt{tlsConfig("b.chotki.local")})
 
-	err := c.Connect(context.Background(), loop)
+	err := c.Connect(loop)
 	assert.Nil(t, err)
 	time.Sleep(time.Second) // Wait connection, todo use events
 
