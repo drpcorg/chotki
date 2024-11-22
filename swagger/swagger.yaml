@@ -34,7 +34,7 @@ paths:
         description: TCP route to connect
         content:
           plain/text:
-            example: "tcp://127.0.0.1:8100"
+            example: '"tcp://127.0.0.1:8100"'
       responses:
         '200':
           description: Successful operation
@@ -54,7 +54,7 @@ paths:
         description: Start listening for synchronization connections
         content:
           plain/text:
-            example: "tcp://127.0.0.1:8100"
+            example: '"tcp://127.0.0.1:8100"'
       responses:
         '200':
           description: Successful operation
