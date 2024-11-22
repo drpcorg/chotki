@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -801,50 +800,23 @@ func (repl *REPL) CommandSwagger(arg *rdx.RDX) {
 	http.ListenAndServe("127.0.0.1:8000", nil)
 }
 
-func (repl *REPL) CommandServeHttp(arg *rdx.RDX) {
+var HelpServeHttp = errors.New("servehttp \"8001\"")
+
+func (repl *REPL) CommandServeHttp(arg *rdx.RDX) (id rdx.ID, err error) {
+	if arg == nil || arg.RdxType != rdx.Integer {
+		return rdx.BadId, HelpServeHttp
+	}
+	// TODO: make validation checks
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/listen", addCorsHeaders(listenHandler(repl)))
-	log.Fatal(http.ListenAndServe("127.0.0.1:8001", mux))
-}
-
-func addCorsHeaders(f func(w http.ResponseWriter, req *http.Request)) func(w http.ResponseWriter, req *http.Request) {
-	return func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "*")
-		w.Header().Set("Access-Control-Max-Age", "86400")
-		f(w, req)
-	}
-}
-
-func listenHandler(repl *REPL) func(w http.ResponseWriter, req *http.Request) {
-	return func(w http.ResponseWriter, req *http.Request) {
-		switch method := req.Method; method {
-		case "OPTIONS":
-			w.Header().Set("Access-Control-Allow-Methods", "POST")
-			w.WriteHeader(http.StatusNoContent)
-		case "POST":
-			body, err := io.ReadAll(req.Body)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			arg, err := rdx.ParseRDX(body)
-			if arg == nil || arg.RdxType != rdx.String {
-				http.Error(w, fmt.Sprintf("Argument must be string"), http.StatusUnprocessableEntity)
-				return
-			}
-			addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
-			if err == nil {
-				err = repl.Host.Listen(context.Background(), addr)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-			}
-			w.WriteHeader(http.StatusOK)
-		default:
-			http.Error(w, fmt.Sprintf("Unsupported method %s", req.Method), http.StatusMethodNotAllowed)
-		}
-	}
+	mux.HandleFunc("/listen", AddCorsHeaders(ListenHandler(repl)))
+	mux.HandleFunc("/connect", AddCorsHeaders(ConnectHandler(repl)))
+	mux.HandleFunc("/class", AddCorsHeaders(ClassHandler(repl)))
+	mux.HandleFunc("/name", AddCorsHeaders(NameHandler(repl)))
+	mux.HandleFunc("/new", AddCorsHeaders(NewHandler(repl)))
+	mux.HandleFunc("/edit", AddCorsHeaders(EditHandler(repl)))
+	mux.HandleFunc("/cat", AddCorsHeaders(CatHandler(repl)))
+	mux.HandleFunc("/list", AddCorsHeaders(ListHandler(repl)))
+	log.Fatal(http.ListenAndServe("127.0.0.1:"+arg.String(), mux))
+	return
 }

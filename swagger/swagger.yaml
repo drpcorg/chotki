@@ -12,7 +12,6 @@ info:
     url: http://www.apache.org/licenses/LICENSE-2.0.html
   version: 1.0.0
 servers:
-  - url: http://127.0.0.1:8000
   - url: http://127.0.0.1:8001
   - url: http://127.0.0.1:8002
   - url: http://127.0.0.1:8003
@@ -34,7 +33,7 @@ paths:
         description: TCP route to connect
         content:
           plain/text:
-            example: '"tcp://127.0.0.1:8100"'
+            example: 'tcp://127.0.0.1:8100'
       responses:
         '200':
           description: Successful operation
@@ -54,7 +53,7 @@ paths:
         description: Start listening for synchronization connections
         content:
           plain/text:
-            example: '"tcp://127.0.0.1:8100"'
+            example: 'tcp://127.0.0.1:8100'
       responses:
         '200':
           description: Successful operation
@@ -74,10 +73,13 @@ paths:
         description: Class creation details. Use _ref for inheritance.
         content:
           plain/text:
-            example: {_ref:Parent,Name:S,Girl:T}
+            example: '{_ref:Parent,Name:S,Girl:T}'
       responses:
         '200':
           description: Successful operation
+          content:
+            plain/text:
+              example: 'b0b-1'
         '400':
           description: Something went wrong
         '404':
@@ -94,10 +96,13 @@ paths:
         description: '{name:id}'
         content:
           plain/text:
-            example: {Child:b0b-9}
+            example: '{Child:b0b-9}'
       responses:
         '200':
           description: Successful operation
+          content:
+            plain/text:
+              example: 'b0b-1'
         '400':
           description: Something went wrong
         '404':
@@ -114,10 +119,13 @@ paths:
         description: Object creation details using class in _ref
         content:
           plain/text:
-            example: {_ref:Child,Name:"Alice"}
+            example: '{_ref:Child,Name:"Alice"}'
       responses:
         '200':
           description: Successful operation
+          content:
+            plain/text:
+              example: 'b0b-1'
         '400':
           description: Something went wrong
         '404':
@@ -134,10 +142,13 @@ paths:
         description: Object edit details
         content:
           plain/text:
-            example: {_ref:b0b-a,Girl:true}
+            example: '{_ref:b0b-a,Girl:true}'
       responses:
         '200':
-          description: Successful operation
+          description: 'Successful operation'
+          content:
+            plain/text:
+              example: 'b0b-1'
         '400':
           description: Something went wrong
         '404':
@@ -152,7 +163,7 @@ paths:
       operationId: cat
       parameters:
         - in: query
-          name: objectId
+          name: id
           required: true
           schema:
             type: string
@@ -177,7 +188,7 @@ paths:
       operationId: list
       parameters:
         - in: query
-          name: objectId
+          name: id
           required: true
           schema:
             type: string
