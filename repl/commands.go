@@ -796,5 +796,5 @@ func (repl *REPL) CommandSwagger(arg *rdx.RDX) {
 		http.ServeFile(w, r, "./swagger/swagger.yaml")
 	})
 
-	go http.ListenAndServe("localhost:"+"8000", nil) // maybe cringe because fs passed into other thread
+	go http.ListenAndServe("127.0.0.1:8000", nil) // maybe cringe because fs passed into other thread
 }
