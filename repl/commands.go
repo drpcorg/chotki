@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -812,5 +814,37 @@ func (repl *REPL) CommandCompile(arg *rdx.RDX) (id rdx.ID, err error) {
 	if err == nil {
 		fmt.Println(code)
 	}
+	return
+}
+
+func (repl *REPL) CommandSwagger(arg *rdx.RDX) {
+	fs := http.FileServer(http.Dir("./swagger"))
+
+	http.Handle("/", fs)
+	http.HandleFunc("/swagger.yaml", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "./swagger/swagger.yaml")
+	})
+
+	http.ListenAndServe("127.0.0.1:8000", nil)
+}
+
+var HelpServeHttp = errors.New("servehttp \"8001\"")
+
+func (repl *REPL) CommandServeHttp(arg *rdx.RDX) (id rdx.ID, err error) {
+	if arg == nil || arg.RdxType != rdx.Integer {
+		return rdx.BadId, HelpServeHttp
+	}
+	// TODO: make validation checks
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/listen", AddCorsHeaders(ListenHandler(repl)))
+	mux.HandleFunc("/connect", AddCorsHeaders(ConnectHandler(repl)))
+	mux.HandleFunc("/class", AddCorsHeaders(ClassHandler(repl)))
+	mux.HandleFunc("/name", AddCorsHeaders(NameHandler(repl)))
+	mux.HandleFunc("/new", AddCorsHeaders(NewHandler(repl)))
+	mux.HandleFunc("/edit", AddCorsHeaders(EditHandler(repl)))
+	mux.HandleFunc("/cat", AddCorsHeaders(CatHandler(repl)))
+	mux.HandleFunc("/list", AddCorsHeaders(ListHandler(repl)))
+	log.Fatal(http.ListenAndServe("127.0.0.1:"+arg.String(), mux))
 	return
 }
