@@ -114,9 +114,6 @@ func (repl *REPL) REPL(line string) (id rdx.ID, err error) {
 	}
 	var arg *rdx.RDX
 	arg, err = rdx.ParseRDX([]byte(line))
-	if err != nil && cmd != "opendir" {
-		return rdx.ID0, err
-	}
 	if repl.snap != nil {
 		_ = repl.snap.Close()
 		repl.snap = nil
@@ -131,7 +128,7 @@ func (repl *REPL) REPL(line string) (id rdx.ID, err error) {
 	case "open":
 		id, err = repl.CommandOpen(arg)
 	case "opendir":
-		id, err = repl.CommandOpenDir(line)
+		id, err = repl.CommandOpenDir(arg)
 	case "swagger":
 		go repl.CommandSwagger(arg)
 	case "servehttp":

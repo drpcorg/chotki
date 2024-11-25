@@ -442,7 +442,7 @@ func (cho *Chotki) EditObjectRDX(ctx context.Context, oid rdx.ID, pairs []rdx.RD
 			err = fmt.Errorf("unknown field %s", name)
 			return
 		}
-		tmp[ndx] = rdx.FIRSTrdx2tlv(value)
+		tmp[ndx] = protocol.Record(value.RdxType, rdx.FIRSTrdx2tlv(value))
 	}
 	for i := 0; i < len(form); i++ {
 		if tmp[i] != nil {

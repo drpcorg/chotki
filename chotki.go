@@ -62,28 +62,28 @@ var EventsOutboundMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 var EventsBatchSize = prometheus.NewHistogram(prometheus.HistogramOpts{
 	Namespace: "chotki",
 	Name:      "batch_size",
-	Buckets:   []float64{0, 1, 10, 50, 100, 500, 1000, 10000},
+	Buckets:   []float64{0, 1, 10, 50, 100, 500, 1000, 10000, 100000, 1000000},
 })
 
 type Options struct {
 	pebble.Options
 
-	Src                uint64
-	Name               string
-	Log1               protocol.Records
-	MaxLogLen          int64
-	RelaxedOrder       bool
-	Logger             utils.Logger
-	PingPeriod         time.Duration
-	PingWait           time.Duration
-	PebbleWriteOptions *pebble.WriteOptions
-	BroadcastBatchSize int
-	BroadcastTimeLimit time.Duration
-	ReadAccumTimeLimit time.Duration
-	ReadMaxBatchSize   int
-	ReadMaxBufferSize  int
-	TcpReadBufferSize  int
-	TcpWriteBufferSize int
+	Src                        uint64
+	Name                       string
+	Log1                       protocol.Records
+	MaxLogLen                  int64
+	RelaxedOrder               bool
+	Logger                     utils.Logger
+	PingPeriod                 time.Duration
+	PingWait                   time.Duration
+	PebbleWriteOptions         *pebble.WriteOptions
+	BroadcastBatchSize         int
+	BroadcastTimeLimit         time.Duration
+	ReadAccumTimeLimit         time.Duration
+	ReadMaxBufferSize          int
+	ReadMinBufferSizeToProcess int
+	TcpReadBufferSize          int
+	TcpWriteBufferSize         int
 
 	TlsConfig *tls.Config
 }
@@ -102,7 +102,10 @@ func (o *Options) SetDefaults() {
 	}
 
 	if o.ReadMaxBufferSize == 0 {
-		o.ReadMaxBufferSize = 100
+		o.ReadMaxBufferSize = 1024 * 1024 * 1000 // 1000MB
+	}
+	if o.ReadMinBufferSizeToProcess == 0 {
+		o.ReadMinBufferSizeToProcess = 10 * 1024 // 10kb
 	}
 
 	if o.PebbleWriteOptions == nil {
@@ -113,7 +116,7 @@ func (o *Options) SetDefaults() {
 		o.BroadcastTimeLimit = time.Millisecond
 	}
 	if o.ReadAccumTimeLimit == 0 {
-		o.ReadAccumTimeLimit = time.Millisecond
+		o.ReadAccumTimeLimit = 5 * time.Second
 	}
 
 	o.Merger = &pebble.Merger{
@@ -253,7 +256,11 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			}
 		},
 		&protocol.NetTlsConfigOpt{Config: opts.TlsConfig},
-		&protocol.NetReadBatchOpt{MaxBatchSize: cho.opts.ReadMaxBatchSize, ReadAccumTimeLimit: cho.opts.ReadAccumTimeLimit},
+		&protocol.NetReadBatchOpt{
+			ReadAccumTimeLimit: cho.opts.ReadAccumTimeLimit,
+			BufferMaxSize:      cho.opts.ReadMaxBufferSize,
+			BufferMinToProcess: cho.opts.ReadMinBufferSizeToProcess,
+		},
 		&protocol.TcpBufferSizeOpt{Read: cho.opts.TcpReadBufferSize, Write: cho.opts.TcpWriteBufferSize},
 	)
 
@@ -388,37 +395,37 @@ func (cho *Chotki) ObjectMapper() *ORM {
 	return NewORM(cho, cho.db.NewSnapshot())
 }
 
-func (cho *Chotki) RestoreNet(ctx context.Context) error {
+func (cho *Chotki) RestoreNet() error {
 	i := cho.db.NewIter(&pebble.IterOptions{})
 	defer i.Close()
 
 	for i.SeekGE([]byte{'l'}); i.Valid() && i.Key()[0] == 'L'; i.Next() {
 		address := string(i.Key()[1:])
-		_ = cho.net.Listen(ctx, address)
+		_ = cho.net.Listen(address)
 	}
 
 	for i.SeekGE([]byte{'c'}); i.Valid() && i.Key()[0] == 'C'; i.Next() {
 		address := string(i.Key()[1:])
-		_ = cho.net.Connect(ctx, address)
+		_ = cho.net.Connect(address)
 	}
 
 	return nil
 }
 
-func (cho *Chotki) Listen(ctx context.Context, addr string) error {
-	return cho.net.Listen(ctx, addr)
+func (cho *Chotki) Listen(addr string) error {
+	return cho.net.Listen(addr)
 }
 
 func (cho *Chotki) Unlisten(addr string) error {
 	return cho.net.Unlisten(addr)
 }
 
-func (cho *Chotki) Connect(ctx context.Context, addr string) error {
-	return cho.net.Connect(ctx, addr)
+func (cho *Chotki) Connect(addr string) error {
+	return cho.net.Connect(addr)
 }
 
-func (cho *Chotki) ConnectPool(ctx context.Context, name string, addrs []string) error {
-	return cho.net.ConnectPool(ctx, name, addrs)
+func (cho *Chotki) ConnectPool(name string, addrs []string) error {
+	return cho.net.ConnectPool(name, addrs)
 }
 
 func (cho *Chotki) Disconnect(addr string) error {
