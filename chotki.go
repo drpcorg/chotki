@@ -543,12 +543,9 @@ func (cho *Chotki) Metrics() []prometheus.Collector {
 	}
 }
 
-func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error) {
-	var calls []CallHook
-
+func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error) {
 	EventsMetric.Add(float64(len(recs)))
-	EventsBatchSize.Observe(float64(len(recs)))
-
+	var calls []CallHook
 	for _, packet := range recs { // parse the packets
 		if err != nil {
 			break
@@ -644,6 +641,11 @@ func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error)
 	}
 
 	return
+}
+
+func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error) {
+	EventsBatchSize.Observe(float64(len(recs)))
+	return cho.drain(ctx, recs)
 }
 
 func dumpKVString(key, value []byte) (str string) {
