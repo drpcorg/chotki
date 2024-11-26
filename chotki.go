@@ -277,7 +277,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			protocol.Record('S', rdx.Stlv("")),
 		))
 
-		if err = cho.Drain(context.Background(), init); err != nil {
+		if err = cho.drain(context.Background(), init); err != nil {
 			return nil, errors.Join(err, fmt.Errorf("unable to drain initial data to chotki"))
 		}
 	}
@@ -506,7 +506,7 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 	r := protocol.Record('R', ref.ZipBytes())
 	packet := protocol.Record(lit, i, r, protocol.Join(body...))
 	recs := protocol.Records{packet}
-	err = cho.Drain(ctx, recs)
+	err = cho.drain(ctx, recs)
 	cho.Broadcast(ctx, recs, "")
 	return
 }
