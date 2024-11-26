@@ -469,7 +469,11 @@ func (sync *Syncer) processPings(recs protocol.Records) protocol.Records {
 	for i, rec := range recs {
 		if protocol.Lit(rec) == 'P' {
 			body, _ := protocol.Take('P', rec)
-			recs = append(recs[:i], recs[i+1:]...)
+			if len(recs) > i+1 {
+				recs = append(recs[:i], recs[i+1:]...)
+			} else {
+				recs = recs[:i]
+			}
 			switch rdx.Snative(body) {
 			case PingVal:
 				sync.log.InfoCtx(sync.logCtx(context.Background()), "ping received")
