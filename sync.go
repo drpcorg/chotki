@@ -21,6 +21,7 @@ import (
 
 const SyncBlockBits = 28
 const SyncBlockMask = (rdx.ID(1) << SyncBlockBits) - 1
+const MaxParcelSize = 5_000_000 // 5MB
 
 type SyncHost interface {
 	protocol.Drainer
@@ -332,18 +333,15 @@ func (sync *Syncer) FeedHandshake() (vv protocol.Records, err error) {
 	return protocol.Records{hs}, nil
 }
 
-func (sync *Syncer) FeedBlockDiff() (diff protocol.Records, err error) {
-	if !sync.vvit.Next() {
-		return nil, io.EOF
-	}
+func (sync *Syncer) getVVChanges() (hasChanges bool, sendvv rdx.VV, err error) {
 	vv := make(rdx.VV)
 	err = vv.PutTLV(sync.vvit.Value())
 	if err != nil {
-		return nil, rdx.ErrBadVRecord
+		return false, nil, rdx.ErrBadVRecord
 	}
-	sendvv := make(rdx.VV)
+	sendvv = make(rdx.VV)
 	// check for any changes
-	hasChanges := false // fixme up & repeat
+	hasChanges = false // fixme up & repeat
 	for src, pro := range vv {
 		peerpro, ok := sync.peervv[src]
 		if !ok || pro > peerpro {
@@ -351,12 +349,51 @@ func (sync *Syncer) FeedBlockDiff() (diff protocol.Records, err error) {
 			hasChanges = true
 		}
 	}
-	if !hasChanges {
-		return protocol.Records{}, nil
+	return
+}
+
+func (sync *Syncer) nextBlockDiff() (bool, rdx.VV, error) {
+	if sync.ffit != nil {
+		block := VKeyId(sync.vvit.Key()).ZeroOff()
+		till := block + SyncBlockMask + 1
+		if sync.ffit.Valid() {
+			id, _ := OKeyIdRdt(sync.ffit.Key())
+			if id != rdx.BadId && id < till {
+				_, sendvv, err := sync.getVVChanges()
+				if err != nil {
+					return false, nil, err
+				}
+				return true, sendvv, nil
+			}
+		}
 	}
+	if sync.vvit == nil || !sync.vvit.Next() {
+		return false, nil, io.EOF
+	}
+	hasChanges, sendvv, err := sync.getVVChanges()
+	if err != nil {
+		return false, nil, err
+	}
+	if !hasChanges {
+		return false, nil, nil
+	}
+
 	block := VKeyId(sync.vvit.Key()).ZeroOff()
 	key := OKey(block, 0)
 	sync.ffit.SeekGE(key)
+	return true, sendvv, nil
+}
+
+func (sync *Syncer) FeedBlockDiff() (diff protocol.Records, err error) {
+	hasChanges, sendvv, cerr := sync.nextBlockDiff()
+	if cerr != nil {
+		return nil, cerr
+	}
+	if !hasChanges {
+		return protocol.Records{}, nil
+	}
+
+	block := VKeyId(sync.vvit.Key()).ZeroOff()
 	bmark, parcel := protocol.OpenHeader(nil, 'D')
 	parcel = append(parcel, protocol.Record('T', sync.snaplast.ZipBytes())...)
 	parcel = append(parcel, protocol.Record('R', block.ZipBytes())...)
@@ -364,6 +401,9 @@ func (sync *Syncer) FeedBlockDiff() (diff protocol.Records, err error) {
 	for ; sync.ffit.Valid(); sync.ffit.Next() {
 		id, rdt := OKeyIdRdt(sync.ffit.Key())
 		if id == rdx.BadId || id >= till {
+			break
+		}
+		if len(parcel) > MaxParcelSize {
 			break
 		}
 		lim, ok := sendvv[id.Src()]
