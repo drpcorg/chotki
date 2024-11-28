@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 )
 
 const CaseBit uint8 = 'a' - 'A'
@@ -109,6 +110,7 @@ func Split(data *bytes.Buffer) (recs Records, err error) {
 			return
 		}
 		if hlen+blen > data.Len() { // incomplete package received
+			err = errors.Join(ErrIncomplete, fmt.Errorf("packet size %d, len %d", hlen+blen, data.Len()))
 			return
 		}
 

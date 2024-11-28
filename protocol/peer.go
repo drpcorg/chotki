@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -96,8 +97,12 @@ func (p *Peer) keepRead(ctx context.Context) error {
 			select {
 			case signal <- struct{}{}:
 				recs, err := Split(&buf)
-				if err != nil {
+				if err != nil && !errors.Is(err, ErrIncomplete) {
 					return err
+				} else if errors.Is(err, ErrIncomplete) {
+					if buf.Len() >= p.bufferMaxSize {
+						return errors.Join(err, fmt.Errorf("buffer is not enough to read packet"))
+					}
 				}
 				// this will allow us to start accumulate next buffer while processing previous one
 				readChannel <- recs
