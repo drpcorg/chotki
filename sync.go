@@ -412,7 +412,7 @@ func (sync *Syncer) FeedBlockDiff(ctx context.Context) (diff protocol.Records, e
 			val := sync.ffit.Value()
 			parcel = append(parcel, protocol.Record(rdt, val)...)
 			if len(val) > MaxParcelSize {
-				sync.log.WarnCtx(sync.logCtx(ctx), "too big key size", len(val))
+				sync.log.WarnCtx(sync.logCtx(ctx), "too big key size", "size", len(val))
 			}
 			continue
 		}
@@ -421,7 +421,7 @@ func (sync *Syncer) FeedBlockDiff(ctx context.Context) (diff protocol.Records, e
 			parcel = append(parcel, protocol.Record('F', rdx.ZipUint64(uint64(id-block)))...)
 			parcel = append(parcel, protocol.Record(rdt, diff)...)
 			if len(diff) > MaxParcelSize {
-				sync.log.WarnCtx(sync.logCtx(ctx), "too big diff size", len(diff))
+				sync.log.WarnCtx(sync.logCtx(ctx), "too big diff size", "size", len(diff))
 			}
 		}
 	}
