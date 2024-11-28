@@ -600,6 +600,7 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 	}
 
 	if err != nil { // todo send the error msg
+		sync.log.ErrorCtx(sync.logCtx(ctx), "error happened while drain", "error", err.Error())
 		sync.SetDrainState(ctx, SendEOF)
 	}
 
