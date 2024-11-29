@@ -612,6 +612,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			if err == nil {
 				err = cho.db.Apply(d, cho.opts.PebbleWriteOptions)
 				cho.syncs.Delete(id)
+				cho.log.InfoCtx(ctx, "applied diff batch and deleted it", "id", id)
 			}
 			noApply = true
 
