@@ -616,7 +616,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			noApply = true
 
 		case 'B': // bye dear
-			cho.log.InfoCtx(ctx, "received session end", "id", id.String())
+			cho.log.InfoCtx(ctx, "received session end", "id", id.String(), "data", string(body))
 			cho.syncs.Delete(id)
 		case 'P': // ping noop
 		default:
