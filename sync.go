@@ -562,11 +562,13 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		fallthrough
 
 	case SendDiff:
+		broadcast := false
 		lit := LastLit(recs)
 		if lit != 'D' && lit != 'V' {
 			if lit == 'B' {
 				sync.SetDrainState(ctx, SendNone)
 			} else {
+				broadcast = true
 				sync.SetDrainState(ctx, SendLive)
 			}
 		}
@@ -574,7 +576,7 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 			sync.resetPingTimer()
 		}
 		err = sync.Host.Drain(sync.logCtx(ctx), recs)
-		if err == nil {
+		if err == nil && broadcast {
 			sync.Host.Broadcast(sync.logCtx(ctx), recs, sync.Name)
 		}
 
