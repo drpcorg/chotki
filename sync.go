@@ -585,7 +585,7 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 			sync.SetDrainState(ctx, SendNone)
 		}
 		err = sync.Host.Drain(sync.logCtx(ctx), recs)
-		if err == nil {
+		if err == nil && lit != 'B' {
 			sync.Host.Broadcast(sync.logCtx(ctx), recs, sync.Name)
 		}
 
