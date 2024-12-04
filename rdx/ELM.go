@@ -486,27 +486,8 @@ func Mdelta2(tlv []byte, changes []byte) (tlv_delta []byte) {
 	return
 }
 
-// produce an op that turns the old value into the new one
 func MdeltaTR(tlv []byte, changes MapTR, clock Clock) (tlv_delta []byte) {
-	it := MIterator{Val: FIRSTIterator{TLV: tlv}}
-	for it.Next() {
-		if it.Key.lit != Term {
-			continue
-		}
-		change, ok := changes[string(it.Key.val)]
-		if !ok { // todo compare
-			continue
-		}
-		new_rev := NextRev(it.Val.revz)
-		tlv_delta = append(tlv_delta, protocol.Record(Term, FIRSTtlv(new_rev, 0, it.Key.val))...)
-		tlv_delta = append(tlv_delta, protocol.Record(Reference, FIRSTtlv(new_rev, 0, change.ZipBytes()))...)
-		delete(changes, string(it.Key.val))
-	}
-	for key, val := range changes {
-		tlv_delta = append(tlv_delta, protocol.Record(Term, Ttlv(key))...)
-		tlv_delta = append(tlv_delta, protocol.Record(Reference, Rtlv(val))...)
-	}
-	return
+	return Mdelta2(tlv, MtlvTR(changes))
 }
 
 // checks a TLV value for validity (format violations)
