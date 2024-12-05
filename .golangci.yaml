@@ -5,7 +5,6 @@ linters:
   enable:
     - asasalint
     - durationcheck
-    - exportloopref
     - gocheckcompilerdirectives
     - gosimple
     - gosmopolitan
