@@ -138,7 +138,12 @@ func (repl *REPL) CommandDump(arg *rdx.RDX) (id rdx.ID, err error) {
 		case "vv":
 			repl.Host.DumpVV(os.Stderr)
 		case "all":
-			repl.Host.DumpAll(os.Stderr)
+			file, err := os.OpenFile("test.log", os.O_RDWR|os.O_CREATE, 0660)
+			if err != nil {
+				panic(err)
+			}
+			repl.Host.DumpAll(file)
+			file.Close()
 		default:
 			return rdx.BadId, HelpDump
 		}
@@ -420,9 +425,7 @@ func (repl *REPL) CommandListen(arg *rdx.RDX) (id rdx.ID, err error) {
 		return rdx.BadId, HelpListen
 	}
 	addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
-	if err == nil {
-		err = repl.Host.Listen(addr)
-	}
+	err = repl.Host.Listen(addr)
 	return
 }
 
@@ -433,9 +436,7 @@ func (repl *REPL) CommandConnect(arg *rdx.RDX) (id rdx.ID, err error) {
 		return rdx.BadId, HelpConnect
 	}
 	addr := rdx.Snative(rdx.Sparse(string(arg.Text)))
-	if err == nil {
-		err = repl.Host.Connect(addr)
-	}
+	err = repl.Host.Connect(addr)
 	return
 }
 

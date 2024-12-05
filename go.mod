@@ -1,6 +1,6 @@
 module github.com/drpcorg/chotki
 
-go 1.21.4
+go 1.23.3
 
 require (
 	github.com/cockroachdb/pebble v1.1.0

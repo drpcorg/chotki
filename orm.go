@@ -9,7 +9,6 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
-	"github.com/puzpuzpuz/xsync/v3"
 )
 
 type NativeObject interface {
@@ -22,7 +21,7 @@ type NativeObject interface {
 type ORM struct {
 	Host    *Chotki
 	Snap    *pebble.Snapshot
-	objects *xsync.MapOf[rdx.ID, NativeObject]
+	objects *sync.Map
 	ids     sync.Map // xsync sometimes does not correctly work with pointers
 	lock    sync.Mutex
 }
@@ -32,7 +31,7 @@ func NewORM(host *Chotki, snap *pebble.Snapshot) *ORM {
 		Host: host,
 		Snap: snap,
 
-		objects: xsync.NewMapOf[rdx.ID, NativeObject](),
+		objects: &sync.Map{},
 	}
 }
 
@@ -114,8 +113,8 @@ func (orm *ORM) Save(ctx context.Context, objs ...NativeObject) (err error) {
 // SaveAll the changed fields; this will scan the objects and
 // their database records.
 func (orm *ORM) SaveAll(ctx context.Context) (err error) {
-	orm.objects.Range(func(_ rdx.ID, obj NativeObject) bool {
-		err = orm.Save(ctx, obj)
+	orm.objects.Range(func(_ any, obj any) bool {
+		err = orm.Save(ctx, obj.(NativeObject))
 		return err == nil
 	})
 
@@ -178,8 +177,8 @@ func (orm *ORM) UpdateObject(obj NativeObject, snap *pebble.Snapshot) error {
 // UpdateAll the registered objects to the new db state
 func (orm *ORM) UpdateAll() (err error) {
 	snap := orm.Host.Database().NewSnapshot()
-	orm.objects.Range(func(_ rdx.ID, obj NativeObject) bool {
-		err = orm.UpdateObject(obj, snap)
+	orm.objects.Range(func(_ any, obj any) bool {
+		err = orm.UpdateObject(obj.(NativeObject), snap)
 		return err == nil
 	})
 	orm.lock.Lock()
@@ -206,7 +205,7 @@ func (orm *ORM) SyncAll(ctx context.Context) (err error) {
 func (orm *ORM) Load(id rdx.ID, blanc NativeObject) (obj NativeObject, err error) {
 	pre, ok := orm.objects.Load(id)
 	if ok {
-		return pre, nil
+		return pre.(NativeObject), nil
 	}
 	fro, til := ObjectKeyRange(id)
 	io := pebble.IterOptions{
@@ -225,7 +224,7 @@ func (orm *ORM) Load(id rdx.ID, blanc NativeObject) (obj NativeObject, err error
 	_ = it.Close()
 	pre, ok = orm.objects.Load(id)
 	if ok {
-		return pre, nil
+		return pre.(NativeObject), nil
 	}
 	orm.objects.Store(id, blanc)
 	orm.ids.Store(blanc, id)
@@ -233,9 +232,9 @@ func (orm *ORM) Load(id rdx.ID, blanc NativeObject) (obj NativeObject, err error
 }
 
 // Find a registered object given its id. nil if none.
-func (orm *ORM) Object(id rdx.ID) (obj NativeObject) {
-	obj, _ = orm.objects.Load(id)
-	return // todo
+func (orm *ORM) Object(id rdx.ID) NativeObject {
+	objV, _ := orm.objects.Load(id)
+	return objV.(NativeObject)
 }
 
 // Find the ID of the registered object's.
