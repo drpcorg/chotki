@@ -512,25 +512,31 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 }
 
 type NetCollector struct {
-	net *protocol.Net
-	d   *prometheus.Desc
+	net               *protocol.Net
+	read_buffers_size *prometheus.Desc
+	write_batch_size  *prometheus.Desc
 }
 
 func NewNetCollector(net *protocol.Net) *NetCollector {
 	return &NetCollector{
-		net: net,
-		d:   prometheus.NewDesc("chotki_net_read_buffer_size", "", []string{"peer"}, prometheus.Labels{}),
+		net:               net,
+		read_buffers_size: prometheus.NewDesc("chotki_net_read_buffer_size", "", []string{"peer"}, prometheus.Labels{}),
+		write_batch_size:  prometheus.NewDesc("chotki_net_write_batch_size", "", []string{"peer"}, prometheus.Labels{}),
 	}
 }
 
 func (n *NetCollector) Describe(d chan<- *prometheus.Desc) {
-	d <- n.d
+	d <- n.read_buffers_size
+	d <- n.write_batch_size
 }
 
 func (n *NetCollector) Collect(m chan<- prometheus.Metric) {
 	stats := n.net.GetStats()
 	for name, v := range stats.ReadBuffers {
-		m <- prometheus.MustNewConstMetric(n.d, prometheus.GaugeValue, float64(v), name)
+		m <- prometheus.MustNewConstMetric(n.read_buffers_size, prometheus.GaugeValue, float64(v), name)
+	}
+	for name, v := range stats.WriteBatches {
+		m <- prometheus.MustNewConstMetric(n.write_batch_size, prometheus.GaugeValue, float64(v), name)
 	}
 }
 

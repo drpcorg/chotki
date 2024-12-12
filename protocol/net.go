@@ -113,16 +113,19 @@ func NewNet(log utils.Logger, install InstallCallback, destroy DestroyCallback, 
 }
 
 type NetStats struct {
-	ReadBuffers map[string]int32
+	ReadBuffers  map[string]int32
+	WriteBatches map[string]int32
 }
 
 func (n *Net) GetStats() NetStats {
 	stats := NetStats{
-		ReadBuffers: make(map[string]int32),
+		ReadBuffers:  make(map[string]int32),
+		WriteBatches: make(map[string]int32),
 	}
 	n.conns.Range(func(name string, peer *Peer) bool {
 		if peer != nil {
 			stats.ReadBuffers[name] = peer.GetIncomingPacketBufferSize()
+			stats.WriteBatches[name] = int32(peer.writeBatchSize.Val())
 		}
 		return true
 	})
@@ -315,6 +318,7 @@ func (n *Net) keepPeer(name string, conn net.Conn) {
 		readAccumtTimeLimit: n.readAccumTimeLimit,
 		bufferMaxSize:       n.bufferMaxSize,
 		bufferMinToProcess:  n.bufferMinToProcess,
+		writeBatchSize:      &utils.AvgVal{},
 	}
 	n.conns.Store(name, peer)
 

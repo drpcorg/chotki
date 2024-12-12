@@ -11,11 +11,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/drpcorg/chotki/utils"
 )
 
 type Peer struct {
-	closed atomic.Bool
-	wg     sync.WaitGroup
+	closed         atomic.Bool
+	wg             sync.WaitGroup
+	writeBatchSize *utils.AvgVal
 
 	conn                net.Conn
 	inout               FeedDrainCloserTraced
@@ -138,6 +141,11 @@ func (p *Peer) keepWrite(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		batchSize := 0
+		for _, r := range recs {
+			batchSize += len(r)
+		}
+		p.writeBatchSize.Add(float64(batchSize))
 
 		b := net.Buffers(recs)
 		for len(b) > 0 && err == nil {
