@@ -541,7 +541,7 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 
 	recs = sync.processPings(recs)
 
-	switch sync.drainState {
+	switch sync.GetDrainState() {
 	case SendHandshake:
 		if len(recs) == 0 {
 			return ErrBadHPacket
