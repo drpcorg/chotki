@@ -69,6 +69,17 @@ func (a *AtomicCounter) load() error {
 	return nil
 }
 
+func (a *AtomicCounter) Get(ctx context.Context) (int64, error) {
+	err := a.load()
+	if err != nil {
+		return 0, err
+	}
+	if !a.loaded.Load() {
+		return 0, ErrCounterNotLoaded
+	}
+	return a.localValue.Load(), nil
+}
+
 // Loads (if needed) and increments counter
 func (a *AtomicCounter) Increment(ctx context.Context, val int64) (int64, error) {
 	err := a.load()
