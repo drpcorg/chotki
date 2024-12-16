@@ -3,6 +3,7 @@ package chotki
 import (
 	"bytes"
 	"context"
+	"slices"
 	"sync"
 	"text/template"
 
@@ -202,7 +203,7 @@ func (orm *ORM) SyncAll(ctx context.Context) (err error) {
 // Load the object's state from the db, register the object.
 // If an object is already registered for that id, returns the old one.
 // The new one is not used then.
-func (orm *ORM) Load(id rdx.ID, blanc NativeObject) (obj NativeObject, err error) {
+func (orm *ORM) Load(id rdx.ID, blanc NativeObject, skipFields ...uint64) (obj NativeObject, err error) {
 	pre, ok := orm.objects.Load(id)
 	if ok {
 		return pre.(NativeObject), nil
@@ -216,9 +217,11 @@ func (orm *ORM) Load(id rdx.ID, blanc NativeObject) (obj NativeObject, err error
 	for it.SeekGE(fro); it.Valid(); it.Next() {
 		lid, rdt := OKeyIdRdt(it.Key())
 		off := lid.Off()
-		e := blanc.Load(off, rdt, it.Value())
-		if e != nil { // the db may have garbage
-			_ = 0 // todo
+		if !slices.Contains(skipFields, off) {
+			e := blanc.Load(off, rdt, it.Value())
+			if e != nil { // the db may have garbage
+				_ = 0 // todo
+			}
 		}
 	}
 	_ = it.Close()
