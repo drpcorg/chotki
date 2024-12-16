@@ -541,11 +541,13 @@ func (n *NetCollector) Collect(m chan<- prometheus.Metric) {
 }
 
 func (cho *Chotki) Metrics() []prometheus.Collector {
+	cho.db.Metrics()
 	return []prometheus.Collector{
 		EventsMetric,
 		EventsOutboundMetric,
 		NewNetCollector(cho.net),
 		EventsBatchSize,
+		NewPebbleCollector(cho.db),
 	}
 }
 
