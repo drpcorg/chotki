@@ -484,7 +484,7 @@ func (cho *Chotki) Broadcast(ctx context.Context, records protocol.Records, exce
 		if name != except {
 			EventsOutboundMetric.WithLabelValues(name).Add(float64(len(records)))
 			if err := hose.Drain(ctx, records); err != nil {
-				cho.log.Error("couldn't drain to hose", "err", err)
+				cho.log.ErrorCtx(ctx, "couldn't drain to hose", "err", err)
 				cho.outq.Delete(name)
 			}
 		}
