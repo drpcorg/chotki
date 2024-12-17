@@ -26,6 +26,7 @@ type Peer struct {
 	readAccumtTimeLimit time.Duration
 	bufferMaxSize       int
 	bufferMinToProcess  int
+	writeTimeout        time.Duration
 }
 
 func (p *Peer) getReadTimeLimit() time.Duration {
@@ -148,6 +149,9 @@ func (p *Peer) keepWrite(ctx context.Context) error {
 		p.writeBatchSize.Add(float64(batchSize))
 
 		b := net.Buffers(recs)
+		if p.writeTimeout != 0 {
+			p.conn.SetWriteDeadline(time.Now().Add(p.writeTimeout))
+		}
 		for len(b) > 0 && err == nil {
 			if _, err = b.WriteTo(p.conn); err != nil {
 				return err

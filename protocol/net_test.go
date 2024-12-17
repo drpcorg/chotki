@@ -80,7 +80,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 	lCon := utils.NewFDQueue[Records](16, time.Millisecond, 0)
 	l := NewNet(log, func(_ string) FeedDrainCloserTraced {
 		return &TracedQueue[Records, []byte]{lCon}
-	}, func(_ string, t Traced) { lCon.Close() }, &NetTlsConfigOpt{tlsConfig("a.chotki.local")})
+	}, func(_ string, t Traced) { lCon.Close() }, &NetTlsConfigOpt{tlsConfig("a.chotki.local")}, &NetWriteTimeoutOpt{Timeout: 1 * time.Minute})
 
 	err := l.Listen(loop)
 	assert.Nil(t, err)
@@ -88,7 +88,7 @@ func TestTCPDepot_Connect(t *testing.T) {
 	cCon := utils.NewFDQueue[Records](16, time.Millisecond, 0)
 	c := NewNet(log, func(_ string) FeedDrainCloserTraced {
 		return &TracedQueue[Records, []byte]{cCon}
-	}, func(_ string, t Traced) { cCon.Close() }, &NetTlsConfigOpt{tlsConfig("b.chotki.local")})
+	}, func(_ string, t Traced) { cCon.Close() }, &NetTlsConfigOpt{tlsConfig("b.chotki.local")}, &NetWriteTimeoutOpt{Timeout: 1 * time.Minute})
 
 	err = c.Connect(loop)
 	assert.Nil(t, err)

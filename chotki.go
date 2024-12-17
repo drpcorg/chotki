@@ -84,8 +84,8 @@ type Options struct {
 	ReadMinBufferSizeToProcess int
 	TcpReadBufferSize          int
 	TcpWriteBufferSize         int
-
-	TlsConfig *tls.Config
+	WriteTimeout               time.Duration
+	TlsConfig                  *tls.Config
 }
 
 func (o *Options) SetDefaults() {
@@ -117,6 +117,10 @@ func (o *Options) SetDefaults() {
 	}
 	if o.ReadAccumTimeLimit == 0 {
 		o.ReadAccumTimeLimit = 5 * time.Second
+	}
+
+	if o.WriteTimeout == 0 {
+		o.WriteTimeout = 5 * time.Minute
 	}
 
 	o.Merger = &pebble.Merger{
@@ -262,6 +266,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			BufferMinToProcess: cho.opts.ReadMinBufferSizeToProcess,
 		},
 		&protocol.TcpBufferSizeOpt{Read: cho.opts.TcpReadBufferSize, Write: cho.opts.TcpWriteBufferSize},
+		&protocol.NetWriteTimeoutOpt{Timeout: cho.opts.WriteTimeout},
 	)
 
 	if !exists {

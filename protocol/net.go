@@ -57,12 +57,21 @@ type Net struct {
 	readBufferTcpSize  int
 	writeBufferTcpSize int
 	readAccumTimeLimit time.Duration
+	writeTimeout       time.Duration
 	bufferMaxSize      int
 	bufferMinToProcess int
 }
 
 type NetOpt interface {
 	Apply(*Net)
+}
+
+type NetWriteTimeoutOpt struct {
+	Timeout time.Duration
+}
+
+func (opt *NetWriteTimeoutOpt) Apply(n *Net) {
+	n.writeTimeout = opt.Timeout
 }
 
 type NetTlsConfigOpt struct {
@@ -315,6 +324,7 @@ func (n *Net) keepPeer(name string, conn net.Conn) {
 	peer := &Peer{
 		inout:               n.onInstall(name),
 		conn:                conn,
+		writeTimeout:        n.writeTimeout,
 		readAccumtTimeLimit: n.readAccumTimeLimit,
 		bufferMaxSize:       n.bufferMaxSize,
 		bufferMinToProcess:  n.bufferMinToProcess,
