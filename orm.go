@@ -131,6 +131,9 @@ func (orm *ORM) Clear() error {
 		return ErrClosed
 	}
 	orm.objects.Clear()
+	if orm.Snap != nil {
+		_ = orm.Snap.Close()
+	}
 	orm.Snap = orm.Host.Database().NewSnapshot()
 	return nil
 }
