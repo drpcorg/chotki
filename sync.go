@@ -604,7 +604,7 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 	if len(recs) == 0 {
 		return nil
 	}
-	SessionsStates.WithLabelValues(sync.Name, "drain").Set(float64(sync.GetDrainState()))
+	SessionsStates.WithLabelValues(sync.Name, "drain", version).Set(float64(sync.GetDrainState()))
 
 	recs = sync.processPings(recs)
 
