@@ -253,14 +253,16 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 				sync.SetFeedState(ctx, SendEOF)
 			}
 
-			err = sync.snap.Close()
-			if err != nil {
-				sync.log.ErrorCtx(sync.logCtx(ctx), "sync: failed closing snapshot", "err", err)
-			} else {
-				OpenedSnapshots.WithLabelValues(sync.Name).Set(0)
+			if sync.snap != nil {
+				err = sync.snap.Close()
+				if err != nil {
+					sync.log.ErrorCtx(sync.logCtx(ctx), "sync: failed closing snapshot", "err", err)
+				} else {
+					OpenedSnapshots.WithLabelValues(sync.Name).Set(0)
+				}
+				sync.snap = nil
+				err = nil
 			}
-			sync.snap = nil
-			err = nil
 		}
 	case SendPing:
 		recs = protocol.Records{
@@ -482,18 +484,22 @@ func (sync *Syncer) FeedDiffVV(ctx context.Context) (vv protocol.Records, err er
 	vv = append(vv, sync.vpack)
 	sync.vpack = nil
 	closediterators := true
-	err = sync.ffit.Close()
-	if err != nil {
-		closediterators = false
-		sync.log.ErrorCtx(sync.logCtx(ctx), "failed closing ffit", "err", err)
+	if sync.ffit != nil {
+		err = sync.ffit.Close()
+		if err != nil {
+			closediterators = false
+			sync.log.ErrorCtx(sync.logCtx(ctx), "failed closing ffit", "err", err)
+		}
+		sync.ffit = nil
 	}
-	sync.ffit = nil
-	err = sync.vvit.Close()
-	if err != nil {
-		closediterators = false
-		sync.log.ErrorCtx(sync.logCtx(ctx), "failed closing vvit", "err", err)
+	if sync.vvit != nil {
+		err = sync.vvit.Close()
+		if err != nil {
+			closediterators = false
+			sync.log.ErrorCtx(sync.logCtx(ctx), "failed closing vvit", "err", err)
+		}
+		sync.vvit = nil
 	}
-	sync.vvit = nil
 	if closediterators {
 		OpenedIterators.WithLabelValues(sync.Name).Set(0)
 	}
