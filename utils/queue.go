@@ -11,6 +11,7 @@ type FDQueue[S ~[]E, E any] struct {
 	ctx       context.Context
 	close     context.CancelFunc
 	timelimit time.Duration
+	sync      sync.Mutex
 	ch        chan E
 	active    sync.WaitGroup
 	batchSize int
@@ -32,7 +33,11 @@ func NewFDQueue[S ~[]E, E any](limit int, timelimit time.Duration, batchSize int
 func (q *FDQueue[S, E]) Close() error {
 	q.close()
 	q.active.Wait()
-	close(q.ch)
+	q.sync.Lock()
+	defer q.sync.Unlock()
+	if q.ch != nil {
+		close(q.ch)
+	}
 	q.ch = nil
 	return nil
 }
