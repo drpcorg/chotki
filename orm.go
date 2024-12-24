@@ -76,6 +76,7 @@ func (orm *ORM) Save(ctx context.Context, objs ...NativeObject) (err error) {
 		cid := rdx.IDFromZipBytes(it.Value())
 		fields, e := orm.Host.ClassFields(cid)
 		if e != nil {
+			_ = it.Close()
 			return e
 		}
 		var changes protocol.Records
