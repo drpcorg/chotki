@@ -251,7 +251,13 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 			} else {
 				sync.SetFeedState(ctx, SendEOF)
 			}
-			_ = sync.snap.Close()
+
+			err = sync.snap.Close()
+			if err != nil {
+				sync.log.ErrorCtx(sync.logCtx(ctx), "sync: failed closing snapshot", "err", err)
+			} else {
+				OpenedSnapshots.WithLabelValues(sync.Name).Set(0)
+			}
 			sync.snap = nil
 			err = nil
 		}
