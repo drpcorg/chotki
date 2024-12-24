@@ -553,6 +553,9 @@ func (cho *Chotki) Metrics() []prometheus.Collector {
 		NewNetCollector(cho.net),
 		EventsBatchSize,
 		NewPebbleCollector(cho.db),
+		OpenedIterators,
+		OpenedSnapshots,
+		SessionsStates,
 	}
 }
 
