@@ -201,4 +201,5 @@ func (p *Peer) Close() {
 		p.conn.Close()
 		p.conn = nil
 	}
+	p.inout.Close()
 }

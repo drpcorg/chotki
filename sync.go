@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -192,7 +193,7 @@ func (sync *Syncer) Close() error {
 		OpenedIterators.WithLabelValues(sync.Name).Set(0)
 	}
 
-	sync.log.InfoCtx(sync.logCtx(context.Background()), "sync: connection %s closed: %v\n", sync.Name, sync.reason)
+	sync.log.InfoCtx(sync.logCtx(context.Background()), fmt.Sprintf("sync: connection %s closed: %v\n", sync.Name, sync.reason))
 
 	return nil
 }

@@ -344,6 +344,7 @@ func (n *Net) keepPeer(name string, conn net.Conn) {
 	}
 
 	n.conns.Delete(name)
+	peer.Close()
 	n.onDestroy(name, peer)
 }
 
