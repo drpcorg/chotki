@@ -44,6 +44,17 @@ func Nnative(tlv []byte) (sum uint64) {
 	return
 }
 
+func Nnative2(tlv []byte, src uint64) (sum, mine uint64) {
+	it := FIRSTIterator{TLV: tlv}
+	for it.Next() {
+		if it.src == src {
+			mine = it.revz
+		}
+		sum += it.revz
+	}
+	return
+}
+
 // merge TLV values
 func Nmerge(tlvs [][]byte) (merged []byte) {
 	ih := ItHeap[*NIterator]{}

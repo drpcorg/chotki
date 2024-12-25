@@ -2,6 +2,7 @@ package chotki
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -93,27 +94,27 @@ func TestAtomicCounterWithPeriodicUpdate(t *testing.T) {
 		// first increment
 		res, err := counterA.Increment(ctx, 1)
 		assert.NoError(t, err)
-		assert.EqualValues(t, 1, res)
+		assert.EqualValues(t, 1, res, fmt.Sprintf("iteration  %d", i))
 
 		syncData(a, b)
 
 		// increment from another replica
 		res, err = counterB.Increment(ctx, 1)
 		assert.NoError(t, err)
-		assert.EqualValues(t, 2, res)
+		assert.EqualValues(t, 2, res, fmt.Sprintf("iteration  %d", i))
 
 		syncData(a, b)
 
 		// this increment does not account data from other replica because current value is cached
 		res, err = counterA.Increment(ctx, 1)
 		assert.NoError(t, err)
-		assert.EqualValues(t, 2, res)
+		assert.EqualValues(t, 2, res, fmt.Sprintf("iteration  %d", i))
 
 		time.Sleep(100 * time.Millisecond)
 
 		// after wait we increment, and we get actual value
 		res, err = counterA.Increment(ctx, 1)
 		assert.NoError(t, err)
-		assert.EqualValues(t, 4, res)
+		assert.EqualValues(t, 4, res, fmt.Sprintf("iteration  %d", i))
 	}
 }
