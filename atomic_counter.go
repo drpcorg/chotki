@@ -58,10 +58,15 @@ func NewAtomicCounter(db *Chotki, rid rdx.ID, offset uint64, updatePeriod time.D
 }
 
 func (a *AtomicCounter) load() (any, error) {
-	a.lock.Lock()
-	defer a.lock.Unlock()
 	now := time.Now()
 	if a.data.Load() != nil && now.Sub(a.expiration) < 0 {
+		a.wg.Add(1)
+		return a.data.Load(), nil
+	}
+	a.lock.Lock()
+	defer a.lock.Unlock()
+	if a.data.Load() != nil && now.Sub(a.expiration) < 0 {
+		a.wg.Add(1)
 		return a.data.Load(), nil
 	}
 	a.wg.Wait()
@@ -93,6 +98,7 @@ func (a *AtomicCounter) load() (any, error) {
 	}
 	a.data.Store(data)
 	a.expiration = now.Add(a.updatePeriod)
+	a.wg.Add(1)
 	return data, nil
 }
 
@@ -101,6 +107,7 @@ func (a *AtomicCounter) Get(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	defer a.wg.Done()
 	switch c := data.(type) {
 	case *atomicNcounter:
 		return int64(c.total.Load()), nil
@@ -117,7 +124,6 @@ func (a *AtomicCounter) Increment(ctx context.Context, val int64) (int64, error)
 	if err != nil {
 		return 0, err
 	}
-	a.wg.Add(1)
 	defer a.wg.Done()
 	var dtlv []byte
 	var result int64
