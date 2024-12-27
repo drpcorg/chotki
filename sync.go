@@ -629,13 +629,13 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		fallthrough
 
 	case SendDiff:
-		broadcast := false
+		broadcast := true
 		lit := LastLit(recs)
 		if lit != 'D' && lit != 'V' {
 			if lit == 'B' {
+				broadcast = false
 				sync.SetDrainState(ctx, SendNone)
 			} else {
-				broadcast = true
 				sync.SetDrainState(ctx, SendLive)
 			}
 		}
