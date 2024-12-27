@@ -159,7 +159,7 @@ type Chotki struct {
 	src   uint64
 	clock rdx.Clock
 
-	lock         sync.Mutex
+	lock         sync.RWMutex
 	db           *pebble.DB
 	net          *protocol.Net
 	dir          string
@@ -661,6 +661,11 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 }
 
 func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error) {
+	cho.lock.RLock()
+	defer cho.lock.RUnlock()
+	if cho.db == nil {
+		return ErrClosed
+	}
 	EventsBatchSize.Observe(float64(len(recs)))
 	return cho.drain(ctx, recs)
 }
