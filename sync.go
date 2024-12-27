@@ -156,7 +156,7 @@ func (sync *Syncer) logCtx(ctx context.Context) context.Context {
 }
 
 func (sync *Syncer) Close() error {
-	sync.SetFeedState(context.Background(), SendEOF)
+	sync.SetFeedState(context.Background(), SendNone)
 
 	if sync.Host == nil {
 		return utils.ErrClosed
