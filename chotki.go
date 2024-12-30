@@ -124,21 +124,8 @@ func (o *Options) SetDefaults() {
 	}
 
 	o.Merger = &pebble.Merger{
-		Name: "CRDT",
-		Merge: func(key, value []byte) (pebble.ValueMerger, error) {
-			/*if len(key) != 10 {
-				return nil, nil
-			}*/
-			target := make([]byte, len(value))
-			copy(target, value)
-			id, rdt := OKeyIdRdt(key)
-			pma := PebbleMergeAdaptor{
-				id:   id,
-				rdt:  rdt,
-				vals: [][]byte{target},
-			}
-			return &pma, nil
-		},
+		Name:  "CRDT",
+		Merge: PebbleAdaptorMerge,
 	}
 
 	if o.Logger == nil {
