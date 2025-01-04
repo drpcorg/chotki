@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -817,7 +816,7 @@ func (repl *REPL) CommandCompile(arg *rdx.RDX) (id rdx.ID, err error) {
 	return
 }
 
-func (repl *REPL) CommandSwagger(arg *rdx.RDX) {
+func (repl *REPL) CommandSwagger(arg *rdx.RDX) (id rdx.ID, err error) {
 	fs := http.FileServer(http.Dir("./swagger"))
 
 	http.Handle("/", fs)
@@ -825,10 +824,12 @@ func (repl *REPL) CommandSwagger(arg *rdx.RDX) {
 		http.ServeFile(w, r, "./swagger/swagger.yaml")
 	})
 
-	http.ListenAndServe("127.0.0.1:8000", nil)
+	go http.ListenAndServe("127.0.0.1:8000", nil)
+
+	return
 }
 
-var HelpServeHttp = errors.New("servehttp \"8001\"")
+var HelpServeHttp = errors.New("servehttp 8001")
 
 func (repl *REPL) CommandServeHttp(arg *rdx.RDX) (id rdx.ID, err error) {
 	if arg == nil || arg.RdxType != rdx.Integer {
@@ -845,6 +846,8 @@ func (repl *REPL) CommandServeHttp(arg *rdx.RDX) (id rdx.ID, err error) {
 	mux.HandleFunc("/edit", AddCorsHeaders(EditHandler(repl)))
 	mux.HandleFunc("/cat", AddCorsHeaders(CatHandler(repl)))
 	mux.HandleFunc("/list", AddCorsHeaders(ListHandler(repl)))
-	log.Fatal(http.ListenAndServe("127.0.0.1:"+arg.String(), mux))
+
+	go http.ListenAndServe("127.0.0.1:"+arg.String(), mux)
+
 	return
 }
