@@ -59,6 +59,7 @@ var completer = readline.NewPrefixCompleter(
 	readline.PcItem("tinc"),
 	readline.PcItem("sinc"),
 
+	readline.PcItem("servehttp"),
 	readline.PcItem("swagger"),
 )
 
