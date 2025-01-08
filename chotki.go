@@ -147,6 +147,7 @@ type Chotki struct {
 	clock rdx.Clock
 
 	lock         sync.RWMutex
+	commitMutex  sync.Mutex
 	db           *pebble.DB
 	net          *protocol.Net
 	dir          string
@@ -487,8 +488,8 @@ func (cho *Chotki) Broadcast(ctx context.Context, records protocol.Records, exce
 
 // Here new packets are timestamped and queued for save
 func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body protocol.Records) (id rdx.ID, err error) {
-	cho.lock.Lock()
-	defer cho.lock.Unlock()
+	cho.commitMutex.Lock()
+	defer cho.commitMutex.Unlock()
 
 	if cho.db == nil {
 		return rdx.BadId, ErrClosed
