@@ -513,6 +513,7 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 	}()
 	cho.commitMutex.Lock()
 	defer cho.commitMutex.Unlock()
+	DrainTime.WithLabelValues("commit lock").Observe(float64(time.Since(now)) / float64(time.Millisecond))
 
 	if cho.db == nil {
 		return rdx.BadId, ErrClosed
