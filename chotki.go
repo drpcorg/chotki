@@ -68,7 +68,7 @@ var EventsBatchSize = prometheus.NewHistogram(prometheus.HistogramOpts{
 var DrainTime = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 	Namespace: "chotki",
 	Name:      "drain_time",
-	Buckets:   prometheus.DefBuckets,
+	Buckets:   []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 100, 500, 1000, 5000, 10000},
 }, []string{"type"})
 
 type Options struct {
