@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"encoding/binary"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,4 +49,165 @@ func TestBlockingRecordQueue_Drain(t *testing.T) {
 	assert.Equal(t, ErrClosed, err)
 	_, err2 := queue.Feed(context.Background())
 	assert.Equal(t, ErrClosed, err2)
+}
+
+func TestNewFDQueue(t *testing.T) {
+	queue := NewFDQueue[[]int, int](10, time.Second, 5)
+	assert.NotNil(t, queue, "FDQueue creation failed")
+	assert.Equal(t, 0, queue.Len(), "Expected queue length to be 0")
+}
+
+func TestFDQueue_DrainAndFeed(t *testing.T) {
+	queue := NewFDQueue[[]int, int](10, time.Second, 5)
+	ctx := context.Background()
+
+	records := []int{1, 2, 3, 4, 5}
+	go func() {
+		err := queue.Drain(ctx, records)
+		assert.NoError(t, err, "Unexpected error in Drain")
+	}()
+
+	result, err := queue.Feed(ctx)
+	assert.NoError(t, err, "Unexpected error in Feed")
+	assert.Equal(t, len(records), len(result), "Mismatch in record length")
+	assert.Equal(t, records, result, "Mismatch in records")
+}
+
+func TestFDQueue_Close(t *testing.T) {
+	queue := NewFDQueue[[]int, int](10, time.Second, 5)
+	err := queue.Close()
+	assert.NoError(t, err, "Unexpected error during Close")
+
+	err = queue.Drain(context.Background(), []int{1, 2, 3})
+	assert.ErrorIs(t, err, ErrClosed, "Expected ErrClosed after Close")
+
+	_, err = queue.Feed(context.Background())
+	assert.ErrorIs(t, err, ErrClosed, "Expected ErrClosed after Close")
+
+	assert.Equal(t, 0, queue.Len(), "Expected queue length to be 0 after close")
+}
+
+func TestFDQueue_ConcurrentDrainAndFeed(t *testing.T) {
+	queue := NewFDQueue[[]int, int](15, time.Second, 10)
+	ctx := context.Background()
+
+	records := []int{1, 2, 3, 4, 5}
+	wg := sync.WaitGroup{}
+
+	// Add 15 elements to the queue in 3 batches
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 3; i++ {
+			err := queue.Drain(ctx, records)
+			assert.NoError(t, err, "Unexpected error in Drain")
+		}
+	}()
+
+	// Fetch batches of elements from the queue
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// First batch should return 10 elements (batch size of queue)
+		result, err := queue.Feed(ctx)
+		assert.NoError(t, err, "Unexpected error in Feed")
+		assert.Equal(t, 10, len(result), "Expected 10 elements in first batch")
+		assert.Equal(t, append(records, records...), result, "Mismatch in first batch records")
+
+		// Second batch should return 5 elements (remaining items)
+		result, err = queue.Feed(ctx)
+		assert.NoError(t, err, "Unexpected error in Feed")
+		assert.Equal(t, 5, len(result), "Expected 5 elements in second batch")
+		assert.Equal(t, records, result, "Mismatch in second batch records")
+	}()
+
+	wg.Wait()
+}
+
+func TestFDQueue_TimeLimit(t *testing.T) {
+	queue := NewFDQueue[[]int, int](10, 50*time.Millisecond, 5)
+	ctx := context.Background()
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		queue.Drain(ctx, []int{1, 2, 3})
+	}()
+
+	result, err := queue.Feed(ctx)
+	assert.NoError(t, err, "Unexpected error in Feed")
+	assert.Equal(t, 0, len(result), "Expected 0 records due to timeout")
+}
+
+func TestFDQueue_DrainStopsWhenContextCancelled(t *testing.T) {
+	queue := NewFDQueue[[]int, int](10, time.Second, 5)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	records := []int{1, 2, 3, 4, 5}
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	queue.Drain(ctx, records)
+}
+
+func TestFDQueue_FeedStopsWhenContextCancelled(t *testing.T) {
+	queue := NewFDQueue[[]int, int](10, time.Second, 5)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	recs, _ := queue.Feed(ctx)
+	assert.Nil(t, recs)
+}
+
+func TestFDQueue_CloseStopsDrainAndFeed(t *testing.T) {
+	queue := NewFDQueue[[]int, int](10, time.Second, 5)
+	ctx := context.Background()
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		queue.Close()
+	}()
+
+	records := []int{1, 2, 3}
+	queue.Drain(ctx, records)
+	queue.Feed(ctx)
+}
+
+func TestFDQueue_ChannelLimitBlockingBehavior(t *testing.T) {
+	queue := NewFDQueue[[]int, int](5, time.Second, 5)
+	ctx := context.Background()
+
+	records := []int{1, 2, 3, 4, 5}
+	wg := sync.WaitGroup{}
+
+	// Add more elements than the channel limit to test blocking behavior
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 10; i++ {
+			err := queue.Drain(ctx, records)
+			assert.NoError(t, err, "Unexpected error in Drain")
+		}
+	}()
+
+	// Read elements from the queue to allow the above to proceed
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 10; i++ {
+			result, err := queue.Feed(ctx)
+			assert.NoError(t, err, "Unexpected error in Feed")
+			assert.Equal(t, len(records), len(result), "Mismatch in record length")
+			assert.Equal(t, records, result, "Mismatch in records")
+		}
+	}()
+
+	wg.Wait()
 }

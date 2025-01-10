@@ -88,7 +88,7 @@ func (q *FDQueue[S, E]) Feed(ctx context.Context) (recs S, err error) {
 				return
 			}
 			recs = append(recs, pkg)
-			if len(recs) > q.batchSize {
+			if len(recs) >= q.batchSize {
 				return
 			}
 		}
