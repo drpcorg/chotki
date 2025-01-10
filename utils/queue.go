@@ -42,6 +42,13 @@ func (q *FDQueue[S, E]) Close() error {
 	return nil
 }
 
+func (q *FDQueue[S, E]) Len() int {
+	if q.ctx.Err() != nil {
+		return 0
+	}
+	return len(q.ch)
+}
+
 func (q *FDQueue[S, E]) Drain(ctx context.Context, recs S) error {
 	if q.ctx.Err() != nil {
 		return ErrClosed
