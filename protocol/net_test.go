@@ -64,11 +64,11 @@ func tlsConfig(servername string) *tls.Config {
 	}
 }
 
-type TracedQueue[S ~[]E, E any] struct {
-	*utils.FDQueue[S, E]
+type TracedQueue[T ~[][]byte] struct {
+	*utils.FDQueue[T]
 }
 
-func (t *TracedQueue[S, E]) GetTraceId() string {
+func (t *TracedQueue[T]) GetTraceId() string {
 	return ""
 }
 
@@ -77,28 +77,26 @@ func TestTCPDepot_Connect(t *testing.T) {
 
 	log := utils.NewDefaultLogger(slog.LevelDebug)
 
-	lCon := utils.NewFDQueue[Records](16, time.Millisecond, 0)
+	lCon := utils.NewFDQueue[Records](1000, time.Minute, 1)
 	l := NewNet(log, func(_ string) FeedDrainCloserTraced {
-		return &TracedQueue[Records, []byte]{lCon}
+		return &TracedQueue[Records]{lCon}
 	}, func(_ string, t Traced) { lCon.Close() }, &NetTlsConfigOpt{tlsConfig("a.chotki.local")}, &NetWriteTimeoutOpt{Timeout: 1 * time.Minute})
 
 	err := l.Listen(loop)
 	assert.Nil(t, err)
 
-	cCon := utils.NewFDQueue[Records](16, time.Millisecond, 0)
+	cCon := utils.NewFDQueue[Records](1000, time.Minute, 1)
 	c := NewNet(log, func(_ string) FeedDrainCloserTraced {
-		return &TracedQueue[Records, []byte]{cCon}
+		return &TracedQueue[Records]{cCon}
 	}, func(_ string, t Traced) { cCon.Close() }, &NetTlsConfigOpt{tlsConfig("b.chotki.local")}, &NetWriteTimeoutOpt{Timeout: 1 * time.Minute})
 
 	err = c.Connect(loop)
 	assert.Nil(t, err)
-	time.Sleep(time.Second) // Wait connection, todo use events
 
 	// send a record
 	err = cCon.Drain(context.Background(), Records{Record('M', []byte("Hi there"))})
 	assert.Nil(t, err)
 
-	time.Sleep(1000 * time.Millisecond)
 	rec, err := lCon.Feed(context.Background())
 	assert.Nil(t, err)
 	assert.Greater(t, len(rec), 0)
@@ -136,7 +134,7 @@ func TestTCPDepot_ConnectFailed(t *testing.T) {
 
 	cCon := utils.NewFDQueue[Records](16, time.Millisecond, 0)
 	c := NewNet(log, func(_ string) FeedDrainCloserTraced {
-		return &TracedQueue[Records, []byte]{cCon}
+		return &TracedQueue[Records]{cCon}
 	}, func(_ string, t Traced) { cCon.Close() }, &NetTlsConfigOpt{tlsConfig("b.chotki.local")})
 
 	err := c.Connect(loop)

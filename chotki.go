@@ -77,15 +77,16 @@ type Options struct {
 	Src                        uint64
 	Name                       string
 	Log1                       protocol.Records
-	MaxLogLen                  int64
-	RelaxedOrder               bool
 	Logger                     utils.Logger
-	PingPeriod                 time.Duration
-	PingWait                   time.Duration
+	PingPeriod                 time.Duration // how often should we ping neighbour replicae if its silent
+	PingWait                   time.Duration // how much time we wait until pong received
 	PebbleWriteOptions         *pebble.WriteOptions
-	BroadcastBatchSize         int
-	BroadcastTimeLimit         time.Duration
-	ReadAccumTimeLimit         time.Duration
+	BroadcastQueueMaxSize      int // size in bytes, after reaching it all writes will block
+	BroadcastQueueMinBatchSize int // reads will wait until they have enough data or timelimit expires
+	// if this limit expires before read has enough data (BroadcastQueueMinBatchSize) it will return whatever it has,
+	// writes will cause overflow error which will result in queue shutdown and session end
+	BroadcastQueueTimeLimit    time.Duration
+	ReadAccumTimeLimit         time.Duration //
 	ReadMaxBufferSize          int
 	ReadMinBufferSizeToProcess int
 	TcpReadBufferSize          int
@@ -95,10 +96,6 @@ type Options struct {
 }
 
 func (o *Options) SetDefaults() {
-	if o.MaxLogLen == 0 {
-		o.MaxLogLen = 1 << 23
-	}
-
 	if o.PingPeriod == 0 {
 		o.PingPeriod = 30 * time.Second
 	}
@@ -118,8 +115,11 @@ func (o *Options) SetDefaults() {
 		o.PebbleWriteOptions = &pebble.WriteOptions{Sync: true}
 	}
 
-	if o.BroadcastTimeLimit == 0 {
-		o.BroadcastTimeLimit = time.Millisecond
+	if o.BroadcastQueueTimeLimit == 0 {
+		o.BroadcastQueueTimeLimit = time.Second
+	}
+	if o.BroadcastQueueMaxSize == 0 {
+		o.BroadcastQueueMaxSize = 10 * 1024 * 1024 // 10Mb
 	}
 	if o.ReadAccumTimeLimit == 0 {
 		o.ReadAccumTimeLimit = 5 * time.Second
@@ -236,9 +236,8 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 
 	cho.net = protocol.NewNet(cho.log,
 		func(name string) protocol.FeedDrainCloserTraced { // new connection
-			const outQueueLimit = 1 << 20
 
-			queue := utils.NewFDQueue[protocol.Records](outQueueLimit, cho.opts.BroadcastTimeLimit, cho.opts.BroadcastBatchSize)
+			queue := utils.NewFDQueue[protocol.Records](cho.opts.BroadcastQueueMaxSize, cho.opts.BroadcastQueueTimeLimit, cho.opts.BroadcastQueueMinBatchSize)
 			if q, loaded := cho.outq.LoadAndStore(name, queue); loaded && q != nil {
 				cho.log.Warn(fmt.Sprintf("closing the old conn to %s", name))
 				if err := q.Close(); err != nil {
@@ -586,8 +585,8 @@ func (n *ChotkiCollector) Collect(m chan<- prometheus.Metric) {
 		need_to_pass[key] = true
 	}
 	n.chotki.outq.Range(func(key string, value protocol.DrainCloser) bool {
-		if q, ok := value.(*utils.FDQueue[protocol.Records, []byte]); ok {
-			m <- prometheus.MustNewConstMetric(n.outq_size, prometheus.GaugeValue, float64(q.Len()), key)
+		if q, ok := value.(*utils.FDQueue[protocol.Records]); ok {
+			m <- prometheus.MustNewConstMetric(n.outq_size, prometheus.GaugeValue, float64(q.Size()), key)
 			nw_collected[key] = struct{}{}
 			need_to_pass[key] = false
 		}
