@@ -58,6 +58,9 @@ var completer = readline.NewPrefixCompleter(
 	readline.PcItem("ponc"),
 	readline.PcItem("tinc"),
 	readline.PcItem("sinc"),
+
+	readline.PcItem("servehttp"),
+	readline.PcItem("swagger"),
 )
 
 func filterInput(r rune) (rune, bool) {
@@ -127,6 +130,10 @@ func (repl *REPL) REPL(line string) (id rdx.ID, err error) {
 		id, err = repl.CommandOpen(arg)
 	case "opendir":
 		id, err = repl.CommandOpenDir(arg)
+	case "swagger":
+		id, err = repl.CommandSwagger(arg)
+	case "servehttp":
+		id, err = repl.CommandServeHttp(arg)
 	case "checkpoint", "cp":
 		id, err = repl.CommandCheckpoint(arg)
 	case "close":
