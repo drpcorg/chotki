@@ -200,7 +200,7 @@ etc. That value will get an alias if the command was prepended
 with `name=`, e.g. `STABLE=cone 1e-402`. Later, that alias can
 be used in place of an argument in any command. Aliases are
 stored, so they survive restarts. But they are not replicated to
-other hosts unless through snaphot duplication. 
+other hosts unless through snapshot duplication. 
 
 Convention: object aliases are `lowercase`, class aliases are
 `CamelCase` and version vector aliases are `UPPERCASE`.
