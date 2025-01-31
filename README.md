@@ -128,7 +128,7 @@ projects started with a columnar-like coding of operations,
 which Automerge is using to this day, while RDX followed the
 Einstein's maxim: "Everything should be made as simple as
 possible, but not simpler". After spending quite some time to
-[cram][s] columnar-encoded CRDT into exising databases, RDX was
+[cram][s] columnar-encoded CRDT into existing databases, RDX was
 greatly simplified and now all the RDX CRDT logic fits into a
 merge operator. That greatly improved the performance.
 Effectively, that simplicity allows to use a commodity LSM
