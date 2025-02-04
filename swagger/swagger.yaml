@@ -1,0 +1,207 @@
+openapi: 3.0.3
+info:
+  title: Swagger Chotki - OpenAPI 3.0
+  description: |-
+    This is a chotki example backend server based on the OpenAPI 3.0 specification. You can find out more about
+    Swagger at [https://swagger.io](https://swagger.io).
+  termsOfService: http://swagger.io/terms/
+  contact:
+    email: apiteam@swagger.io
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  version: 1.0.0
+servers:
+  - url: http://127.0.0.1:8001
+  - url: http://127.0.0.1:8002
+  - url: http://127.0.0.1:8003
+  - url: http://127.0.0.1:8004
+  - url: http://127.0.0.1:8005
+  - url: http://127.0.0.1:8006
+  - url: http://127.0.0.1:8007
+  - url: http://127.0.0.1:8008
+  - url: http://127.0.0.1:8009
+  - url: http://127.0.0.1:8010
+paths:
+  /connect:
+    post:
+      tags:
+        - commands
+      summary: Connect a listening replica by TCP route
+      operationId: connect
+      requestBody:
+        description: TCP route to connect
+        content:
+          plain/text:
+            example: 'tcp://127.0.0.1:8100'
+      responses:
+        '200':
+          description: Successful operation
+        '400':
+          description: Something went wrong
+        '404':
+          description: Key was not found
+        '422':
+          description: Validation exception
+  /listen:
+    post:
+      tags:
+        - commands
+      summary: Listen for connections to synchronize
+      operationId: listen
+      requestBody:
+        description: Start listening for synchronization connections
+        content:
+          plain/text:
+            example: 'tcp://127.0.0.1:8100'
+      responses:
+        '200':
+          description: Successful operation
+        '400':
+          description: Something went wrong
+        '404':
+          description: Key was not found
+        '422':
+          description: Validation exception
+  /class:
+    post:
+      tags:
+        - commands
+      summary: Create class
+      operationId: class
+      requestBody:
+        description: Class creation details. Use _ref for inheritance.
+        content:
+          plain/text:
+            example: '{_ref:Parent,Name:S,Girl:T}'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            plain/text:
+              example: 'b0b-1'
+        '400':
+          description: Something went wrong
+        '404':
+          description: Key was not found
+        '422':
+          description: Validation exception
+  /name:
+    put:
+      tags:
+        - commands
+      summary: Create or update a name
+      operationId: name
+      requestBody:
+        description: '{name:id}'
+        content:
+          plain/text:
+            example: '{Child:b0b-9}'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            plain/text:
+              example: 'b0b-1'
+        '400':
+          description: Something went wrong
+        '404':
+          description: Key was not found
+        '422':
+          description: Validation exception
+  /new:
+    post:
+      tags:
+        - commands
+      summary: Create a new object
+      operationId: new
+      requestBody:
+        description: Object creation details using class in _ref
+        content:
+          plain/text:
+            example: '{_ref:Child,Name:"Alice"}'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            plain/text:
+              example: 'b0b-1'
+        '400':
+          description: Something went wrong
+        '404':
+          description: Key was not found
+        '422':
+          description: Validation exception
+  /edit:
+    put:
+      tags:
+        - commands
+      summary: Edit an existing object
+      operationId: edit
+      requestBody:
+        description: Object edit details
+        content:
+          plain/text:
+            example: '{_ref:b0b-a,Girl:true}'
+      responses:
+        '200':
+          description: 'Successful operation'
+          content:
+            plain/text:
+              example: 'b0b-1'
+        '400':
+          description: Something went wrong
+        '404':
+          description: Key was not found
+        '422':
+          description: Validation exception
+  /cat:
+    get:
+      tags:
+        - commands
+      summary: Get an object partially
+      operationId: cat
+      parameters:
+        - in: query
+          name: id
+          required: true
+          schema:
+            type: string
+          description: ID of the object to retrieve
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            plain/text:
+              example: '{Name: "Bob", Girl: False}'
+        '400':
+          description: Something went wrong
+        '404':
+          description: Key was not found
+        '422':
+          description: Validation exception
+  /list:
+    get:
+      tags:
+        - commands
+      summary: Get an object completely
+      operationId: list
+      parameters:
+        - in: query
+          name: id
+          required: true
+          schema:
+            type: string
+          description: ID of the object to retrieve
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            plain/text:
+              example: '{Name: "Bob", Girl: False}'
+        '400':
+          description: Something went wrong
+        '404':
+          description: Key was not found
+        '422':
+          description: Validation exception
