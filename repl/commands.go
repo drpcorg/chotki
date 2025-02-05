@@ -817,14 +817,20 @@ func (repl *REPL) CommandCompile(arg *rdx.RDX) (id rdx.ID, err error) {
 }
 
 func (repl *REPL) CommandSwagger(arg *rdx.RDX) (id rdx.ID, err error) {
+	mux := http.NewServeMux()
 	fs := http.FileServer(http.Dir("./swagger"))
 
-	http.Handle("/", fs)
-	http.HandleFunc("/swagger.yaml", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/", fs)
+	mux.HandleFunc("/swagger.yaml", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "./swagger/swagger.yaml")
 	})
 
-	go http.ListenAndServe("127.0.0.1:8000", nil)
+	go func() {
+		err := http.ListenAndServe("127.0.0.1:8000", mux)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to serve: %s\n", err.Error())
+		}
+	}()
 
 	return
 }
@@ -835,7 +841,6 @@ func (repl *REPL) CommandServeHttp(arg *rdx.RDX) (id rdx.ID, err error) {
 	if arg == nil || arg.RdxType != rdx.Integer {
 		return rdx.BadId, HelpServeHttp
 	}
-	// TODO: make validation checks
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/listen", AddCorsHeaders(ListenHandler(repl)))
@@ -847,7 +852,12 @@ func (repl *REPL) CommandServeHttp(arg *rdx.RDX) (id rdx.ID, err error) {
 	mux.HandleFunc("/cat", AddCorsHeaders(CatHandler(repl)))
 	mux.HandleFunc("/list", AddCorsHeaders(ListHandler(repl)))
 
-	go http.ListenAndServe("127.0.0.1:"+arg.String(), mux)
+	go func() {
+		err := http.ListenAndServe("127.0.0.1:"+arg.String(), mux)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to serve: %s\n", err.Error())
+		}
+	}()
 
 	return
 }
