@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -16,6 +17,25 @@ import (
 
 func replicaDirName(rno uint64) string {
 	return fmt.Sprintf("cho%x", rno)
+}
+
+func (repl *REPL) idFromNameOrText(a *rdx.RDX) (id rdx.ID, err error) {
+	switch a.RdxType {
+	case rdx.Reference:
+		id = rdx.IDFromText(a.Text)
+	case rdx.Term:
+		var names rdx.MapTR
+		names, err = repl.Host.MapTRField(chotki.IdNames)
+		if oid, ok := names[a.String()]; !ok {
+			err = fmt.Errorf("No such name")
+			return
+		} else {
+			id = oid
+		}
+	default:
+		err = fmt.Errorf("Wrong type")
+	}
+	return
 }
 
 var HelpCreate = errors.New("create zone/1 {Name:\"Name\",Description:\"long text\"}")
@@ -181,10 +201,10 @@ func (repl *REPL) CommandClass(arg *rdx.RDX) (id rdx.ID, err error) {
 			key := fields[i]
 			val := fields[i+1]
 			if string(key.Text) == "_ref" {
-				if val.RdxType != rdx.Reference || parent != rdx.ID0 {
+				if val.RdxType != rdx.Reference && val.RdxType != rdx.Term || parent != rdx.ID0 {
 					return
 				}
-				parent = rdx.IDFromText(val.Text)
+				parent, err = repl.idFromNameOrText(&val)
 				continue
 			}
 			if key.RdxType != rdx.Term || val.RdxType != rdx.Term {
@@ -233,7 +253,10 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 	} else if arg.RdxType == rdx.Mapping {
 		pairs := arg.Nested
 		if len(pairs) >= 2 && pairs[0].String() == "_ref" {
-			tid = rdx.IDFromText(pairs[1].Text)
+			if pairs[1].RdxType != rdx.Reference && pairs[1].RdxType != rdx.Term {
+				return
+			}
+			tid, err = repl.idFromNameOrText(&pairs[1])
 			pairs = pairs[2:]
 		}
 		var fields chotki.Fields
@@ -290,10 +313,11 @@ func (repl *REPL) CommandEdit(arg *rdx.RDX) (id rdx.ID, err error) {
 		return
 	}
 	if arg.Nested[0].String() == "_id" {
-		if arg.Nested[1].RdxType != rdx.Reference {
+		if arg.Nested[1].RdxType != rdx.Reference && arg.Nested[1].RdxType != rdx.Term {
 			return
 		}
-		oid := rdx.IDFromText(arg.Nested[1].Text)
+		var oid rdx.ID
+		oid, err = repl.idFromNameOrText(&arg.Nested[1])
 		return repl.Host.EditObjectRDX(context.Background(), oid, arg.Nested[2:])
 	} else { // todo
 		return
@@ -308,10 +332,11 @@ func (repl *REPL) CommandAdd(arg *rdx.RDX) (id rdx.ID, err error) {
 	if arg.RdxType == rdx.Mapping {
 		pairs := arg.Nested
 		for i := 0; i+1 < len(pairs) && err == nil; i += 2 {
-			if pairs[i].RdxType != rdx.Reference || pairs[i+1].RdxType != rdx.Integer {
+			if pairs[i].RdxType != rdx.Reference && pairs[i].RdxType != rdx.Term || pairs[i+1].RdxType != rdx.Integer {
 				return rdx.BadId, HelpAdd
 			}
-			fid := rdx.IDFromText(pairs[i].Text)
+			var fid rdx.ID
+			fid, err = repl.idFromNameOrText(&pairs[i])
 			var add uint64
 			_, err = fmt.Sscanf(string(pairs[i+1].Text), "%d", &add)
 			if fid.Off() == 0 || err != nil {
@@ -333,7 +358,7 @@ var HelpInc = errors.New(
 func (repl *REPL) CommandInc(arg *rdx.RDX) (id rdx.ID, err error) {
 	id = rdx.BadId
 	err = HelpInc
-	if arg.RdxType == rdx.Reference {
+	if arg.RdxType == rdx.Reference || arg.RdxType == rdx.Term {
 		fid := rdx.IDFromText(arg.Text)
 		if id.Off() == 0 {
 			return
@@ -403,10 +428,11 @@ var HelpCat = errors.New(
 func (repl *REPL) CommandCat(arg *rdx.RDX) (id rdx.ID, err error) {
 	id = rdx.BadId
 	err = HelpCat
-	if arg == nil || arg.RdxType != rdx.Reference {
+	if arg == nil || arg.RdxType != rdx.Reference && arg.RdxType != rdx.Term {
 		return
 	}
-	oid := rdx.IDFromText(arg.Text)
+	var oid rdx.ID
+	oid, err = repl.idFromNameOrText(arg)
 	var txt string
 	txt, err = repl.Host.ObjectString(oid)
 	if err != nil {
@@ -788,5 +814,51 @@ func (repl *REPL) CommandCompile(arg *rdx.RDX) (id rdx.ID, err error) {
 	if err == nil {
 		fmt.Println(code)
 	}
+	return
+}
+
+func (repl *REPL) CommandSwagger(arg *rdx.RDX) (id rdx.ID, err error) {
+	mux := http.NewServeMux()
+	fs := http.FileServer(http.Dir("./swagger"))
+
+	mux.Handle("/", fs)
+	mux.HandleFunc("/swagger.yaml", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "./swagger/swagger.yaml")
+	})
+
+	go func() {
+		err := http.ListenAndServe("127.0.0.1:8000", mux)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to serve: %s\n", err.Error())
+		}
+	}()
+
+	return
+}
+
+var HelpServeHttp = errors.New("servehttp 8001")
+
+func (repl *REPL) CommandServeHttp(arg *rdx.RDX) (id rdx.ID, err error) {
+	if arg == nil || arg.RdxType != rdx.Integer {
+		return rdx.BadId, HelpServeHttp
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/listen", AddCorsHeaders(ListenHandler(repl)))
+	mux.HandleFunc("/connect", AddCorsHeaders(ConnectHandler(repl)))
+	mux.HandleFunc("/class", AddCorsHeaders(ClassHandler(repl)))
+	mux.HandleFunc("/name", AddCorsHeaders(NameHandler(repl)))
+	mux.HandleFunc("/new", AddCorsHeaders(NewHandler(repl)))
+	mux.HandleFunc("/edit", AddCorsHeaders(EditHandler(repl)))
+	mux.HandleFunc("/cat", AddCorsHeaders(CatHandler(repl)))
+	mux.HandleFunc("/list", AddCorsHeaders(ListHandler(repl)))
+
+	go func() {
+		err := http.ListenAndServe("127.0.0.1:"+arg.String(), mux)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to serve: %s\n", err.Error())
+		}
+	}()
+
 	return
 }

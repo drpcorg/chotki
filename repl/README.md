@@ -22,6 +22,12 @@ returns an id and/or an error message.
 
 ##  Backup/restore
 
+##  Http/swagger
+1. `servehttp 8001`
+   serve http server on defined port with handlers to manipulate opened chotki instance 
+2. `swagger`
+   serve swagger on http://127.0.0.1:8000/, you can select ports in the top to work with different servers
+
 ##  Classes and objects
 
  1. `class {_ref:Parent,Name:S,Girl:T}`
