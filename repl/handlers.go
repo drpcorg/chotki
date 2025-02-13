@@ -32,8 +32,12 @@ func ListenHandler(repl *REPL) func(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			arg, err := rdx.ParseRDX(body)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			if arg == nil || arg.RdxType != rdx.String {
-				http.Error(w, fmt.Sprintf("Argument must be string"), http.StatusUnprocessableEntity)
+				http.Error(w, "Argument must be string", http.StatusUnprocessableEntity)
 				return
 			}
 			_, err = repl.CommandListen(arg)
@@ -61,8 +65,12 @@ func ConnectHandler(repl *REPL) func(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			arg, err := rdx.ParseRDX(body)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			if arg == nil || arg.RdxType != rdx.String {
-				http.Error(w, fmt.Sprintf("Argument must be string"), http.StatusUnprocessableEntity)
+				http.Error(w, "Argument must be string", http.StatusUnprocessableEntity)
 				return
 			}
 			_, err = repl.CommandConnect(arg)
@@ -95,7 +103,7 @@ func ClassHandler(repl *REPL) func(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			if arg == nil || arg.RdxType != rdx.Mapping {
-				http.Error(w, fmt.Sprintf("Argument must be mapping"), http.StatusUnprocessableEntity)
+				http.Error(w, "Argument must be mapping", http.StatusUnprocessableEntity)
 				return
 			}
 			id, err := repl.CommandClass(arg)
@@ -129,7 +137,7 @@ func NameHandler(repl *REPL) func(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			if arg == nil || arg.RdxType != rdx.Mapping {
-				http.Error(w, fmt.Sprintf("Argument must be mapping"), http.StatusUnprocessableEntity)
+				http.Error(w, "Argument must be mapping", http.StatusUnprocessableEntity)
 				return
 			}
 			id, err := repl.CommandName(arg)
@@ -163,7 +171,7 @@ func NewHandler(repl *REPL) func(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			if arg == nil || arg.RdxType != rdx.Mapping {
-				http.Error(w, fmt.Sprintf("Argument must be mapping"), http.StatusUnprocessableEntity)
+				http.Error(w, "Argument must be mapping", http.StatusUnprocessableEntity)
 				return
 			}
 			id, err := repl.CommandNew(arg)
@@ -197,7 +205,7 @@ func EditHandler(repl *REPL) func(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			if arg == nil || arg.RdxType != rdx.Mapping {
-				http.Error(w, fmt.Sprintf("Argument must be eulerian"), http.StatusUnprocessableEntity)
+				http.Error(w, "Argument must be eulerian", http.StatusUnprocessableEntity)
 				return
 			}
 			id, err := repl.CommandEdit(arg)

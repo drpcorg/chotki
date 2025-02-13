@@ -257,6 +257,9 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 				return
 			}
 			tid, err = repl.idFromNameOrText(&pairs[1])
+			if err != nil {
+				return id, err
+			}
 			pairs = pairs[2:]
 		}
 		var fields chotki.Fields
@@ -318,6 +321,9 @@ func (repl *REPL) CommandEdit(arg *rdx.RDX) (id rdx.ID, err error) {
 		}
 		var oid rdx.ID
 		oid, err = repl.idFromNameOrText(&arg.Nested[1])
+		if err != nil {
+			return id, err
+		}
 		return repl.Host.EditObjectRDX(context.Background(), oid, arg.Nested[2:])
 	} else { // todo
 		return
@@ -337,6 +343,9 @@ func (repl *REPL) CommandAdd(arg *rdx.RDX) (id rdx.ID, err error) {
 			}
 			var fid rdx.ID
 			fid, err = repl.idFromNameOrText(&pairs[i])
+			if err != nil {
+				return id, err
+			}
 			var add uint64
 			_, err = fmt.Sscanf(string(pairs[i+1].Text), "%d", &add)
 			if fid.Off() == 0 || err != nil {
@@ -433,6 +442,9 @@ func (repl *REPL) CommandCat(arg *rdx.RDX) (id rdx.ID, err error) {
 	}
 	var oid rdx.ID
 	oid, err = repl.idFromNameOrText(arg)
+	if err != nil {
+		return id, err
+	}
 	var txt string
 	txt, err = repl.Host.ObjectString(oid)
 	if err != nil {
