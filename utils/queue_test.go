@@ -174,6 +174,38 @@ func TestFDQueue_CloseStopsDrainAndFeed(t *testing.T) {
 	queue.Feed(ctx)
 }
 
+func TestFDQueue_Size(t *testing.T) {
+	queue := NewFDQueue[[][]byte](10, time.Second, 2)
+	ctx := context.Background()
+
+	records := [][]byte{{1, 2}, {2}, {3}}
+	queue.Drain(ctx, records)
+	assert.Equal(t, queue.Size(), 4)
+	_, err := queue.Feed(ctx)
+	assert.NoError(t, err)
+	assert.Equal(t, queue.Size(), 2)
+}
+
+func TestFDQueue_SizeWithWait(t *testing.T) {
+	queue := NewFDQueue[[][]byte](10, time.Second, 4)
+	ctx := context.Background()
+
+	records := [][]byte{{1, 2}}
+	queue.Drain(ctx, records)
+	assert.Equal(t, queue.Size(), 2)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		_, err := queue.Feed(ctx)
+		wg.Done()
+		assert.NoError(t, err)
+	}()
+	time.Sleep(time.Millisecond)
+	queue.Drain(ctx, records)
+	wg.Wait()
+	assert.Equal(t, 0, queue.Size())
+}
+
 func TestFDQueue_ChannelLimitBlockingBehavior(t *testing.T) {
 	queue := NewFDQueue[[][]byte](5, time.Second, 5)
 	ctx := context.Background()

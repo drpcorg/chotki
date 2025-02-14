@@ -230,11 +230,13 @@ func (q *FDQueue[T]) Feed(ctx context.Context) (recs T, err error) {
 	for {
 		data := q.accum.Load()
 		needwait := false
+		iterPayloadSize := 0
 		if data != nil {
 			read := 0
 			for _, pkg := range data.data {
 				recs = append(recs, pkg)
 				payloadSize += len(pkg)
+				iterPayloadSize += len(pkg)
 				read++
 				if payloadSize >= q.batchSize {
 					break
@@ -242,7 +244,7 @@ func (q *FDQueue[T]) Feed(ctx context.Context) (recs T, err error) {
 			}
 			// we have sync lock here so its safe
 			data.data = data.data[read:]
-			data.size = data.size - payloadSize
+			data.size = data.size - iterPayloadSize
 
 			// if a write waits us, signal it
 			signal := q.writeSignal.Swap(nil)
