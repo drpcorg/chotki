@@ -18,10 +18,9 @@ var ErrDecrementN error = fmt.Errorf("decrementing natural counter")
 type AtomicCounter struct {
 	data         atomic.Value
 	db           *Chotki
-	wg           sync.WaitGroup
 	rid          rdx.ID
 	offset       uint64
-	lock         sync.Mutex
+	lock         sync.RWMutex
 	expiration   time.Time
 	updatePeriod time.Duration
 }
@@ -63,20 +62,17 @@ func (a *AtomicCounter) load() (any, error) {
 		return a.data.Load(), nil
 	}
 
-	// release this goroutine's wg so, in case its stopped on
-	// mutex and was not firt to aquire it, it would not block the progress
-	a.wg.Done()
+	a.lock.RUnlock()
 	a.lock.Lock()
-	a.wg.Add(1)
-	defer a.lock.Unlock()
+	defer func() {
+		a.lock.Unlock()
+		a.lock.RLock()
+	}()
+
 	if a.data.Load() != nil && now.Sub(a.expiration) < 0 {
 		return a.data.Load(), nil
 	}
 
-	// release this goroutine's wg to proceed on wait
-	a.wg.Done()
-	a.wg.Wait()
-	a.wg.Add(1)
 	rdt, tlv, err := a.db.ObjectFieldTLV(a.rid.ToOff(a.offset))
 	if err != nil {
 		return nil, err
@@ -109,8 +105,8 @@ func (a *AtomicCounter) load() (any, error) {
 }
 
 func (a *AtomicCounter) Get(ctx context.Context) (int64, error) {
-	a.wg.Add(1)
-	defer a.wg.Done()
+	a.lock.RLock()
+	defer a.lock.RUnlock()
 	data, err := a.load()
 	if err != nil {
 		return 0, err
@@ -127,8 +123,8 @@ func (a *AtomicCounter) Get(ctx context.Context) (int64, error) {
 
 // Loads (if needed) and increments counter
 func (a *AtomicCounter) Increment(ctx context.Context, val int64) (int64, error) {
-	a.wg.Add(1)
-	defer a.wg.Done()
+	a.lock.RLock()
+	defer a.lock.RUnlock()
 	data, err := a.load()
 	if err != nil {
 		return 0, err
