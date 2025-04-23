@@ -506,6 +506,9 @@ func (cho *Chotki) Broadcast(ctx context.Context, records protocol.Records, exce
 
 // Here new packets are timestamped and queued for save
 func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body protocol.Records) (id rdx.ID, err error) {
+	// prevent cancellation as it can make this function non atomic
+	ctx = context.WithoutCancel(ctx)
+
 	now := time.Now()
 	defer func() {
 		DrainTime.WithLabelValues("commit+broadcast").Observe(float64(time.Since(now)) / float64(time.Millisecond))

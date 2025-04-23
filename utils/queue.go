@@ -13,13 +13,14 @@ type accumulator[T ~[][]byte] struct {
 }
 
 type FDQueue[T ~[][]byte] struct {
-	ctx        context.Context
-	close      context.CancelFunc
-	timelimit  time.Duration
-	batchSize  int
-	accum      atomic.Pointer[accumulator[T]]
-	maxSize    int
-	overflowed atomic.Bool
+	ctx                 context.Context
+	close               context.CancelFunc
+	timelimit           time.Duration
+	batchSize           int
+	accum               atomic.Pointer[accumulator[T]]
+	maxSize             int
+	overflowed          atomic.Bool
+	canceledDuringDrain atomic.Bool
 
 	readLock  chan struct{}
 	writeLock chan struct{}
@@ -31,6 +32,7 @@ type FDQueue[T ~[][]byte] struct {
 
 var ErrClosed = errors.New("[chotki] feed/drain queue is closed")
 var ErrOverflow = errors.New("[chotki] feed/drain queue is overflowed")
+var ErrCanceledDuringDrain = errors.New("[chotki] drain was canceled during draining")
 
 func NewFDQueue[T ~[][]byte](limit int, timelimit time.Duration, batchSize int) *FDQueue[T] {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -110,7 +112,8 @@ func (q *FDQueue[T]) Drain(ctx context.Context, recs T) error {
 	// try aquire write lock, so all writes would be ordered
 	switch q.lock(timer, q.writeLock, ctx) {
 	case waitCanceled:
-		return nil
+		q.canceledDuringDrain.Store(true)
+		return ErrCanceledDuringDrain
 	case waitTimeout:
 		q.overflowed.Store(true)
 		return ErrOverflow
@@ -121,7 +124,8 @@ func (q *FDQueue[T]) Drain(ctx context.Context, recs T) error {
 	// try to aquire sync lock, syncronizes reads and writes
 	switch q.lock(timer, q.syncLock, ctx) {
 	case waitCanceled:
-		return nil
+		q.canceledDuringDrain.Store(true)
+		return ErrCanceledDuringDrain
 	case waitTimeout:
 		q.overflowed.Store(true)
 		return ErrOverflow
@@ -183,13 +187,15 @@ func (q *FDQueue[T]) Drain(ctx context.Context, recs T) error {
 				switch q.lock(timer, q.syncLock, ctx) {
 				case waitOK:
 				case waitCanceled:
-					return nil
+					q.canceledDuringDrain.Store(true)
+					return ErrCanceledDuringDrain
 				case waitTimeout:
 					q.overflowed.Store(true)
 					return ErrOverflow
 				}
 			case waitCanceled:
-				return nil
+				q.canceledDuringDrain.Store(true)
+				return ErrCanceledDuringDrain
 			case waitTimeout:
 				q.overflowed.Store(true)
 				return ErrOverflow
@@ -206,6 +212,9 @@ func (q *FDQueue[T]) Feed(ctx context.Context) (recs T, err error) {
 	}
 	if q.overflowed.Load() {
 		return nil, ErrOverflow
+	}
+	if q.canceledDuringDrain.Load() {
+		return nil, ErrCanceledDuringDrain
 	}
 
 	timer := time.NewTimer(q.timelimit)
