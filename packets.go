@@ -56,13 +56,21 @@ func (cho *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 	return
 }
 
+// Classes are special objects. They are stored in separate key range in pebble.
+// They also have more simplified behaviour in create/update scenarios: they are just created/replaced as is.
+// All classes are created with rid = rdx.ID0, if you pass other ref, it should be real ref of what you want to edit.
 func (cho *Chotki) ApplyC(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
+	cid := id
+	// editing class
+	if ref != rdx.ID0 {
+		cid = ref
+	}
 	err = batch.Merge(
-		OKey(id, 'C'),
+		OKey(cid, 'C'),
 		body,
 		cho.opts.PebbleWriteOptions)
 	if err == nil {
-		err = cho.UpdateVTree(id, ref, batch)
+		err = cho.UpdateVTree(id, cid, batch)
 	}
 	return
 }
