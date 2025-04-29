@@ -220,15 +220,16 @@ func (repl *REPL) CommandClass(arg *rdx.RDX) (id rdx.ID, err error) {
 			n++
 		}
 		id, err = repl.Host.CommitPacket(context.Background(), 'C', parent, decl)
-	} else { // todo array
-		return
+	} else if arg.RdxType == rdx.Reference {
+		cid := rdx.IDFromText(arg.Text)
+		tlv, err := repl.Host.GetClassTLV(context.Background(), cid)
+		if err != nil {
+			return rdx.BadId, err
+		}
+		fmt.Println(rdx.Xstring('C', tlv))
+		return cid, nil
 	}
 	return
-}
-
-func (repl *REPL) CommandXClass(arg *rdx.RDX) (id rdx.ID, err error) {
-	// todo
-	return rdx.BadId, nil
 }
 
 var ErrBadArgs = errors.New("bad arguments")

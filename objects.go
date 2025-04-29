@@ -334,8 +334,20 @@ func (cho *Chotki) NewClass(ctx context.Context, parent rdx.ID, fields ...Field)
 		name = append(name, field.Name...)
 		fspecs = append(fspecs, protocol.Record('T', rdx.FIRSTtlv(maxidx, 0, name)))
 	}
-	//head := protocol.AppendHeader(nil) fspecs.TotalLen()
 	return cho.CommitPacket(ctx, 'C', parent, fspecs)
+}
+
+func (cho *Chotki) GetClassTLV(ctx context.Context, cid rdx.ID) ([]byte, error) {
+	okey := OKey(cid, 'C')
+	tlv, clo, e := cho.db.Get(okey)
+	if e != nil {
+		return nil, ErrTypeUnknown
+	}
+	err := clo.Close()
+	if err != nil {
+		return nil, err
+	}
+	return tlv, nil
 }
 
 // Creates a new object from enveloped TLV fields; no class checks.
