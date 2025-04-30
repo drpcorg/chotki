@@ -652,6 +652,10 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 
 		case 'C': // create class
 			err = cho.ApplyC(id, ref, body, &pb)
+			if err == nil {
+				// clear cache for classes if class changed
+				cho.types.Clear()
+			}
 
 		case 'O': // create object
 			if ref == rdx.ID0 {
