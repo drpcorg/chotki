@@ -5,17 +5,17 @@ import (
 	"github.com/drpcorg/chotki/rdx"
 )
 
-const (
-	id1 = rdx.ID0 + rdx.ProInc
-	id2 = id1 + rdx.ProInc
-	id3 = id2 + rdx.ProInc
+var (
+	id1 = rdx.ID0.IncPro(1)
+	id2 = id1.IncPro(1)
+	id3 = id2.IncPro(1)
 
-	IdNames    = id2 + 1
-	IdNodes    = id2 + 2
-	IdNodeInfo = id2 + 3
+	IdNames    = id2.ToOff(1)
+	IdNodes    = id2.ToOff(2)
+	IdNodeInfo = id2.ToOff(3)
 
 	// ID from which we count user static objects
-	IdLog1 = id2 + 4
+	IdLog1 = id2.ToOff(4)
 )
 
 const YAckOff = uint64(2)
