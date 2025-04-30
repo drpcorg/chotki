@@ -17,22 +17,22 @@ func TestChotkiMapTRField(t *testing.T) {
 	a, err := Open("cho1", Options{Src: 0x1, Name: "test replica 1"})
 	assert.Nil(t, err)
 
-	oid, err := a.NewObjectTLV(context.Background(), rdx.ID0+1, protocol.Records{
+	oid, err := a.NewObjectTLV(context.Background(), rdx.ID0.ProPlus(1), protocol.Records{
 		protocol.Record('M'),
 	})
 	assert.Nil(t, err)
 	fid := oid.ToOff(1)
 
 	tr := rdx.MapTR{
-		"Name0": rdx.ID0 + 100,
-		"Name1": rdx.ID0 + 1,
-		"Name3": rdx.ID0 + 3,
+		"Name0": rdx.ID0.ProPlus(100),
+		"Name1": rdx.ID0.ProPlus(1),
+		"Name3": rdx.ID0.ProPlus(3),
 	}
 	id1, err := a.AddToMapTRField(context.Background(), fid, tr)
 	assert.Nil(t, err)
 	dtr := rdx.MapTR{
-		"Name1": rdx.ID0 + 1,
-		"Name2": rdx.ID0 + 2,
+		"Name1": rdx.ID0.ProPlus(1),
+		"Name2": rdx.ID0.ProPlus(2),
 		"Name3": rdx.ID0,
 	}
 	id2, err := a.AddToMapTRField(context.Background(), fid, dtr)
@@ -40,9 +40,9 @@ func TestChotkiMapTRField(t *testing.T) {
 	assert.NotEqual(t, id1, id2)
 
 	correct := rdx.MapTR{
-		"Name0": rdx.ID0 + 100,
-		"Name1": rdx.ID0 + 1,
-		"Name2": rdx.ID0 + 2,
+		"Name0": rdx.ID0.ProPlus(100),
+		"Name1": rdx.ID0.ProPlus(1),
+		"Name2": rdx.ID0.ProPlus(2),
 	}
 	merged, err := a.MapTRField(fid)
 	assert.Nil(t, err)
@@ -62,7 +62,7 @@ func TestChotkiMapSSField(t *testing.T) {
 	a, err := Open("cho2", Options{Src: 0x2, Name: "test replica 2"})
 	assert.Nil(t, err)
 
-	oid, err := a.NewObjectTLV(context.Background(), rdx.ID0+1, protocol.Records{
+	oid, err := a.NewObjectTLV(context.Background(), rdx.ID0.ProPlus(1), protocol.Records{
 		protocol.Record('M'),
 	})
 	assert.Nil(t, err)
@@ -107,7 +107,7 @@ func TestChotki_SetMapSSField(t *testing.T) {
 	a, err := Open("cho3", Options{Src: 0x3, Name: "test replica 3"})
 	assert.Nil(t, err)
 
-	oid, err := a.NewObjectTLV(context.Background(), rdx.ID0+1, protocol.Records{
+	oid, err := a.NewObjectTLV(context.Background(), rdx.ID0.ProPlus(1), protocol.Records{
 		protocol.Record('M'),
 	})
 	assert.Nil(t, err)

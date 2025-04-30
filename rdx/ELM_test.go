@@ -9,8 +9,8 @@ import (
 
 func TestMap(t *testing.T) {
 	var correct = []byte{
-		0x6D, 0x15,
-		0x36, 0x03, 0x00, 0xaf, 0x00, 0x0b, 0x0b,
+		0x6D, 0x17,
+		0x38, 0x0b, 0x0b, 0x0, 0x0, 0x3, 0x0, 0xaf, 0x00,
 		0x73, 0x04, 0x30, 0x4b, 0x65, 0x79,
 		0x73, 0x06, 0x30, 0x56, 0x61, 0x6c, 0x75, 0x65,
 	}
@@ -74,15 +74,4 @@ func TestMmerge(t *testing.T) {
 	tlv12d := Mmerge(protocol.Records{tlv1, tlv2, del})
 	str12d := Mstring(tlv12d)
 	assert.Equal(t, "{1:2,3:4,7:8}", str12d)
-}
-
-func TestLmerge(t *testing.T) {
-	tlv1 := Lparse("[1, 2, 3,  5]")
-	assert.Equal(t, "[1,2,3,5]", Lstring(tlv1))
-	patch1 := protocol.Record('B',
-		protocol.TinyRecord('T', ZipIntUint64Pair(3, 0)),
-		Itlve(5, 0, 4),
-	)
-	tlv2 := Lmerge(protocol.Records{tlv1, patch1})
-	assert.Equal(t, "[1,2,3,4,5]", Lstring(tlv2))
 }

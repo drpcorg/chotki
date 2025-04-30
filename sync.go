@@ -22,7 +22,7 @@ import (
 )
 
 const SyncBlockBits = 28
-const SyncBlockMask = (rdx.ID(1) << SyncBlockBits) - 1
+const SyncBlockMask = uint64((1 << SyncBlockBits) - 1)
 const MaxParcelSize = 100_000_000
 
 var version string = fmt.Sprintf("%d", time.Now().Unix())
@@ -403,10 +403,10 @@ func (sync *Syncer) getVVChanges() (hasChanges bool, sendvv rdx.VV, err error) {
 func (sync *Syncer) nextBlockDiff() (bool, rdx.VV, error) {
 	if sync.ffit != nil {
 		block := VKeyId(sync.vvit.Key()).ZeroOff()
-		till := block + SyncBlockMask + 1
+		till := block.ProPlus(SyncBlockMask + 1)
 		if sync.ffit.Valid() {
 			id, _ := OKeyIdRdt(sync.ffit.Key())
-			if id != rdx.BadId && id < till {
+			if id != rdx.BadId && id.Less(till) {
 				_, sendvv, err := sync.getVVChanges()
 				if err != nil {
 					return false, nil, err
@@ -445,10 +445,10 @@ func (sync *Syncer) FeedBlockDiff(ctx context.Context) (diff protocol.Records, e
 	bmark, parcel := protocol.OpenHeader(nil, 'D')
 	parcel = append(parcel, protocol.Record('T', sync.snaplast.ZipBytes())...)
 	parcel = append(parcel, protocol.Record('R', block.ZipBytes())...)
-	till := block + SyncBlockMask + 1
+	till := block.ProPlus(SyncBlockMask + 1)
 	for ; sync.ffit.Valid(); sync.ffit.Next() {
 		id, rdt := OKeyIdRdt(sync.ffit.Key())
-		if id == rdx.BadId || id >= till {
+		if id == rdx.BadId || till.Less(id) {
 			break
 		}
 		if len(parcel) > MaxParcelSize {
@@ -456,7 +456,7 @@ func (sync *Syncer) FeedBlockDiff(ctx context.Context) (diff protocol.Records, e
 		}
 		lim, ok := sendvv[id.Src()]
 		if ok && (id.Pro() > lim || lim == 0) {
-			parcel = append(parcel, protocol.Record('F', rdx.ZipUint64(uint64(id-block)))...)
+			parcel = append(parcel, protocol.Record('F', rdx.ZipUint64(uint64(id.Pro()-block.Pro())))...)
 			val := sync.ffit.Value()
 			parcel = append(parcel, protocol.Record(rdt, val)...)
 			if len(val) > MaxParcelSize {
@@ -466,7 +466,7 @@ func (sync *Syncer) FeedBlockDiff(ctx context.Context) (diff protocol.Records, e
 		}
 		diff := rdx.Xdiff(rdt, sync.ffit.Value(), sendvv)
 		if len(diff) != 0 {
-			parcel = append(parcel, protocol.Record('F', rdx.ZipUint64(uint64(id-block)))...)
+			parcel = append(parcel, protocol.Record('F', rdx.ZipUint64(uint64(id.Pro()-block.Pro())))...)
 			parcel = append(parcel, protocol.Record(rdt, diff)...)
 			if len(diff) > MaxParcelSize {
 				sync.log.WarnCtx(sync.logCtx(ctx), "too big diff size", "size", len(diff))

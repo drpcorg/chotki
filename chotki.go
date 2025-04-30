@@ -520,7 +520,7 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 	if cho.db == nil {
 		return rdx.BadId, ErrClosed
 	}
-	id = (cho.last & ^rdx.OffMask) + rdx.ProInc
+	id = cho.last.IncPro(1).ZeroOff()
 	i := protocol.Record('I', id.ZipBytes())
 	r := protocol.Record('R', ref.ZipBytes())
 	packet := protocol.Record(lit, i, r, protocol.Join(body...))
@@ -632,7 +632,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			return parseErr
 		}
 
-		if id.Src() == cho.src && id > cho.last {
+		if id.Src() == cho.src && cho.last.Less(id) {
 			if id.Off() != 0 {
 				return rdx.ErrBadPacket
 			}
