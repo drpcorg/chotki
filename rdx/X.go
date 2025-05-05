@@ -63,8 +63,6 @@ func Xmerge(rdt byte, tlvs [][]byte) (tlv []byte) {
 		tlv = Zmerge(tlvs)
 	case 'E':
 		tlv = Emerge(tlvs)
-	case 'L':
-		tlv = Lmerge(tlvs)
 	case 'M':
 		tlv = Mmerge(tlvs)
 	case 'V':
@@ -140,8 +138,6 @@ func Xvalid(rdt byte, bare []byte) bool {
 		return Zvalid(bare)
 	case 'E':
 		return Evalid(bare)
-	case 'L':
-		return Lvalid(bare)
 	case 'M':
 		return Mvalid(bare)
 	case 'V':

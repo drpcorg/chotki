@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"slices"
-	"sort"
 
 	"github.com/drpcorg/chotki/protocol"
 )
@@ -12,20 +11,6 @@ import (
 type Time struct {
 	Rev int64
 	Src uint64
-}
-
-func (t Time) Time64() uint64 {
-	return (ZigZagInt64(t.Rev) << SrcBits) | t.Src
-}
-
-const srcMask = (uint64(1) << SrcBits) - 1
-
-func Time64FromRevzSrc(revz, src uint64) uint64 {
-	return (revz << SrcBits) | (src & srcMask)
-}
-
-func TimeFrom64(t64 uint64) Time {
-	return Time{Rev: ZagZigUint64(t64 >> SrcBits), Src: t64 & srcMask}
 }
 
 func (t Time) ZipBytes() []byte {
@@ -542,34 +527,6 @@ func (a *MIterator) Value() []byte {
 	return a.both
 }
 
-// L is an array of any FIRST elements
-
-// produce a text form (for REPL mostly)
-func Lstring(tlv []byte) (txt string) {
-	var ret = make([]byte, 0, len(tlv)*4)
-	rest := tlv
-	for len(rest) > 0 {
-		var sub []byte
-		sub, rest = protocol.Take('B', rest)
-		_, subb := protocol.Take('T', sub)
-		it := LIterator{FIRSTIterator{TLV: subb}}
-		for it.Next() {
-			if ZagZigUint64(it.revz) < 0 {
-				continue
-			}
-			ret = append(ret, ',')
-			ret = appendFirstTlvString(ret, it.lit, it.bare)
-		}
-
-	}
-	if len(ret) == 0 {
-		return "[]"
-	}
-	ret[0] = '['
-	ret = append(ret, ']')
-	return string(ret)
-}
-
 // parse a text form into a TLV value
 func Lparse(txt string) (tlv []byte) {
 	bm := 0
@@ -610,115 +567,6 @@ func appendParsedFirstTlvt(tlv []byte, n *RDX, t Time) []byte {
 		return nil
 	}
 	return append(tlv, protocol.Record(rdt, SetTimeFIRST(untimed, t))...)
-}
-
-// merge TLV values
-func Lmerge(tlvs [][]byte) (merged []byte) {
-	ins := make(map[uint64][][]byte)
-	var locs []uint64
-	for _, input := range tlvs {
-		rest := input
-		for len(rest) > 0 {
-			var sub []byte
-			sub, rest = protocol.Take('B', rest)
-			ref, bare := protocol.Take('T', sub)
-			t := TimeFromZipBytes(ref)
-			loc := t.Time64()
-			pre, ok := ins[loc]
-			if !ok {
-				locs = append(locs, loc)
-			}
-			ins[loc] = append(pre, bare)
-		}
-	}
-	sort.Slice(locs, func(i, j int) bool {
-		return locs[i] < locs[j]
-	})
-	ih := ItHeap[*LIterator]{}
-	for len(locs) > 0 {
-		into := locs[0]
-		locs = locs[1:]
-		bares, ok := ins[into]
-		if !ok {
-			continue
-		}
-		delete(ins, into)
-		if len(ins) == 0 {
-			ins = nil
-		}
-		bm := 0
-		bm, merged = protocol.OpenHeader(merged, 'B')
-		merged = protocol.AppendTiny(merged, 'T', ID(into).ZipBytes())
-		pileUp(&ih, bares)
-		for ih.Len() > 0 {
-			key := Time64FromRevzSrc(ih[0].revz, ih[0].src)
-			next := ih.Next()
-			merged = append(merged, next...)
-			if ins != nil {
-				descs, found := ins[key]
-				if found {
-					pileUp(&ih, descs)
-					delete(ins, key)
-					if len(ins) == 0 {
-						ins = nil
-					}
-				}
-			}
-		}
-		protocol.CloseHeader(merged, bm)
-	}
-
-	return
-}
-
-func pileUp(heap *ItHeap[*LIterator], bares [][]byte) {
-	for _, bare := range bares {
-		heap.Push(&LIterator{FIRSTIterator{TLV: bare}})
-	}
-}
-
-// produce an op that turns the old value into the new one
-func Ldelta(tlv []byte, new_val int64, clock Clock) (tlv_delta []byte) {
-	return nil // todo
-}
-
-// checks a TLV value for validity (format violations)
-func Lvalid(tlv []byte) bool {
-	return true // todo
-}
-
-func Ldiff(tlv []byte, vvdiff VV) []byte {
-	return nil //todo
-}
-
-type LIterator struct {
-	FIRSTIterator
-}
-
-func (a *LIterator) Merge(bb SortedIterator) int {
-	b := bb.(*LIterator)
-	if a.revz > b.revz {
-		return MergeAB
-	} else if a.revz < b.revz {
-		return MergeBA
-	} else if a.src > b.src {
-		return MergeAB
-	} else if a.src < b.src {
-		return MergeBA
-	} else {
-		return MergeA
-	}
-}
-
-func Mrdx2tlv(a *RDX) (tlv []byte) {
-	if a == nil || a.RdxType != Mapping {
-		return nil
-	}
-	for i := 0; i+1 < len(a.Nested); i += 2 {
-		tlv = append(tlv, FIRSTrdx2tlv(&a.Nested[i])...)
-		tlv = append(tlv, FIRSTrdx2tlv(&a.Nested[i+1])...)
-	}
-	return
 }
 
 func ELMdefault() (tlv []byte) {

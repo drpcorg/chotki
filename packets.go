@@ -24,7 +24,7 @@ func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 		var dzip, bare []byte
 		dzip, rest = protocol.Take('F', rest)
 		d := rdx.UnzipUint64(dzip)
-		at := ref + rdx.ID(d) // fixme
+		at := ref.ProPlus(d)
 		rdt, bare, rest = protocol.TakeAny(rest)
 		err = batch.Merge(OKey(at, rdt), bare, cho.opts.PebbleWriteOptions)
 	}
@@ -82,7 +82,7 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 		cho.opts.PebbleWriteOptions)
 	rest := body
 	var fid rdx.ID
-	for fno := rdx.ID(1); len(rest) > 0 && err == nil; fno++ {
+	for fno := 1; len(rest) > 0 && err == nil; fno++ {
 		lit, hlen, blen := protocol.ProbeHeader(rest)
 		if lit == 0 || lit == '-' {
 			return rdx.ErrBadPacket
@@ -93,7 +93,7 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 			return ErrBadOPacket
 		}
 		bare = rest[hlen:rlen]
-		fid = id + fno
+		fid = id.ToOff(uint64(fno))
 		fkey := OKey(fid, lit)
 		switch lit {
 		case 'F', 'I', 'R', 'S', 'T':
@@ -148,7 +148,7 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls 
 		if err != nil {
 			break
 		}
-		fid := r + rdx.ID(field)
+		fid := r.ToOff(field)
 		fkey := OKey(fid, lit)
 		err = batch.Merge(
 			fkey,
