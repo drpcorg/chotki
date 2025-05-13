@@ -3,6 +3,7 @@ package rdx
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/drpcorg/chotki/protocol"
@@ -143,6 +144,10 @@ func Emerge(tlvs [][]byte) (merged []byte) {
 // produce an op that turns the old value into the new one
 func Edelta(tlv []byte, new_val int64, clock Clock) (tlv_delta []byte) {
 	return nil // todo
+}
+
+func Etlv(tlv []byte) []byte {
+	return tlv
 }
 
 // checks a TLV value for validity (format violations)
@@ -325,6 +330,7 @@ func MparseTR(arg *RDX) MapTR {
 type MapTR map[string]ID
 type MapTT map[string]string
 type MapSS map[string]string
+type MapIB map[int]byte
 
 func (m MapTR) String() string {
 	var keys []string
@@ -387,7 +393,6 @@ func MtlvSS(m MapSS) (tlv []byte) {
 	}
 	valueOrderUnstampedFirsts(pairs)
 	return protocol.Join(pairs...)
-
 }
 
 func MtlvII(nat MapTT) (tlv []byte) {
@@ -594,4 +599,192 @@ func ELMstring(tlv []byte) string {
 		ret = append(ret, ',')
 	}
 	return string(ret)
+}
+
+type Rdxable[T comparable] interface {
+	comparable
+	TLV() []byte
+	Type() byte
+	Native(tlv []byte) (T, error)
+}
+
+type Stamped[T any] struct {
+	Time  Time
+	Value T
+}
+
+func NewStampedMap[K Rdxable[K], T Rdxable[T]]() *StampedMap[K, T] {
+	return &StampedMap[K, T]{
+		Map: make(map[K]Stamped[T]),
+	}
+}
+
+type StampedMap[K Rdxable[K], T Rdxable[T]] struct {
+	Map map[K]Stamped[T]
+}
+
+func (m *StampedMap[K, T]) Set(key K, value T) {
+	m.Map[key] = Stamped[T]{Time: Time{Rev: 0, Src: 0}, Value: value}
+}
+
+func (m *StampedMap[K, T]) SetVersioned(key K, value T, rev int64, src uint64) {
+	m.Map[key] = Stamped[T]{Time: Time{Rev: rev, Src: src}, Value: value}
+}
+
+func (m *StampedMap[K, T]) Tlv() []byte {
+	pairs := protocol.Records{}
+	rev0 := []byte{'0'}
+	for k, v := range m.Map {
+		rec := []byte{}
+		rec = protocol.Append(rec, k.Type(), rev0, k.TLV())
+		rec = protocol.Append(rec, v.Value.Type(), FIRSTtlv(v.Time.Rev, v.Time.Src, v.Value.TLV()))
+		pairs = append(pairs, rec)
+	}
+	valueOrderUnstampedFirsts(pairs)
+	return protocol.Join(pairs...)
+}
+
+func (m *StampedMap[K, T]) Native(tlv []byte) error {
+	ret := make(map[K]Stamped[T])
+	it := FIRSTIterator{TLV: tlv}
+	for it.Next() {
+		keyrdt, _, key := it.ParsedValue()
+		if !it.Next() {
+			return fmt.Errorf("incomplete record: %d", keyrdt)
+		}
+		if len(it.val) == 0 { // removed
+			continue
+		}
+		var rdxKey K
+		if keyrdt != rdxKey.Type() {
+			return fmt.Errorf("invalid key type: %d, expected %d", keyrdt, rdxKey.Type())
+		}
+		rdxKey, err := rdxKey.Native(key)
+		if err != nil {
+			return err
+		}
+		valrdt, time, val := it.ParsedValue()
+		var rdxVal T
+		if valrdt != rdxVal.Type() {
+			return fmt.Errorf("invalid value type: %d, expected %d", valrdt, rdxVal.Type())
+		}
+		rdxVal, err = rdxVal.Native(val)
+		if err != nil {
+			return err
+		}
+		ret[rdxKey] = Stamped[T]{
+			Time:  time,
+			Value: rdxVal,
+		}
+	}
+	m.Map = ret
+	return nil
+}
+
+type StampedSet[T Rdxable[T]] struct {
+	Value map[T]Time
+}
+
+func NewStampedSet[T Rdxable[T]]() *StampedSet[T] {
+	return &StampedSet[T]{
+		Value: make(map[T]Time),
+	}
+}
+
+func (l *StampedSet[T]) Add(value T) {
+	ll, ok := l.Value[value]
+	if !ok {
+		l.Value[value] = Time{Rev: 0, Src: 0}
+	} else {
+		l.Value[value] = Time{Rev: ll.Rev + 1, Src: 0}
+	}
+}
+func (l *StampedSet[T]) AddStamped(value T, rev int64, src uint64) {
+	l.Value[value] = Time{Rev: rev, Src: src}
+}
+
+func (l *StampedSet[T]) Tlv() []byte {
+	pairs := protocol.Records{}
+	for v, t := range l.Value {
+		rec := []byte{}
+		rec = protocol.Append(rec, v.Type(), FIRSTtlv(t.Rev, t.Src, v.TLV()))
+		pairs = append(pairs, rec)
+	}
+	valueOrderUnstampedFirsts(pairs)
+	return protocol.Join(pairs...)
+}
+
+func (l *StampedSet[T]) Native(tlv []byte) error {
+	ret := make(map[T]Time)
+	it := FIRSTIterator{TLV: tlv}
+	for it.Next() {
+		vrdt, time, val := it.ParsedValue()
+		var rdxval T
+		if vrdt != rdxval.Type() {
+			return fmt.Errorf("invalid value type: %d, expected %d", vrdt, rdxval.Type())
+		}
+		rdxval, err := rdxval.Native(val)
+		if err != nil {
+			return err
+		}
+		ret[rdxval] = time
+	}
+	l.Value = ret
+	return nil
+}
+
+type RdxString string
+
+func (s RdxString) Type() byte {
+	return 'S'
+}
+
+func (s RdxString) TLV() []byte {
+	return Stlv(string(s))
+}
+
+func (s RdxString) Native(tlv []byte) (RdxString, error) {
+	return RdxString(Snative(tlv)), nil
+}
+
+type RdxInt int64
+
+func (i RdxInt) Type() byte {
+	return 'I'
+}
+
+func (i RdxInt) TLV() []byte {
+	return Itlv(int64(i))
+}
+
+func (i RdxInt) Native(tlv []byte) (RdxInt, error) {
+	return RdxInt(Inative(tlv)), nil
+}
+
+type RdxByte byte
+
+func (b RdxByte) Type() byte {
+	return 'S'
+}
+
+func (b RdxByte) TLV() []byte {
+	return []byte{byte(b)}
+}
+
+func (b RdxByte) Native(tlv []byte) (RdxByte, error) {
+	return RdxByte(tlv[0]), nil
+}
+
+type RdxRid ID
+
+func (r RdxRid) Type() byte {
+	return 'R'
+}
+
+func (r RdxRid) TLV() []byte {
+	return Rtlv(ID(r))
+}
+
+func (r RdxRid) Native(tlv []byte) (RdxRid, error) {
+	return RdxRid(Rnative(tlv)), nil
 }

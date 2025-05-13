@@ -65,6 +65,7 @@ type Field struct {
 	Name       string
 	RdxType    byte
 	RdxTypeExt []byte
+	Index      IndexType
 }
 
 // Fields
@@ -140,6 +141,35 @@ func (cho *Chotki) ObjectIterator(oid rdx.ID, snap *pebble.Snapshot) *pebble.Ite
 	return nil
 }
 
+func parseClass(tlv []byte) (fields Fields) {
+	it := rdx.FIRSTIterator{TLV: tlv}
+	fields = append(fields, Field{ // todo inheritance
+		Offset:  0,
+		Name:    "_ref",
+		RdxType: rdx.Reference,
+	})
+	for it.Next() {
+		lit, t, name := it.ParsedValue()
+		if lit != rdx.Term || len(name) == 0 {
+			break // todo unique names etc
+		}
+		rdt := rdx.String
+		index := IndexType(0)
+		if name[0] >= 'A' && name[0] <= 'Z' {
+			rdt = name[0]
+			index = IndexType(name[1])
+			name = name[2:]
+		}
+		fields = append(fields, Field{
+			Offset:  t.Rev,
+			RdxType: rdt,
+			Name:    string(name),
+			Index:   index,
+		})
+	}
+	return
+}
+
 // todo note that the class may change as the program runs; in such a case
 // if the class fields are already cached, the current session will not
 // understand the new fields!
@@ -153,28 +183,7 @@ func (cho *Chotki) ClassFields(cid rdx.ID) (fields Fields, err error) {
 	if e != nil {
 		return nil, ErrTypeUnknown
 	}
-	it := rdx.FIRSTIterator{TLV: tlv}
-	fields = append(fields, Field{ // todo inheritance
-		Offset:  0,
-		Name:    "_ref",
-		RdxType: rdx.Reference,
-	})
-	for it.Next() {
-		lit, t, name := it.ParsedValue()
-		if lit != rdx.Term || len(name) == 0 {
-			break // todo unique names etc
-		}
-		rdt := rdx.String
-		if name[0] >= 'A' && name[0] <= 'Z' {
-			rdt = name[0]
-			name = name[1:]
-		}
-		fields = append(fields, Field{
-			Offset:  t.Rev,
-			RdxType: rdt,
-			Name:    string(name),
-		})
-	}
+	fields = parseClass(tlv)
 	_ = clo.Close()
 	cho.types.Store(cid, fields)
 	return
@@ -322,7 +331,14 @@ func (cho *Chotki) NewClass(ctx context.Context, parent rdx.ID, fields ...Field)
 		if !field.Valid() {
 			return rdx.BadId, ErrBadTypeDescription
 		}
+		if field.Index == FullscanIndex {
+			return rdx.BadId, ErrFullscanIndexField
+		}
+		if field.Index == HashIndex && !rdx.IsFirst(field.RdxType) {
+			return rdx.BadId, ErrHashIndexFieldNotFirst
+		}
 		name := append([]byte{}, field.RdxType)
+		name = append(name, byte(field.Index))
 		name = append(name, field.Name...)
 		fspecs = append(fspecs, protocol.Record('T', rdx.FIRSTtlv(maxidx, 0, name)))
 	}

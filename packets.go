@@ -27,6 +27,12 @@ func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 		at := ref.ProPlus(d)
 		rdt, bare, rest = protocol.TakeAny(rest)
 		err = batch.Merge(OKey(at, rdt), bare, cho.opts.PebbleWriteOptions)
+		if err == nil && rdt == 'O' {
+			cid := rdx.IDFromZipBytes(bare)
+			err = cho.indexManager.addFullScanIndex(cid, at, batch)
+		} else {
+			err = cho.indexManager.OnFieldUpdate(rdt, at, rdx.BadId, bare, batch)
+		}
 	}
 	return
 }
@@ -59,7 +65,7 @@ func (cho *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 // Classes are special objects. They are stored in separate key range in pebble.
 // They also have more simplified behaviour in create/update scenarios: they are just created/replaced as is.
 // All classes are created with rid = rdx.ID0, if you pass other ref, it should be real ref of what you want to edit.
-func (cho *Chotki) ApplyC(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
+func (cho *Chotki) ApplyC(id, ref rdx.ID, body []byte, batch *pebble.Batch, calls *[]CallHook) (err error) {
 	cid := id
 	// editing class
 	if ref != rdx.ID0 {
@@ -71,6 +77,18 @@ func (cho *Chotki) ApplyC(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 		cho.opts.PebbleWriteOptions)
 	if err == nil {
 		err = cho.UpdateVTree(id, cid, batch)
+	}
+	if err == nil {
+		var tasks []reindexTask
+		tasks, err = cho.indexManager.HandleClassUpdate(id, cid, body)
+		if err == nil {
+			for _, task := range tasks {
+				err = batch.Merge(task.Key(), task.Value(), cho.opts.PebbleWriteOptions)
+				if err != nil {
+					break
+				}
+			}
+		}
 	}
 	return
 }
@@ -111,9 +129,15 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 			rebar,
 			cho.opts.PebbleWriteOptions)
 		rest = rest[rlen:]
+		if err == nil {
+			err = cho.indexManager.OnFieldUpdate(lit, fid, ref, rebar, batch)
+		}
 	}
 	if err == nil {
 		err = cho.UpdateVTree(fid, id, batch)
+	}
+	if err == nil && lot == 'O' {
+		err = cho.indexManager.addFullScanIndex(ref, id, batch)
 	}
 	return
 }
@@ -154,6 +178,10 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls 
 			fkey,
 			rebar,
 			cho.opts.PebbleWriteOptions)
+
+		if err == nil {
+			err = cho.indexManager.OnFieldUpdate(lit, fid, rdx.BadId, rebar, batch)
+		}
 		hook, ok := cho.hooks.Load(fid)
 		if ok {
 			for _, h := range hook {

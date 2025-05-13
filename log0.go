@@ -31,7 +31,7 @@ var Log0 = protocol.Records{
 		protocol.Record('I', id1.ZipBytes()),     // identifier, `src-0`
 		protocol.Record('R', rdx.ID0.ZipBytes()), // reference, `0-0`
 		rdx.Atlv(rdx.LogT{
-			"MNames", // global-scope names
+			"M\x00Names", // global-scope names
 		}),
 	),
 	// 0-2 the singleton metadata object
@@ -56,9 +56,9 @@ var Log0 = protocol.Records{
 		protocol.Record('I', id3.ZipBytes()),
 		protocol.Record('R', rdx.ID0.ZipBytes()),
 		rdx.Atlv(rdx.LogT{
-			"SName", // x-0-1 replica name
-			"VAck",  // x-0-2 Packet acknowledgements (a vector)
-			"SAddr", // x-0-3 the default IP address
+			"S\x00Name", // x-0-1 replica name
+			"V\x00Ack",  // x-0-2 Packet acknowledgements (a vector)
+			"S\x00Addr", // x-0-3 the default IP address
 			// todo the rest of metadata
 		}),
 	),

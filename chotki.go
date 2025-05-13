@@ -48,6 +48,9 @@ var (
 
 	ErrOutOfOrder      = errors.New("chotki: order fail: sequence gap")
 	ErrCausalityBroken = errors.New("chotki: order fail: refs an unknown op")
+
+	ErrFullscanIndexField     = errors.New("chotki: field can't have fullscan index")
+	ErrHashIndexFieldNotFirst = errors.New("chotki: field can't have hash index if type is not FIRST")
 )
 
 var EventsMetric = prometheus.NewCounter(prometheus.CounterOpts{
@@ -132,14 +135,18 @@ func (o *Options) SetDefaults() {
 	o.Merger = &pebble.Merger{
 		Name: "CRDT",
 		Merge: func(key, value []byte) (pebble.ValueMerger, error) {
-			/*if len(key) != 10 {
-				return nil, nil
-			}*/
 			target := make([]byte, len(value))
 			copy(target, value)
-			id, rdt := OKeyIdRdt(key)
+			var rdt byte
+			switch key[0] {
+			case 'O':
+				_, rdt = OKeyIdRdt(key)
+			case 'V':
+				rdt = 'V'
+			case 'I':
+				rdt = key[len(key)-1]
+			}
 			pma := PebbleMergeAdaptor{
-				id:   id,
 				rdt:  rdt,
 				vals: [][]byte{target},
 			}
@@ -161,9 +168,11 @@ type CallHook struct {
 
 // TLV all the way down
 type Chotki struct {
-	last  rdx.ID
-	src   uint64
-	clock rdx.Clock
+	last      rdx.ID
+	src       uint64
+	clock     rdx.Clock
+	cancelCtx context.CancelFunc
+	waitGroup *sync.WaitGroup
 
 	lock         sync.RWMutex
 	commitMutex  sync.Mutex
@@ -173,6 +182,7 @@ type Chotki struct {
 	opts         Options
 	log          utils.Logger
 	counterCache sync.Map
+	indexManager *IndexManager
 
 	outq  *xsync.MapOf[string, protocol.DrainCloser] // queues to broadcast all new packets
 	syncs *xsync.MapOf[rdx.ID, *pebble.Batch]
@@ -220,6 +230,8 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		return nil, err
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
 	cho := Chotki{
 		db:    db,
 		src:   opts.Src,
@@ -228,10 +240,12 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		opts:  opts,
 		clock: &rdx.LocalLogicalClock{Source: opts.Src},
 
-		outq:  xsync.NewMapOf[string, protocol.DrainCloser](),
-		syncs: xsync.NewMapOf[rdx.ID, *pebble.Batch](),
-		hooks: xsync.NewMapOf[rdx.ID, []Hook](),
-		types: xsync.NewMapOf[rdx.ID, Fields](),
+		outq:      xsync.NewMapOf[string, protocol.DrainCloser](),
+		syncs:     xsync.NewMapOf[rdx.ID, *pebble.Batch](),
+		hooks:     xsync.NewMapOf[rdx.ID, []Hook](),
+		types:     xsync.NewMapOf[rdx.ID, Fields](),
+		cancelCtx: cancel,
+		waitGroup: &wg,
 	}
 
 	cho.net = protocol.NewNet(cho.log,
@@ -274,7 +288,12 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		&protocol.TcpBufferSizeOpt{Read: cho.opts.TcpReadBufferSize, Write: cho.opts.TcpWriteBufferSize},
 		&protocol.NetWriteTimeoutOpt{Timeout: cho.opts.WriteTimeout},
 	)
-
+	cho.indexManager = newIndexManager(&cho)
+	wg.Add(1)
+	go func() {
+		cho.indexManager.CheckReindexTasks(ctx)
+		wg.Done()
+	}()
 	if !exists {
 		id0 := rdx.IDFromSrcSeqOff(opts.Src, 0, 0)
 
@@ -306,6 +325,12 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 func (cho *Chotki) Close() error {
 	cho.lock.Lock()
 	defer cho.lock.Unlock()
+
+	if cho.cancelCtx != nil {
+		cho.cancelCtx()
+		cho.cancelCtx = nil
+		cho.waitGroup.Wait()
+	}
 
 	if cho.net != nil {
 		if err := cho.net.Close(); err != nil {
@@ -651,7 +676,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			err = cho.ApplyOY('Y', id, ref, body, &pb)
 
 		case 'C': // create class
-			err = cho.ApplyC(id, ref, body, &pb)
+			err = cho.ApplyC(id, ref, body, &pb, &calls)
 			if err == nil {
 				// clear cache for classes if class changed
 				cho.types.Clear()
