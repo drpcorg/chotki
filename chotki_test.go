@@ -46,12 +46,12 @@ func testdirs(origs ...uint64) ([]string, func()) {
 
 func TestChotki_Debug(t *testing.T) {
 	oid := rdx.IDFromSrcSeqOff(0x1e, 0x1ab, 0)
-	key := OKey(oid+1, 'I')
+	key := OKey(oid.ToOff(1), 'I')
 	value := rdx.Itlv(-13)
 	str := dumpKVString(key, value)
 	assert.Equal(t, "1e-1ab-1.I:\t-13", string(str))
 
-	skey := OKey(oid+2, 'S')
+	skey := OKey(oid.ToOff(2), 'S')
 	svalue := rdx.Stlv("funny\tstring\n")
 	sstr := dumpKVString(skey, svalue)
 	assert.Equal(t, "1e-1ab-2.S:\t\"funny\\tstring\\n\"", string(sstr))
