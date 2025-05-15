@@ -648,7 +648,7 @@ func (m *StampedMap[K, T]) Native(tlv []byte) error {
 	ret := make(map[K]Stamped[T])
 	it := FIRSTIterator{TLV: tlv}
 	for it.Next() {
-		keyrdt, _, key := it.ParsedValue()
+		keyrdt, time, key := it.ParsedValue()
 		if !it.Next() {
 			return fmt.Errorf("incomplete record: %d", keyrdt)
 		}
@@ -663,7 +663,7 @@ func (m *StampedMap[K, T]) Native(tlv []byte) error {
 		if err != nil {
 			return err
 		}
-		valrdt, time, val := it.ParsedValue()
+		valrdt, _, val := it.ParsedValue()
 		var rdxVal T
 		if valrdt != rdxVal.Type() {
 			return fmt.Errorf("invalid value type: %d, expected %d", valrdt, rdxVal.Type())

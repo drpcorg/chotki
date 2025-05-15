@@ -65,19 +65,22 @@ const (
 )
 
 type IndexManager struct {
-	c            *Chotki
-	tasksCancels map[string]context.CancelFunc
-	taskEntries  sync.Map
-	classCache   *lru.Cache[rdx.ID, rdx.ID]
+	c              *Chotki
+	tasksCancels   map[string]context.CancelFunc
+	taskEntries    sync.Map
+	classCache     *lru.Cache[rdx.ID, rdx.ID]
+	hashIndexCache *lru.Cache[string, rdx.ID]
 }
 
 func newIndexManager(c *Chotki) *IndexManager {
 	cache, _ := lru.New[rdx.ID, rdx.ID](10000)
+	hashCache, _ := lru.New[string, rdx.ID](100000)
 	return &IndexManager{
-		c:            c,
-		tasksCancels: make(map[string]context.CancelFunc),
-		taskEntries:  sync.Map{},
-		classCache:   cache,
+		c:              c,
+		tasksCancels:   make(map[string]context.CancelFunc),
+		taskEntries:    sync.Map{},
+		classCache:     cache,
+		hashIndexCache: hashCache,
 	}
 }
 
@@ -163,6 +166,11 @@ func (im *IndexManager) addFullScanIndex(cid rdx.ID, oid rdx.ID, batch *pebble.B
 }
 
 func (im *IndexManager) GetByHash(cid rdx.ID, fid uint32, otlv []byte, reader pebble.Reader) (rdx.ID, error) {
+	cacheKey := append(binary.BigEndian.AppendUint32(cid.Bytes(), fid), otlv...)
+	result, ok := im.hashIndexCache.Get(string(cacheKey))
+	if ok {
+		return result, nil
+	}
 	hash := xxhash.Sum64(otlv)
 	key := hashKey(cid, fid, hash)
 	tlv, closer, err := reader.Get(key)
@@ -184,6 +192,7 @@ func (im *IndexManager) GetByHash(cid rdx.ID, fid uint32, otlv []byte, reader pe
 		_, data := im.c.GetFieldTLV(rdx.ID(id).ToOff(uint64(fid)))
 		_, _, data = rdx.ParseFIRST(data)
 		if bytes.Equal(data, otlv) {
+			im.hashIndexCache.Add(string(cacheKey), rdx.ID(id))
 			return rdx.ID(id), nil
 		}
 	}
@@ -339,6 +348,8 @@ func (im *IndexManager) CheckReindexTasks(ctx context.Context) {
 }
 
 func (im *IndexManager) addHashIndex(cid rdx.ID, fid rdx.ID, tlv []byte, batch pebble.Writer) error {
+	cacheKey := append(binary.BigEndian.AppendUint32(cid.Bytes(), uint32(fid.Off())), tlv...)
+	im.hashIndexCache.Remove(string(cacheKey))
 	hash := xxhash.Sum64(tlv)
 	key := hashKey(cid, uint32(fid.Off()), hash)
 	set := rdx.NewStampedSet[rdx.RdxRid]()
