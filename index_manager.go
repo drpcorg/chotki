@@ -14,9 +14,41 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/rdx"
 	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type IndexType byte
+
+var ReindexTaskCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Namespace: "chotki",
+	Subsystem: "index_manager",
+	Name:      "reindex_tasks",
+}, []string{"class", "field", "reason"})
+
+var ReindexTaskStates = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Namespace: "chotki",
+	Subsystem: "index_manager",
+	Name:      "reindex_tasks_states",
+}, []string{"class", "field"})
+
+var ReindexCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Namespace: "chotki",
+	Subsystem: "index_manager",
+	Name:      "reindex",
+}, []string{"class", "field"})
+
+var ReindexResults = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Namespace: "chotki",
+	Subsystem: "index_manager",
+	Name:      "reindex_results",
+}, []string{"class", "field", "result", "type"})
+
+var ReindexDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Namespace: "chotki",
+	Subsystem: "index_manager",
+	Name:      "reindex_duration",
+	Buckets:   []float64{0, 1, 5, 10, 20, 50, 100, 200, 500},
+}, []string{"class", "field"})
 
 const (
 	HashIndex     IndexType = 'H'
@@ -179,6 +211,7 @@ func (im *IndexManager) HandleClassUpdate(id rdx.ID, cid rdx.ID, newFieldsBody [
 			oldFields, err := im.c.ClassFields(cid)
 			if err == ErrTypeUnknown {
 				// new class, everything is new, create task
+				ReindexTaskCount.WithLabelValues(id.String(), fmt.Sprintf("%d", i), "new_class_same_batch").Inc()
 				task := &reindexTask{
 					State:      reindexTaskStatePending,
 					Cid:        id,
@@ -198,6 +231,7 @@ func (im *IndexManager) HandleClassUpdate(id rdx.ID, cid rdx.ID, newFieldsBody [
 					continue
 				}
 				if oldFields[oldField].Index != HashIndex && newField.Index == HashIndex {
+					ReindexTaskCount.WithLabelValues(id.String(), fmt.Sprintf("%d", i), "created_new_index").Inc()
 					task := &reindexTask{
 						State:      reindexTaskStatePending,
 						Cid:        cid,
@@ -209,6 +243,7 @@ func (im *IndexManager) HandleClassUpdate(id rdx.ID, cid rdx.ID, newFieldsBody [
 					tasks = append(tasks, *task)
 				}
 				if oldFields[oldField].Index == HashIndex && newField.Index != HashIndex {
+					ReindexTaskCount.WithLabelValues(id.String(), fmt.Sprintf("%d", i), "deleted_index").Inc()
 					task := &reindexTask{
 						State:      reindexTaskStatePending,
 						Cid:        cid,
@@ -239,6 +274,7 @@ func (im *IndexManager) CheckReindexTasks(ctx context.Context) {
 				continue
 			}
 			for _, task := range tasks {
+				ReindexTaskStates.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field)).Set(float64(task.State))
 				switch task.State {
 				case reindexTaskStatePending:
 					rev, ok := im.taskEntries.LoadOrStore(task.Id(), task.Revision)
@@ -282,6 +318,7 @@ func (im *IndexManager) CheckReindexTasks(ctx context.Context) {
 						task.State = reindexTaskStatePending
 						task.Revision++
 						task.LastUpdate = time.Now()
+						ReindexTaskCount.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "scheduled_reindex").Inc()
 						im.c.db.Merge(task.Key(), task.Value(), im.c.opts.PebbleWriteOptions)
 					}
 				}
@@ -346,6 +383,8 @@ func (im *IndexManager) OnFieldUpdate(rdt byte, fid, cid rdx.ID, tlv []byte, bat
 }
 
 func (im *IndexManager) runReindexTask(ctx context.Context, task *reindexTask) {
+	start := time.Now()
+	ReindexCount.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field)).Inc()
 	defer im.taskEntries.CompareAndDelete(task.Id(), task.Revision)
 
 	task.State = reindexTaskStateInProgress
@@ -354,12 +393,14 @@ func (im *IndexManager) runReindexTask(ctx context.Context, task *reindexTask) {
 	ctx = im.c.log.WithDefaultArgs(ctx, "cid", task.Cid.String(), "field", fmt.Sprintf("%d", task.Field), "process", "reindex")
 	err := im.c.db.Merge(task.Key(), task.Value(), im.c.opts.PebbleWriteOptions)
 	if err != nil {
+		ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "error", "fail_to_set_in_progress").Inc()
 		im.c.log.ErrorCtx(ctx, "failed to set reindex task to in progress: %s, restarting", err)
 		return
 	}
 
 	fields, err := im.c.ClassFields(task.Cid)
 	if err != nil {
+		ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "error", "fail_to_get_class_fields").Inc()
 		im.c.log.ErrorCtx(ctx, "failed to get class fields: %s, will restart", err)
 		return
 	}
@@ -372,6 +413,7 @@ func (im *IndexManager) runReindexTask(ctx context.Context, task *reindexTask) {
 			im.c.opts.PebbleWriteOptions,
 		)
 		if err != nil {
+			ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "error", "fail_to_delete_hash_index").Inc()
 			im.c.log.ErrorCtx(ctx, "failed to delete hash index: %s, will restart", err)
 			return
 		}
@@ -379,7 +421,13 @@ func (im *IndexManager) runReindexTask(ctx context.Context, task *reindexTask) {
 		task.Revision++
 		task.LastUpdate = time.Now()
 		// if failed to save, will retry anyway
-		im.c.db.Merge(task.Key(), task.Value(), im.c.opts.PebbleWriteOptions)
+		err = im.c.db.Merge(task.Key(), task.Value(), im.c.opts.PebbleWriteOptions)
+		if err != nil {
+			ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "error", "fail_to_save_done_task").Inc()
+			im.c.log.ErrorCtx(ctx, "failed to save done task: %s, will restart", err)
+			return
+		}
+		ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "success", "deleted_hash_index").Inc()
 		return
 	}
 
@@ -394,10 +442,12 @@ func (im *IndexManager) runReindexTask(ctx context.Context, task *reindexTask) {
 		fid := id.ToOff(uint64(task.Field))
 		rdt, tlv, err := im.c.ObjectFieldTLV(fid)
 		if err != nil {
+			ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "error", "fail_to_get_object_field_tlv").Inc()
 			im.c.log.ErrorCtx(ctx, "failed to get object field tlv: %s, will restart", err)
 			return
 		}
 		if !rdx.IsFirst(rdt) {
+			ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "error", "object_field_is_not_first").Inc()
 			im.c.log.ErrorCtx(ctx, "object field is not first, skipping")
 			continue
 		}
@@ -407,11 +457,13 @@ func (im *IndexManager) runReindexTask(ctx context.Context, task *reindexTask) {
 		if err == ErrObjectUnknown {
 			err = im.addHashIndex(task.Cid, fid, tlv, im.c.db)
 			if err != nil {
+				ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "error", "fail_to_add_hash_index").Inc()
 				im.c.log.ErrorCtx(ctx, "failed to add hash index: %s, will restart", err)
 				return
 			}
 		} else if err != nil {
-			im.c.log.ErrorCtx(ctx, "failed to get object by hash: %s, restarting", err)
+			ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "error", "fail_to_get_object_by_hash").Inc()
+			im.c.log.ErrorCtx(ctx, "failed to get object by hash: %s, will restart", err)
 			return
 		}
 	}
@@ -425,6 +477,7 @@ func (im *IndexManager) runReindexTask(ctx context.Context, task *reindexTask) {
 		set := rdx.NewStampedSet[rdx.RdxRid]()
 		err := set.Native(indexIter.Value())
 		if err != nil {
+			ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "error", "fail_to_parse_index_set").Inc()
 			im.c.log.ErrorCtx(ctx, "failed to parse index set: %s, will restart", err)
 			return
 		}
@@ -453,5 +506,16 @@ func (im *IndexManager) runReindexTask(ctx context.Context, task *reindexTask) {
 	task.LastUpdate = time.Now()
 	task.Revision++
 	// if failed to save, will retry anyway
-	im.c.db.Merge(task.Key(), task.Value(), im.c.opts.PebbleWriteOptions)
+	err = im.c.db.Merge(task.Key(), task.Value(), im.c.opts.PebbleWriteOptions)
+	if err != nil {
+		ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "error", "fail_to_save_done_task").Inc()
+		im.c.log.ErrorCtx(ctx, "failed to save reindex task: %s, will restart", err)
+		return
+	}
+	if ctx.Err() == nil {
+		ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "success", "reindexed").Inc()
+		ReindexDuration.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field)).Observe(time.Since(start).Seconds())
+	} else {
+		ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "cancelled", "cancelled").Inc()
+	}
 }

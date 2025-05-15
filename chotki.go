@@ -640,6 +640,11 @@ func (cho *Chotki) Metrics() []prometheus.Collector {
 		OpenedSnapshots,
 		SessionsStates,
 		DrainTime,
+		ReindexTaskCount,
+		ReindexResults,
+		ReindexDuration,
+		ReindexCount,
+		ReindexTaskStates,
 	}
 }
 
