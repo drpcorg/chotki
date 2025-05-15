@@ -123,8 +123,9 @@ func (t *reindexTask) Id() string {
 func (t *reindexTask) Value() []byte {
 	mp := rdx.NewStampedMap[rdx.RdxInt, rdx.RdxString]()
 	data := []byte{byte(t.State)}
-	data = append(data, binary.BigEndian.AppendUint64(data, uint64(t.LastUpdate.UnixNano()))...)
-	mp.Set(rdx.RdxInt(t.Field), rdx.RdxString(string(data)))
+	extime := uint64(t.LastUpdate.Unix())
+	data = binary.BigEndian.AppendUint64(data, extime)
+	mp.SetStamped(rdx.RdxInt(t.Field), rdx.RdxString(string(data)), rdx.Time{Rev: t.Revision, Src: t.Src})
 	return mp.Tlv()
 }
 
@@ -138,9 +139,12 @@ func parseReindexTasks(key, value []byte) ([]reindexTask, error) {
 	tasks := []reindexTask{}
 	for k, v := range mp.Map {
 		state := reindexTaskState(v.Value[0])
-		updatetime := time.Unix(0, int64(binary.BigEndian.Uint64([]byte(v.Value[1:]))))
+		extime := int64(binary.BigEndian.Uint64([]byte(v.Value[1:])))
+		updatetime := time.Unix(extime, 0)
 		tasks = append(tasks, reindexTask{
 			State:      state,
+			Revision:   v.Time.Rev,
+			Src:        v.Time.Src,
 			LastUpdate: updatetime,
 			Cid:        cid,
 			Field:      uint32(k),

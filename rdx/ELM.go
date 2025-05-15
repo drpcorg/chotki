@@ -627,8 +627,8 @@ func (m *StampedMap[K, T]) Set(key K, value T) {
 	m.Map[key] = Stamped[T]{Time: Time{Rev: 0, Src: 0}, Value: value}
 }
 
-func (m *StampedMap[K, T]) SetVersioned(key K, value T, rev int64, src uint64) {
-	m.Map[key] = Stamped[T]{Time: Time{Rev: rev, Src: src}, Value: value}
+func (m *StampedMap[K, T]) SetStamped(key K, value T, time Time) {
+	m.Map[key] = Stamped[T]{Time: Time{Rev: time.Rev, Src: time.Src}, Value: value}
 }
 
 func (m *StampedMap[K, T]) Tlv() []byte {
@@ -636,8 +636,8 @@ func (m *StampedMap[K, T]) Tlv() []byte {
 	rev0 := []byte{'0'}
 	for k, v := range m.Map {
 		rec := []byte{}
-		rec = protocol.Append(rec, k.Type(), rev0, k.TLV())
-		rec = protocol.Append(rec, v.Value.Type(), FIRSTtlv(v.Time.Rev, v.Time.Src, v.Value.TLV()))
+		rec = protocol.Append(rec, k.Type(), FIRSTtlv(v.Time.Rev, v.Time.Src, k.TLV()))
+		rec = protocol.Append(rec, v.Value.Type(), rev0, v.Value.TLV())
 		pairs = append(pairs, rec)
 	}
 	valueOrderUnstampedFirsts(pairs)
