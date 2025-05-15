@@ -61,6 +61,7 @@ const (
 	reindexTaskStatePending    reindexTaskState = 'P'
 	reindexTaskStateInProgress reindexTaskState = 'I'
 	reindexTaskStateDone       reindexTaskState = 'D'
+	reindexTaskStateRemove     reindexTaskState = 'R'
 )
 
 type IndexManager struct {
@@ -313,6 +314,8 @@ func (im *IndexManager) CheckReindexTasks(ctx context.Context) {
 						im.tasksCancels[task.Id()] = cancel
 						go im.runReindexTask(ctx, &task)
 					}
+				case reindexTaskStateRemove:
+					// noop
 				case reindexTaskStateDone:
 					if task.LastUpdate.Before(time.Now().Add(-10 * time.Minute)) {
 						task.State = reindexTaskStatePending
@@ -417,10 +420,9 @@ func (im *IndexManager) runReindexTask(ctx context.Context, task *reindexTask) {
 			im.c.log.ErrorCtx(ctx, "failed to delete hash index: %s, will restart", err)
 			return
 		}
-		task.State = reindexTaskStateDone
+		task.State = reindexTaskStateRemove
 		task.Revision++
 		task.LastUpdate = time.Now()
-		// if failed to save, will retry anyway
 		err = im.c.db.Merge(task.Key(), task.Value(), im.c.opts.PebbleWriteOptions)
 		if err != nil {
 			ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "error", "fail_to_save_done_task").Inc()
@@ -505,7 +507,6 @@ func (im *IndexManager) runReindexTask(ctx context.Context, task *reindexTask) {
 	task.State = reindexTaskStateDone
 	task.LastUpdate = time.Now()
 	task.Revision++
-	// if failed to save, will retry anyway
 	err = im.c.db.Merge(task.Key(), task.Value(), im.c.opts.PebbleWriteOptions)
 	if err != nil {
 		ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "error", "fail_to_save_done_task").Inc()
