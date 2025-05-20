@@ -423,6 +423,11 @@ func (im *IndexManager) runReindexTask(ctx context.Context, task *reindexTask) {
 		return
 	}
 
+	if int(task.Field) >= len(fields) {
+		im.c.log.ErrorCtx(ctx, "field out of range, will restart", "field", task.Field, "class", task.Cid.String(), "fields", fields)
+		return
+	}
+
 	field := fields[task.Field]
 	if field.Index == 0 {
 		err := im.c.db.DeleteRange(
