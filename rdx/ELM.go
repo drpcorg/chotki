@@ -3,8 +3,8 @@ package rdx
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"slices"
-	"sort"
 
 	"github.com/drpcorg/chotki/protocol"
 )
@@ -12,20 +12,6 @@ import (
 type Time struct {
 	Rev int64
 	Src uint64
-}
-
-func (t Time) Time64() uint64 {
-	return (ZigZagInt64(t.Rev) << SrcBits) | t.Src
-}
-
-const srcMask = (uint64(1) << SrcBits) - 1
-
-func Time64FromRevzSrc(revz, src uint64) uint64 {
-	return (revz << SrcBits) | (src & srcMask)
-}
-
-func TimeFrom64(t64 uint64) Time {
-	return Time{Rev: ZagZigUint64(t64 >> SrcBits), Src: t64 & srcMask}
 }
 
 func (t Time) ZipBytes() []byte {
@@ -158,6 +144,10 @@ func Emerge(tlvs [][]byte) (merged []byte) {
 // produce an op that turns the old value into the new one
 func Edelta(tlv []byte, new_val int64, clock Clock) (tlv_delta []byte) {
 	return nil // todo
+}
+
+func Etlv(tlv []byte) []byte {
+	return tlv
 }
 
 // checks a TLV value for validity (format violations)
@@ -340,6 +330,7 @@ func MparseTR(arg *RDX) MapTR {
 type MapTR map[string]ID
 type MapTT map[string]string
 type MapSS map[string]string
+type MapIB map[int]byte
 
 func (m MapTR) String() string {
 	var keys []string
@@ -402,7 +393,6 @@ func MtlvSS(m MapSS) (tlv []byte) {
 	}
 	valueOrderUnstampedFirsts(pairs)
 	return protocol.Join(pairs...)
-
 }
 
 func MtlvII(nat MapTT) (tlv []byte) {
@@ -542,34 +532,6 @@ func (a *MIterator) Value() []byte {
 	return a.both
 }
 
-// L is an array of any FIRST elements
-
-// produce a text form (for REPL mostly)
-func Lstring(tlv []byte) (txt string) {
-	var ret = make([]byte, 0, len(tlv)*4)
-	rest := tlv
-	for len(rest) > 0 {
-		var sub []byte
-		sub, rest = protocol.Take('B', rest)
-		_, subb := protocol.Take('T', sub)
-		it := LIterator{FIRSTIterator{TLV: subb}}
-		for it.Next() {
-			if ZagZigUint64(it.revz) < 0 {
-				continue
-			}
-			ret = append(ret, ',')
-			ret = appendFirstTlvString(ret, it.lit, it.bare)
-		}
-
-	}
-	if len(ret) == 0 {
-		return "[]"
-	}
-	ret[0] = '['
-	ret = append(ret, ']')
-	return string(ret)
-}
-
 // parse a text form into a TLV value
 func Lparse(txt string) (tlv []byte) {
 	bm := 0
@@ -612,115 +574,6 @@ func appendParsedFirstTlvt(tlv []byte, n *RDX, t Time) []byte {
 	return append(tlv, protocol.Record(rdt, SetTimeFIRST(untimed, t))...)
 }
 
-// merge TLV values
-func Lmerge(tlvs [][]byte) (merged []byte) {
-	ins := make(map[uint64][][]byte)
-	var locs []uint64
-	for _, input := range tlvs {
-		rest := input
-		for len(rest) > 0 {
-			var sub []byte
-			sub, rest = protocol.Take('B', rest)
-			ref, bare := protocol.Take('T', sub)
-			t := TimeFromZipBytes(ref)
-			loc := t.Time64()
-			pre, ok := ins[loc]
-			if !ok {
-				locs = append(locs, loc)
-			}
-			ins[loc] = append(pre, bare)
-		}
-	}
-	sort.Slice(locs, func(i, j int) bool {
-		return locs[i] < locs[j]
-	})
-	ih := ItHeap[*LIterator]{}
-	for len(locs) > 0 {
-		into := locs[0]
-		locs = locs[1:]
-		bares, ok := ins[into]
-		if !ok {
-			continue
-		}
-		delete(ins, into)
-		if len(ins) == 0 {
-			ins = nil
-		}
-		bm := 0
-		bm, merged = protocol.OpenHeader(merged, 'B')
-		merged = protocol.AppendTiny(merged, 'T', ID(into).ZipBytes())
-		pileUp(&ih, bares)
-		for ih.Len() > 0 {
-			key := Time64FromRevzSrc(ih[0].revz, ih[0].src)
-			next := ih.Next()
-			merged = append(merged, next...)
-			if ins != nil {
-				descs, found := ins[key]
-				if found {
-					pileUp(&ih, descs)
-					delete(ins, key)
-					if len(ins) == 0 {
-						ins = nil
-					}
-				}
-			}
-		}
-		protocol.CloseHeader(merged, bm)
-	}
-
-	return
-}
-
-func pileUp(heap *ItHeap[*LIterator], bares [][]byte) {
-	for _, bare := range bares {
-		heap.Push(&LIterator{FIRSTIterator{TLV: bare}})
-	}
-}
-
-// produce an op that turns the old value into the new one
-func Ldelta(tlv []byte, new_val int64, clock Clock) (tlv_delta []byte) {
-	return nil // todo
-}
-
-// checks a TLV value for validity (format violations)
-func Lvalid(tlv []byte) bool {
-	return true // todo
-}
-
-func Ldiff(tlv []byte, vvdiff VV) []byte {
-	return nil //todo
-}
-
-type LIterator struct {
-	FIRSTIterator
-}
-
-func (a *LIterator) Merge(bb SortedIterator) int {
-	b := bb.(*LIterator)
-	if a.revz > b.revz {
-		return MergeAB
-	} else if a.revz < b.revz {
-		return MergeBA
-	} else if a.src > b.src {
-		return MergeAB
-	} else if a.src < b.src {
-		return MergeBA
-	} else {
-		return MergeA
-	}
-}
-
-func Mrdx2tlv(a *RDX) (tlv []byte) {
-	if a == nil || a.RdxType != Mapping {
-		return nil
-	}
-	for i := 0; i+1 < len(a.Nested); i += 2 {
-		tlv = append(tlv, FIRSTrdx2tlv(&a.Nested[i])...)
-		tlv = append(tlv, FIRSTrdx2tlv(&a.Nested[i+1])...)
-	}
-	return
-}
-
 func ELMdefault() (tlv []byte) {
 	return []byte{}
 }
@@ -746,4 +599,192 @@ func ELMstring(tlv []byte) string {
 		ret = append(ret, ',')
 	}
 	return string(ret)
+}
+
+type Rdxable[T comparable] interface {
+	comparable
+	TLV() []byte
+	Type() byte
+	Native(tlv []byte) (T, error)
+}
+
+type Stamped[T any] struct {
+	Time  Time
+	Value T
+}
+
+func NewStampedMap[K Rdxable[K], T Rdxable[T]]() *StampedMap[K, T] {
+	return &StampedMap[K, T]{
+		Map: make(map[K]Stamped[T]),
+	}
+}
+
+type StampedMap[K Rdxable[K], T Rdxable[T]] struct {
+	Map map[K]Stamped[T]
+}
+
+func (m *StampedMap[K, T]) Set(key K, value T) {
+	m.Map[key] = Stamped[T]{Time: Time{Rev: 0, Src: 0}, Value: value}
+}
+
+func (m *StampedMap[K, T]) SetStamped(key K, value T, time Time) {
+	m.Map[key] = Stamped[T]{Time: Time{Rev: time.Rev, Src: time.Src}, Value: value}
+}
+
+func (m *StampedMap[K, T]) Tlv() []byte {
+	pairs := protocol.Records{}
+	rev0 := []byte{'0'}
+	for k, v := range m.Map {
+		rec := []byte{}
+		rec = protocol.Append(rec, k.Type(), FIRSTtlv(v.Time.Rev, v.Time.Src, k.TLV()))
+		rec = protocol.Append(rec, v.Value.Type(), rev0, v.Value.TLV())
+		pairs = append(pairs, rec)
+	}
+	valueOrderUnstampedFirsts(pairs)
+	return protocol.Join(pairs...)
+}
+
+func (m *StampedMap[K, T]) Native(tlv []byte) error {
+	ret := make(map[K]Stamped[T])
+	it := FIRSTIterator{TLV: tlv}
+	for it.Next() {
+		keyrdt, time, key := it.ParsedValue()
+		if !it.Next() {
+			return fmt.Errorf("incomplete record: %d", keyrdt)
+		}
+		if len(it.val) == 0 { // removed
+			continue
+		}
+		var rdxKey K
+		if keyrdt != rdxKey.Type() {
+			return fmt.Errorf("invalid key type: %d, expected %d", keyrdt, rdxKey.Type())
+		}
+		rdxKey, err := rdxKey.Native(key)
+		if err != nil {
+			return err
+		}
+		valrdt, _, val := it.ParsedValue()
+		var rdxVal T
+		if valrdt != rdxVal.Type() {
+			return fmt.Errorf("invalid value type: %d, expected %d", valrdt, rdxVal.Type())
+		}
+		rdxVal, err = rdxVal.Native(val)
+		if err != nil {
+			return err
+		}
+		ret[rdxKey] = Stamped[T]{
+			Time:  time,
+			Value: rdxVal,
+		}
+	}
+	m.Map = ret
+	return nil
+}
+
+type StampedSet[T Rdxable[T]] struct {
+	Value map[T]Time
+}
+
+func NewStampedSet[T Rdxable[T]]() *StampedSet[T] {
+	return &StampedSet[T]{
+		Value: make(map[T]Time),
+	}
+}
+
+func (l *StampedSet[T]) Add(value T) {
+	ll, ok := l.Value[value]
+	if !ok {
+		l.Value[value] = Time{Rev: 0, Src: 0}
+	} else {
+		l.Value[value] = Time{Rev: ll.Rev + 1, Src: 0}
+	}
+}
+func (l *StampedSet[T]) AddStamped(value T, rev int64, src uint64) {
+	l.Value[value] = Time{Rev: rev, Src: src}
+}
+
+func (l *StampedSet[T]) Tlv() []byte {
+	pairs := protocol.Records{}
+	for v, t := range l.Value {
+		rec := []byte{}
+		rec = protocol.Append(rec, v.Type(), FIRSTtlv(t.Rev, t.Src, v.TLV()))
+		pairs = append(pairs, rec)
+	}
+	valueOrderUnstampedFirsts(pairs)
+	return protocol.Join(pairs...)
+}
+
+func (l *StampedSet[T]) Native(tlv []byte) error {
+	ret := make(map[T]Time)
+	it := FIRSTIterator{TLV: tlv}
+	for it.Next() {
+		vrdt, time, val := it.ParsedValue()
+		var rdxval T
+		if vrdt != rdxval.Type() {
+			return fmt.Errorf("invalid value type: %d, expected %d", vrdt, rdxval.Type())
+		}
+		rdxval, err := rdxval.Native(val)
+		if err != nil {
+			return err
+		}
+		ret[rdxval] = time
+	}
+	l.Value = ret
+	return nil
+}
+
+type RdxString string
+
+func (s RdxString) Type() byte {
+	return 'S'
+}
+
+func (s RdxString) TLV() []byte {
+	return Stlv(string(s))
+}
+
+func (s RdxString) Native(tlv []byte) (RdxString, error) {
+	return RdxString(Snative(tlv)), nil
+}
+
+type RdxInt int64
+
+func (i RdxInt) Type() byte {
+	return 'I'
+}
+
+func (i RdxInt) TLV() []byte {
+	return Itlv(int64(i))
+}
+
+func (i RdxInt) Native(tlv []byte) (RdxInt, error) {
+	return RdxInt(Inative(tlv)), nil
+}
+
+type RdxByte byte
+
+func (b RdxByte) Type() byte {
+	return 'S'
+}
+
+func (b RdxByte) TLV() []byte {
+	return []byte{byte(b)}
+}
+
+func (b RdxByte) Native(tlv []byte) (RdxByte, error) {
+	return RdxByte(tlv[0]), nil
+}
+
+type RdxRid ID
+
+func (r RdxRid) Type() byte {
+	return 'R'
+}
+
+func (r RdxRid) TLV() []byte {
+	return Rtlv(ID(r))
+}
+
+func (r RdxRid) Native(tlv []byte) (RdxRid, error) {
+	return RdxRid(Rnative(tlv)), nil
 }
