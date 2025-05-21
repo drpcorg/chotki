@@ -392,6 +392,9 @@ func (im *IndexManager) OnFieldUpdate(rdt byte, fid, cid rdx.ID, tlv []byte, bat
 		}
 		return batch.Merge(task.Key(), task.Value(), im.c.opts.PebbleWriteOptions)
 	}
+	if int(fid.Off()) >= len(fields) {
+		return nil
+	}
 	field := fields[fid.Off()]
 	if field.Index == HashIndex {
 		_, _, tlv := rdx.ParseFIRST(tlv)
