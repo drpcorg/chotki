@@ -68,6 +68,7 @@ type IndexManager struct {
 	c              *Chotki
 	tasksCancels   map[string]context.CancelFunc
 	taskEntries    sync.Map
+	mutexMap       sync.Map
 	classCache     *lru.Cache[rdx.ID, rdx.ID]
 	hashIndexCache *lru.Cache[string, rdx.ID]
 }
@@ -348,17 +349,35 @@ func (im *IndexManager) CheckReindexTasks(ctx context.Context) {
 }
 
 func (im *IndexManager) addHashIndex(cid rdx.ID, fid rdx.ID, tlv []byte, batch pebble.Writer) error {
-	cacheKey := append(binary.BigEndian.AppendUint32(cid.Bytes(), uint32(fid.Off())), tlv...)
-	im.hashIndexCache.Remove(string(cacheKey))
-	hash := xxhash.Sum64(tlv)
-	key := hashKey(cid, uint32(fid.Off()), hash)
-	set := rdx.NewStampedSet[rdx.RdxRid]()
-	set.Add(rdx.RdxRid(fid.ZeroOff()))
-	return batch.Merge(
-		key,
-		set.Tlv(),
-		im.c.opts.PebbleWriteOptions,
-	)
+	lock, _ := im.mutexMap.LoadOrStore(fid, &sync.Mutex{})
+	mt := lock.(*sync.Mutex)
+	mt.Lock()
+	defer func() {
+		mt.Unlock()
+		im.mutexMap.Delete(fid)
+	}()
+	id, err := im.GetByHash(cid, uint32(fid.Off()), tlv, im.c.db)
+	switch err {
+	case nil:
+		if id != fid.ZeroOff() {
+			return ErrHashIndexUinqueConstraintViolation
+		}
+		fallthrough
+	case ErrObjectUnknown:
+		cacheKey := append(binary.BigEndian.AppendUint32(cid.Bytes(), uint32(fid.Off())), tlv...)
+		im.hashIndexCache.Remove(string(cacheKey))
+		hash := xxhash.Sum64(tlv)
+		key := hashKey(cid, uint32(fid.Off()), hash)
+		set := rdx.NewStampedSet[rdx.RdxRid]()
+		set.Add(rdx.RdxRid(fid.ZeroOff()))
+		return batch.Merge(
+			key,
+			set.Tlv(),
+			im.c.opts.PebbleWriteOptions,
+		)
+	default:
+		return err
+	}
 }
 
 func (im *IndexManager) OnFieldUpdate(rdt byte, fid, cid rdx.ID, tlv []byte, batch pebble.Writer) error {

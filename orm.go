@@ -54,10 +54,11 @@ func (orm *ORM) New(ctx context.Context, cid rdx.ID, objs ...NativeObject) (err 
 		}
 		var id rdx.ID
 		id, err = orm.Host.CommitPacket(ctx, 'O', cid, tlv)
-		if err == nil {
-			orm.ids.Store(obj, id)
-			orm.objects.Store(id, obj)
+		if err != nil {
+			return err
 		}
+		orm.ids.Store(obj, id)
+		orm.objects.Store(id, obj)
 	}
 	return nil
 }

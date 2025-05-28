@@ -49,8 +49,9 @@ var (
 	ErrOutOfOrder      = errors.New("chotki: order fail: sequence gap")
 	ErrCausalityBroken = errors.New("chotki: order fail: refs an unknown op")
 
-	ErrFullscanIndexField     = errors.New("chotki: field can't have fullscan index")
-	ErrHashIndexFieldNotFirst = errors.New("chotki: field can't have hash index if type is not FIRST")
+	ErrFullscanIndexField                 = errors.New("chotki: field can't have fullscan index")
+	ErrHashIndexFieldNotFirst             = errors.New("chotki: field can't have hash index if type is not FIRST")
+	ErrHashIndexUinqueConstraintViolation = errors.New("chotki: hash index unique constraint violation")
 )
 
 var EventsMetric = prometheus.NewCounter(prometheus.CounterOpts{

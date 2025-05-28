@@ -282,3 +282,43 @@ func TestHashIndexRepairIndex(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, &Test{Test: "test1"}, test1data, "index in sync check after diff sync")
 }
+
+func TestHashIndexUniqueConstraint(t *testing.T) {
+	dirs, clear := testdirs(0xa)
+	defer clear()
+
+	a, err := Open(dirs[0], Options{
+		Src:                0xa,
+		Name:               "test replica A",
+		Logger:             utils.NewDefaultLogger(slog.LevelDebug),
+		ReadAccumTimeLimit: 100 * time.Millisecond,
+	})
+	assert.NoError(t, err)
+	defer a.Close()
+
+	cid, err := a.NewClass(context.Background(), rdx.ID0, SchemaIndex...)
+	assert.NoError(t, err)
+
+	aorm := a.ObjectMapper()
+	defer aorm.Close()
+
+	// Create first object
+	ob1 := Test{Test: "test1"}
+	err = aorm.New(context.Background(), cid, &ob1)
+	assert.NoError(t, err)
+	aorm.UpdateAll()
+
+	// Try to create second object with the same indexed field value
+	ob2 := Test{Test: "test1"}
+	err = aorm.New(context.Background(), cid, &ob2)
+	assert.Error(t, err, "should fail when creating object with duplicate indexed field value")
+	assert.Equal(t, ErrHashIndexUinqueConstraintViolation, err)
+
+	// Verify only one object exists
+	data := make([]Test, 0)
+	for item := range SeekClass[*Test](aorm, cid) {
+		data = append(data, *item)
+	}
+	assert.Equal(t, 1, len(data), "should only have one object")
+	assert.Equal(t, "test1", data[0].Test, "should have the first object's value")
+}
