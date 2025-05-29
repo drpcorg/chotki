@@ -312,7 +312,7 @@ func TestHashIndexUniqueConstraint(t *testing.T) {
 	ob2 := Test{Test: "test1"}
 	err = aorm.New(context.Background(), cid, &ob2)
 	assert.Error(t, err, "should fail when creating object with duplicate indexed field value")
-	assert.Equal(t, ErrHashIndexUinqueConstraintViolation, err)
+	assert.ErrorIs(t, err, ErrHashIndexUinqueConstraintViolation)
 
 	// Verify only one object exists
 	data := make([]Test, 0)

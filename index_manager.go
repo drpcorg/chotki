@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"iter"
 	"math"
@@ -360,7 +361,7 @@ func (im *IndexManager) addHashIndex(cid rdx.ID, fid rdx.ID, tlv []byte, batch p
 	switch err {
 	case nil:
 		if id != fid.ZeroOff() {
-			return ErrHashIndexUinqueConstraintViolation
+			return errors.Join(ErrHashIndexUinqueConstraintViolation, fmt.Errorf("key %s, current id %s, new id %s", string(tlv), id.String(), fid.ZeroOff().String()))
 		}
 		fallthrough
 	case ErrObjectUnknown:
