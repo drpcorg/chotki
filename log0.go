@@ -5,17 +5,17 @@ import (
 	"github.com/drpcorg/chotki/rdx"
 )
 
-const (
-	id1 = rdx.ID0 + rdx.ProInc
-	id2 = id1 + rdx.ProInc
-	id3 = id2 + rdx.ProInc
+var (
+	id1 = rdx.ID0.IncPro(1)
+	id2 = id1.IncPro(1)
+	id3 = id2.IncPro(1)
 
-	IdNames    = id2 + 1
-	IdNodes    = id2 + 2
-	IdNodeInfo = id2 + 3
+	IdNames    = id2.ToOff(1)
+	IdNodes    = id2.ToOff(2)
+	IdNodeInfo = id2.ToOff(3)
 
 	// ID from which we count user static objects
-	IdLog1 = id2 + 4
+	IdLog1 = id2.ToOff(4)
 )
 
 const YAckOff = uint64(2)
@@ -31,7 +31,7 @@ var Log0 = protocol.Records{
 		protocol.Record('I', id1.ZipBytes()),     // identifier, `src-0`
 		protocol.Record('R', rdx.ID0.ZipBytes()), // reference, `0-0`
 		rdx.Atlv(rdx.LogT{
-			"MNames", // global-scope names
+			"M\x00Names", // global-scope names
 		}),
 	),
 	// 0-2 the singleton metadata object
@@ -56,9 +56,9 @@ var Log0 = protocol.Records{
 		protocol.Record('I', id3.ZipBytes()),
 		protocol.Record('R', rdx.ID0.ZipBytes()),
 		rdx.Atlv(rdx.LogT{
-			"SName", // x-0-1 replica name
-			"VAck",  // x-0-2 Packet acknowledgements (a vector)
-			"SAddr", // x-0-3 the default IP address
+			"S\x00Name", // x-0-1 replica name
+			"V\x00Ack",  // x-0-2 Packet acknowledgements (a vector)
+			"S\x00Addr", // x-0-3 the default IP address
 			// todo the rest of metadata
 		}),
 	),
