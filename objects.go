@@ -13,13 +13,14 @@ import (
 )
 
 func OKey(id rdx.ID, rdt byte) (key []byte) {
-	var ret = [16]byte{'O'}
-	key = binary.BigEndian.AppendUint64(ret[:1], uint64(id))
+	var ret = [18]byte{'O'}
+	key = binary.BigEndian.AppendUint64(ret[:1], id.Src())
+	key = binary.BigEndian.AppendUint64(key, id.Pro())
 	key = append(key, rdt)
 	return
 }
 
-const LidLKeyLen = 1 + 8 + 1
+const LidLKeyLen = 1 + 16 + 1
 
 func OKeyIdRdt(key []byte) (id rdx.ID, rdt byte) {
 	if len(key) != LidLKeyLen {
@@ -31,12 +32,13 @@ func OKeyIdRdt(key []byte) (id rdx.ID, rdt byte) {
 	return
 }
 
-var VKey0 = []byte{'V', 0, 0, 0, 0, 0, 0, 0, 0, 'V'}
+var VKey0 = []byte{'V', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'V'}
 
 func VKey(id rdx.ID) (key []byte) {
-	var ret = [16]byte{'V'}
-	block := id | SyncBlockMask
-	key = binary.BigEndian.AppendUint64(ret[:1], uint64(block))
+	var ret = [18]byte{'V'}
+	block := id.ProOr(SyncBlockMask)
+	key = binary.BigEndian.AppendUint64(ret[:1], block.Src())
+	key = binary.BigEndian.AppendUint64(key, block.Pro())
 	key = append(key, 'V')
 	return
 }
@@ -45,7 +47,7 @@ func VKeyId(key []byte) rdx.ID {
 	if len(key) != LidLKeyLen {
 		return rdx.BadId
 	}
-	return rdx.IDFromBytes(key[1:]) & ^SyncBlockMask
+	return rdx.IDFromBytes(key[1:]).ProAnd(^SyncBlockMask)
 }
 
 // A class contains a number of fields. Each Field has
@@ -63,6 +65,7 @@ type Field struct {
 	Name       string
 	RdxType    byte
 	RdxTypeExt []byte
+	Index      IndexType
 }
 
 // Fields
@@ -107,8 +110,8 @@ func (f Fields) FindName(name string) (ndx int) { // fixme double naming?
 }
 
 func ObjectKeyRange(oid rdx.ID) (fro, til []byte) {
-	oid = oid & ^rdx.OffMask
-	return OKey(oid, 'O'), OKey(oid+rdx.ProInc, 0)
+	oid = oid.ZeroOff()
+	return OKey(oid, 'O'), OKey(oid.IncPro(1), 0)
 }
 
 // returns nil for "not found"
@@ -138,6 +141,35 @@ func (cho *Chotki) ObjectIterator(oid rdx.ID, snap *pebble.Snapshot) *pebble.Ite
 	return nil
 }
 
+func parseClass(tlv []byte) (fields Fields) {
+	it := rdx.FIRSTIterator{TLV: tlv}
+	fields = append(fields, Field{ // todo inheritance
+		Offset:  0,
+		Name:    "_ref",
+		RdxType: rdx.Reference,
+	})
+	for it.Next() {
+		lit, t, name := it.ParsedValue()
+		if lit != rdx.Term || len(name) == 0 {
+			break // todo unique names etc
+		}
+		rdt := rdx.String
+		index := IndexType(0)
+		if name[0] >= 'A' && name[0] <= 'Z' {
+			rdt = name[0]
+			index = IndexType(name[1])
+			name = name[2:]
+		}
+		fields = append(fields, Field{
+			Offset:  t.Rev,
+			RdxType: rdt,
+			Name:    string(name),
+			Index:   index,
+		})
+	}
+	return
+}
+
 // todo note that the class may change as the program runs; in such a case
 // if the class fields are already cached, the current session will not
 // understand the new fields!
@@ -151,28 +183,7 @@ func (cho *Chotki) ClassFields(cid rdx.ID) (fields Fields, err error) {
 	if e != nil {
 		return nil, ErrTypeUnknown
 	}
-	it := rdx.FIRSTIterator{TLV: tlv}
-	fields = append(fields, Field{ // todo inheritance
-		Offset:  0,
-		Name:    "_ref",
-		RdxType: rdx.Reference,
-	})
-	for it.Next() {
-		lit, t, name := it.ParsedValue()
-		if lit != rdx.Term || len(name) == 0 {
-			break // todo unique names etc
-		}
-		rdt := rdx.String
-		if name[0] >= 'A' && name[0] <= 'Z' {
-			rdt = name[0]
-			name = name[1:]
-		}
-		fields = append(fields, Field{
-			Offset:  t.Rev,
-			RdxType: rdt,
-			Name:    string(name),
-		})
-	}
+	fields = parseClass(tlv)
 	_ = clo.Close()
 	cho.types.Store(cid, fields)
 	return
@@ -245,16 +256,6 @@ func (cho *Chotki) ObjectFieldsTLV(oid rdx.ID) (tid rdx.ID, tlv protocol.Records
 		tlv = append(tlv, cp)
 	}
 	return
-}
-
-func FieldOffset(fields []string, name string) rdx.ID {
-	for i := 0; i < len(fields); i++ {
-		fn := fields[i]
-		if len(fn) > 0 && fn[1:] == name {
-			return rdx.ID(i + 1)
-		}
-	}
-	return 0
 }
 
 // ObjectFieldTLV picks one field fast. No class checks, etc.
@@ -330,7 +331,14 @@ func (cho *Chotki) NewClass(ctx context.Context, parent rdx.ID, fields ...Field)
 		if !field.Valid() {
 			return rdx.BadId, ErrBadTypeDescription
 		}
+		if field.Index == FullscanIndex {
+			return rdx.BadId, ErrFullscanIndexField
+		}
+		if field.Index == HashIndex && !rdx.IsFirst(field.RdxType) {
+			return rdx.BadId, ErrHashIndexFieldNotFirst
+		}
 		name := append([]byte{}, field.RdxType)
+		name = append(name, byte(field.Index))
 		name = append(name, field.Name...)
 		fspecs = append(fspecs, protocol.Record('T', rdx.FIRSTtlv(maxidx, 0, name)))
 	}

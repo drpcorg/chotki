@@ -12,7 +12,7 @@ func BenchmarkRdxIdTotring(b *testing.B) {
 	id := rdx.ID0
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
-		id = (id & ^rdx.OffMask) + rdx.ProInc
+		id = rdx.NewID(id.Src(), id.Seq(), id.Off()+1)
 		b.StartTimer()
 		test = id.String()
 	}

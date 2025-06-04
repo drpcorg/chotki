@@ -3,6 +3,8 @@ package chotki
 import (
 	"bytes"
 	"context"
+	"iter"
+	"reflect"
 	"slices"
 	"sync"
 	"text/template"
@@ -52,10 +54,11 @@ func (orm *ORM) New(ctx context.Context, cid rdx.ID, objs ...NativeObject) (err 
 		}
 		var id rdx.ID
 		id, err = orm.Host.CommitPacket(ctx, 'O', cid, tlv)
-		if err == nil {
-			orm.ids.Store(obj, id)
-			orm.objects.Store(id, obj)
+		if err != nil {
+			return err
 		}
+		orm.ids.Store(obj, id)
+		orm.objects.Store(id, obj)
 	}
 	return nil
 }
@@ -236,6 +239,48 @@ func (orm *ORM) Load(id rdx.ID, blanc NativeObject, skipFields ...uint64) (obj N
 	orm.objects.Store(id, blanc)
 	orm.ids.Store(blanc, id)
 	return blanc, nil
+}
+
+func SeekClass[T NativeObject](orm *ORM, cid rdx.ID) iter.Seq[T] {
+	return func(yield func(obj T) bool) {
+		for id := range orm.Host.indexManager.SeekClass(cid, orm.Snap) {
+			var obj T
+			if reflect.TypeOf(obj).Kind() == reflect.Ptr {
+				obj = reflect.New(reflect.TypeOf(obj).Elem()).Interface().(T)
+			}
+			obk, err := orm.Load(id, obj)
+			if err != nil {
+				return
+			}
+			if !yield(obk.(T)) {
+				return
+			}
+		}
+	}
+}
+
+func GetByHash[T NativeObject](orm *ORM, cid rdx.ID, fid uint32, tlv []byte) (T, error) {
+	var obj T
+	id, err := orm.Host.indexManager.GetByHash(cid, fid, tlv, orm.Snap)
+	if err != nil {
+		return obj, err
+	}
+	if reflect.TypeOf(obj).Kind() == reflect.Ptr {
+		obj = reflect.New(reflect.TypeOf(obj).Elem()).Interface().(T)
+	}
+	obk, err := orm.Load(id, obj)
+	if err != nil {
+		return obj, err
+	}
+	return obk.(T), nil
+}
+
+func (orm *ORM) GetIdByHash(cid rdx.ID, fid uint32, tlv []byte) (rdx.ID, error) {
+	return orm.Host.indexManager.GetByHash(cid, fid, tlv, orm.Snap)
+}
+
+func (orm *ORM) SeekIds(cid rdx.ID) iter.Seq[rdx.ID] {
+	return orm.Host.indexManager.SeekClass(cid, orm.Snap)
 }
 
 // Find a registered object given its id. nil if none.

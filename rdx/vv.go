@@ -2,7 +2,7 @@ package rdx
 
 import (
 	"errors"
-	"slices"
+	"sort"
 
 	"github.com/drpcorg/chotki/protocol"
 )
@@ -64,7 +64,9 @@ func (vv VV) IDs() (ids []ID) {
 	for src, pro := range vv {
 		ids = append(ids, IDfromSrcPro(src, pro))
 	}
-	slices.Sort(ids)
+	sort.Slice(ids, func(i, j int) bool {
+		return ids[i].Less(ids[j])
+	})
 	return
 }
 
