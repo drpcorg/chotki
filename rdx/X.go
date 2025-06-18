@@ -170,7 +170,7 @@ func X2string(rdt byte, tlv []byte, new_val string, src uint64) (delta []byte) {
 
 func Xdiff(rdt byte, tlv []byte, sendvv VV) (diff []byte) {
 	switch rdt {
-	case 'C', 'O', 'Y':
+	case 'O', 'Y':
 		diff = nil
 	case 'F':
 		diff = Fdiff(tlv, sendvv)

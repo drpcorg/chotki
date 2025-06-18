@@ -26,6 +26,10 @@ func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 		d := rdx.UnzipUint64(dzip)
 		at := ref.ProPlus(d)
 		rdt, bare, rest = protocol.TakeAny(rest)
+		// clean cache after class update
+		if rdt == 'C' {
+			cho.types.Clear()
+		}
 		err = batch.Merge(OKey(at, rdt), bare, cho.opts.PebbleWriteOptions)
 		if err == nil && rdt == 'O' {
 			cid := rdx.IDFromZipBytes(bare)

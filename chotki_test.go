@@ -468,3 +468,130 @@ func (k *Test) Store(off uint64, rdt byte, old []byte, clock rdx.Clock) (bare []
 	}
 	return
 }
+
+func TestChotki_ClassEdit(t *testing.T) {
+	dirs, clear := testdirs(0xa, 0xb)
+	defer clear()
+
+	a, err := Open(dirs[0], Options{Src: 0xa, Name: "test replica A"})
+	assert.Nil(t, err)
+
+	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B"})
+	assert.Nil(t, err)
+
+	cid, err := a.NewClass(context.Background(), rdx.ID0, Schema...)
+	assert.NoError(t, err)
+
+	sc, err := a.ClassFields(cid)
+	assert.NoError(t, err)
+	assert.Equal(t, Fields(Schema), sc[1:])
+
+	_, err = b.ClassFields(cid)
+	assert.Error(t, err)
+
+	syncData(a, b)
+
+	sc, err = b.ClassFields(cid)
+	assert.NoError(t, err)
+	assert.Equal(t, Fields(Schema), sc[1:])
+
+	Schema2 := []Field{
+		{Name: "test", RdxType: rdx.String, Offset: 0},
+		{Name: "test2", RdxType: rdx.Integer, Offset: 1},
+	}
+
+	_, err = a.NewClass(context.Background(), cid, Schema2...)
+	assert.NoError(t, err)
+
+	sc, err = a.ClassFields(cid)
+	assert.NoError(t, err)
+	assert.Equal(t, Fields(Schema2), sc[1:])
+
+	syncData(a, b)
+
+	sc, err = b.ClassFields(cid)
+	assert.NoError(t, err)
+	assert.Equal(t, Fields(Schema2), sc[1:])
+
+	_ = a.Close()
+	_ = b.Close()
+
+}
+
+func TestChotki_ClassEdit_Live(t *testing.T) {
+	dirs, clear := testdirs(0xa, 0xb)
+	defer clear()
+
+	a, err := Open(dirs[0], Options{Src: 0xa, Name: "test replica A", Logger: utils.NewDefaultLogger(slog.LevelInfo)})
+	assert.Nil(t, err)
+	defer a.Close()
+
+	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B", Logger: utils.NewDefaultLogger(slog.LevelInfo)})
+	assert.Nil(t, err)
+	defer b.Close()
+
+	cid, err := a.NewClass(context.Background(), rdx.ID0, Schema...)
+	assert.NoError(t, err)
+
+	sc, err := a.ClassFields(cid)
+	assert.NoError(t, err)
+	assert.Equal(t, Fields(Schema), sc[1:])
+
+	_, err = b.ClassFields(cid)
+	assert.Error(t, err)
+
+	synca := Syncer{
+		Host:       a,
+		PingPeriod: 100 * time.Second,
+		PingWait:   3 * time.Second,
+		Mode:       SyncRWLive,
+		Name:       "a",
+		Src:        a.src,
+		log:        utils.NewDefaultLogger(slog.LevelDebug),
+		oqueue:     &FeedCloserTest{},
+	}
+	syncb := Syncer{
+		Host:       b,
+		PingPeriod: 100 * time.Second,
+		Mode:       SyncRWLive,
+		PingWait:   3 * time.Second,
+		Name:       "b",
+		Src:        b.src,
+		log:        utils.NewDefaultLogger(slog.LevelDebug),
+		oqueue:     &FeedCloserTest{},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	a.outq.Store("b", &syncb)
+
+	go protocol.PumpCtx(ctx, &synca, &syncb)
+	go protocol.PumpCtx(ctx, &syncb, &synca)
+	time.Sleep(time.Millisecond * 10)
+
+	sc, err = b.ClassFields(cid)
+	assert.NoError(t, err)
+	assert.Equal(t, Fields(Schema), sc[1:])
+
+	Schema2 := []Field{
+		{Name: "test", RdxType: rdx.String, Offset: 0},
+		{Name: "test2", RdxType: rdx.Integer, Offset: 1},
+	}
+
+	_, err = a.NewClass(context.Background(), cid, Schema2...)
+	assert.NoError(t, err)
+
+	sc, err = a.ClassFields(cid)
+	assert.NoError(t, err)
+	assert.Equal(t, Fields(Schema2), sc[1:])
+
+	time.Sleep(10 * time.Millisecond)
+
+	sc, err = b.ClassFields(cid)
+	assert.NoError(t, err)
+	assert.Equal(t, Fields(Schema2), sc[1:])
+
+	syncb.Close()
+	synca.Close()
+}
