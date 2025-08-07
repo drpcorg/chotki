@@ -1,6 +1,3 @@
-// Package network provides peer-to-peer communication functionality for the chotki system.
-// This file contains the Peer type which manages individual network connections,
-// handling both read and write operations with buffering and batching optimizations.
 package network
 
 import (

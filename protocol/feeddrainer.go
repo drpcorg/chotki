@@ -5,13 +5,6 @@ import (
 	"io"
 )
 
-// Package protocol provides the two fundamental interfaces Feeder and Drainer
-// that are used throughout the codebase for reading and writing Records.
-// These interfaces form the core abstraction for data flow operations,
-// allowing components to be decoupled and easily testable.
-// Feeder handles reading records from a source, while Drainer handles
-// writing records to a destination.
-
 // Feeder is an interface that defines the contract for reading records.
 // Implementations should provide a method to feed records from a source.
 type Feeder interface {
