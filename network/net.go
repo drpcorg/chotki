@@ -1,3 +1,116 @@
+// Package network provides a high-performance TCP/TLS server and client implementation
+// for real-time asynchronous communication. This package is designed for continuous
+// bidirectional message streaming with high throughput and low latency, unlike
+// traditional request-response patterns (like HTTP).
+//
+// ARCHITECTURE OVERVIEW
+// ====================
+//
+// The network package uses a callback-based architecture where you provide a Protocol
+// Handler that already knows how to process data. The Net layer provides the transport
+// mechanism, while your Protocol Handler handles the actual data processing and
+// business logic.
+//
+// Key Components:
+//   - Net: Manages connections, listeners, and network transport
+//   - Peer: Handles individual connection lifecycle and data buffering
+//   - Protocol Handler: Your application logic for data processing (Feed/Drain)
+//
+// Key Features:
+//   - Support for TCP and TLS protocols
+//   - Automatic connection management with exponential backoff retry logic
+//   - Configurable buffer sizes and processing thresholds
+//   - Thread-safe concurrent operations with goroutines
+//   - Graceful connection handling and resource cleanup
+//   - Bidirectional data streaming with buffering and batching
+//
+// CONNECTION ESTABLISHMENT FLOW
+// =============================
+//
+// The network package uses a callback-based architecture where you provide a Protocol Handler
+// that already knows how to process data. When you create a Net instance with NewNet(),
+// you pass an install callback that returns a FeedDrainCloserTraced interface. This
+// Protocol Handler is the core component that:
+//   - Implements Feed() for outgoing data (application → network)
+//   - Implements Drain() for incoming data (network → application)
+//   - Handles protocol parsing and message processing
+//   - Contains the business logic for data handling
+//
+// When connections are established, the Net layer calls your install callback to get
+// a Protocol Handler instance for each connection, and the Peer uses this handler
+// for all data processing through the Feed()/Drain() methods.
+//
+// When you call Connect("tcp://localhost:8080"), here's what happens:
+//
+// 1. Connect() calls ConnectPool() with a single address
+//   - This creates a connection pool entry with the name "tcp://localhost:8080"
+//   - The entry is initially set to nil to prevent duplicate connections
+//
+// 2. ConnectPool() spawns a goroutine running KeepConnecting()
+//   - This goroutine runs continuously until the network is closed
+//   - It implements the retry logic with exponential backoff
+//
+// 3. KeepConnecting() attempts to establish the connection:
+//   - Calls createConn() to create a TCP/TLS connection
+//   - If connection fails, it waits with exponential backoff (0.5s → 1s → 2s → ... → 60s max)
+//   - If connection succeeds, it calls keepPeer() to manage the connection
+//
+// 4. keepPeer() creates a new Peer instance:
+//   - Calls the install callback to get a protocol handler
+//   - Creates a Peer with the connection and configuration
+//   - Stores the Peer in the connections map
+//   - Calls Peer.Keep() to start read/write loops
+//
+// 5. Peer.Keep() runs two goroutines:
+//   - keepRead(): Continuously reads from the socket, buffers data, and calls protocol.Drain()
+//   - keepWrite(): Continuously calls protocol.Feed() and writes to the socket
+//
+// 6. If the connection fails or is closed:
+//   - The Peer is removed from the connections map
+//   - The destroy callback is called
+//   - KeepConnecting() continues and will retry the connection
+//
+// READ BUFFERING STRATEGY
+// =======================
+//
+// The read buffering system accumulates data from the network socket until
+// specific thresholds are met. This batching is crucial because the larger
+// the batch, the fewer resources are consumed by the Protocol Handler
+// (the entity passed during Net creation) for saving and processing data.
+//
+// Buffering Thresholds:
+//   - bufferMinToProcess: Minimum data to accumulate before processing
+//   - bufferMaxSize: Maximum buffer size to prevent memory exhaustion
+//   - readAccumTimeLimit: Maximum time to wait for more data (default: 5s)
+//
+// Processing Triggers:
+// Buffer is processed when ANY condition is met:
+//  1. Buffer size reaches bufferMinToProcess (efficiency trigger)
+//  2. Buffer size reaches bufferMaxSize (memory protection trigger)
+//  3. Time since last read exceeds readAccumTimeLimit (latency trigger)
+//
+// Key Benefits:
+//   - Larger batches reduce CPU overhead for Protocol Handler operations
+//   - Fewer calls to Protocol.Drain() means better performance
+//   - Balances latency (small batches) vs efficiency (large batches)
+//   - Concurrent processing prevents blocking network reads
+//
+// Usage Example:
+//
+//	// Create a new network instance with your protocol handler
+//	net := NewNet(logger, installCallback, destroyCallback,
+//		&NetTlsConfigOpt{Config: tlsConfig},
+//		&NetWriteTimeoutOpt{Timeout: 30 * time.Second},
+//	)
+//
+//	// Start listening for incoming connections
+//	err := net.Listen("tcp://:8080")
+//
+//	// Connect to a remote peer
+//	err = net.Connect("tcp://localhost:8080")
+//
+//	// Clean up when done
+//	defer net.Close()
 package network
 
 import (
@@ -17,13 +130,18 @@ import (
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
+// ConnType represents the type of network connection
 type ConnType = uint
 
 var (
-	ErrAddressInvalid    = errors.New("the address invalid")
+	// ErrAddressInvalid is returned when the provided address format is invalid
+	ErrAddressInvalid = errors.New("the address invalid")
+	// ErrAddressDuplicated is returned when attempting to use an address that's already in use
 	ErrAddressDuplicated = errors.New("the address already used")
-	ErrAddressUnknown    = errors.New("address unknown")
-	ErrDisconnected      = errors.New("disconnected by user")
+	// ErrAddressUnknown is returned when trying to disconnect from an unknown address
+	ErrAddressUnknown = errors.New("address unknown")
+	// ErrDisconnected is returned when a connection is closed by the user
+	ErrDisconnected = errors.New("disconnected by user")
 )
 
 const (
@@ -33,23 +151,25 @@ const (
 )
 
 const (
-	TYPICAL_MTU       = 1500
-	MAX_OUT_QUEUE_LEN = 1 << 20 // 16MB of pointers is a lot
+	// TYPICAL_MTU is the typical Maximum Transmission Unit size
+	TYPICAL_MTU = 1500
+	// MAX_OUT_QUEUE_LEN is the maximum length of the output queue (16MB of pointers)
+	MAX_OUT_QUEUE_LEN = 1 << 20
 
+	// MAX_RETRY_PERIOD is the maximum time to wait between connection retry attempts
 	MAX_RETRY_PERIOD = time.Minute
+	// MIN_RETRY_PERIOD is the minimum time to wait between connection retry attempts
 	MIN_RETRY_PERIOD = time.Second / 2
 )
 
 type InstallCallback func(name string) protocol.FeedDrainCloserTraced
 type DestroyCallback func(name string, p protocol.Traced)
 
-// A TCP/TLS/QUIC server/client for the use case of real-time async communication.
-// Differently from the case of request-response (like HTTP), we do not
-// wait for a request, then dedicating a thread to processing, then sending
-// back the resulting response. Instead, we constantly fan sendQueue tons of
-// tiny messages. That dictates different work patterns than your typical
-// HTTP/RPC server as, for example, we cannot let one slow receiver delay
-// event transmission to all the other receivers.
+// Net provides a TCP/TLS/QUIC server/client for real-time async communication.
+// Unlike request-response patterns (like HTTP), this implementation constantly
+// sends many tiny messages without waiting for responses. This requires different
+// work patterns than typical HTTP/RPC servers, as one slow receiver cannot delay
+// event transmission to all other receivers.
 type Net struct {
 	wg        sync.WaitGroup
 	log       utils.Logger
@@ -112,6 +232,15 @@ func (opt *TcpBufferSizeOpt) Apply(n *Net) {
 	n.writeBufferTcpSize = opt.Write
 }
 
+// NewNet creates a new network instance with the specified logger and callbacks.
+// Additional configuration can be provided through NetOpt parameters.
+//
+// Example:
+//
+//	net := NewNet(logger, installCallback, destroyCallback,
+//		&NetTlsConfigOpt{Config: tlsConfig},
+//		&NetWriteTimeoutOpt{Timeout: 30 * time.Second},
+//	)
 func NewNet(log utils.Logger, install InstallCallback, destroy DestroyCallback, opts ...NetOpt) *Net {
 	ctx, cancel := context.WithCancel(context.Background())
 	net := &Net{
@@ -175,6 +304,11 @@ func (n *Net) Connect(addr string) (err error) {
 	return n.ConnectPool(addr, []string{addr})
 }
 
+// ConnectPool establishes connections to multiple addresses with automatic failover.
+// The connection will attempt to connect to each address in the provided list,
+// and will retry with exponential backoff if all addresses fail.
+//
+// The name parameter is used to identify this connection pool in logs and callbacks.
 func (n *Net) ConnectPool(name string, addrs []string) (err error) {
 	// nil is needed so that Connect cannot be called
 	// while KeepConnecting is connects
@@ -201,6 +335,9 @@ func (de *Net) Disconnect(name string) (err error) {
 	return nil
 }
 
+// Listen starts listening for incoming connections on the specified address.
+// The address should be in the format "tcp://:port", "tls://:port", or "quic://:port".
+// Returns ErrAddressDuplicated if already listening on this address.
 func (n *Net) Listen(addr string) error {
 	// nil is needed so that Listen cannot be called
 	// while creating listener
@@ -235,6 +372,9 @@ func (de *Net) Unlisten(addr string) error {
 	return listener.Close()
 }
 
+// KeepConnecting continuously attempts to maintain a connection to the provided addresses.
+// It implements exponential backoff retry logic and will attempt to connect to each
+// address in the list until a successful connection is established.
 func (n *Net) KeepConnecting(name string, addrs []string) {
 	connBackoff := MIN_RETRY_PERIOD
 	for n.ctx.Err() == nil {
@@ -267,6 +407,8 @@ func (n *Net) KeepConnecting(name string, addrs []string) {
 	}
 }
 
+// setTCPBuffersSize configures TCP buffer sizes for the given connection.
+// It handles both plain TCP connections and TLS-wrapped connections.
 func (n *Net) setTCPBuffersSize(ctx context.Context, conn net.Conn) {
 	var tconn *net.TCPConn
 	switch res := conn.(type) {
@@ -291,6 +433,8 @@ func (n *Net) setTCPBuffersSize(ctx context.Context, conn net.Conn) {
 	}
 }
 
+// KeepListening continuously accepts incoming connections on the specified address.
+// For each accepted connection, it spawns a goroutine to handle the peer communication.
 func (n *Net) KeepListening(addr string) {
 	for n.ctx.Err() == nil {
 		listener, ok := n.listens.Load(addr)
@@ -328,6 +472,14 @@ func (n *Net) KeepListening(addr string) {
 	n.log.Info("net: listener closed", "addr", addr)
 }
 
+// keepPeer manages a single peer connection, handling read/write operations
+// and cleanup when the connection is closed.
+//
+// ARCHITECTURE ROLE:
+//   - Core peer lifecycle management function
+//   - Creates and configures Peer instances with protocol handlers
+//   - Manages peer connection lifecycle and error handling
+//   - Integrates with the protocol layer via install/destroy callbacks
 func (n *Net) keepPeer(name string, conn net.Conn) {
 	peer := &Peer{
 		inout:               n.onInstall(name),
@@ -356,6 +508,8 @@ func (n *Net) keepPeer(name string, conn net.Conn) {
 	n.onDestroy(name, peer)
 }
 
+// createListener creates a network listener based on the address scheme.
+// Supports TCP, TLS, and QUIC (unimplemented) protocols.
 func (n *Net) createListener(addr string) (net.Listener, error) {
 	connType, address, err := parseAddr(addr)
 	if err != nil {
@@ -385,6 +539,8 @@ func (n *Net) createListener(addr string) (net.Listener, error) {
 	return listener, nil
 }
 
+// createConn creates a network connection based on the address scheme.
+// Supports TCP, TLS, and QUIC (unimplemented) protocols.
 func (n *Net) createConn(addr string) (net.Conn, error) {
 	connType, address, err := parseAddr(addr)
 	if err != nil {
@@ -413,6 +569,13 @@ func (n *Net) createConn(addr string) (net.Conn, error) {
 	return conn, err
 }
 
+// parseAddr parses a network address string and returns the connection type
+// and address components. Supports URLs with schemes like "tcp://", "tls://", etc.
+//
+// Examples:
+//   - "tcp://localhost:8080" -> TCP, "localhost:8080"
+//   - "tls://example.com:443" -> TLS, "example.com:443"
+//   - "localhost:8080" -> TCP, "localhost:8080"
 func parseAddr(addr string) (ConnType, string, error) {
 	u, err := url.Parse(addr)
 	if err != nil {
