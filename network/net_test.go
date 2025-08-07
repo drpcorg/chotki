@@ -1,4 +1,4 @@
-package protocol
+package network
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/utils"
 	"github.com/stretchr/testify/assert"
 )
@@ -77,44 +78,44 @@ func TestTCPDepot_Connect(t *testing.T) {
 
 	log := utils.NewDefaultLogger(slog.LevelDebug)
 
-	lCon := utils.NewFDQueue[Records](1000, time.Minute, 1)
-	l := NewNet(log, func(_ string) FeedDrainCloserTraced {
-		return &TracedQueue[Records]{lCon}
-	}, func(_ string, t Traced) { lCon.Close() }, &NetTlsConfigOpt{tlsConfig("a.chotki.local")}, &NetWriteTimeoutOpt{Timeout: 1 * time.Minute})
+	lCon := utils.NewFDQueue[protocol.Records](1000, time.Minute, 1)
+	l := NewNet(log, func(_ string) protocol.FeedDrainCloserTraced {
+		return &TracedQueue[protocol.Records]{lCon}
+	}, func(_ string, t protocol.Traced) { lCon.Close() }, &NetTlsConfigOpt{tlsConfig("a.chotki.local")}, &NetWriteTimeoutOpt{Timeout: 1 * time.Minute})
 
 	err := l.Listen(loop)
 	assert.Nil(t, err)
 
-	cCon := utils.NewFDQueue[Records](1000, time.Minute, 1)
-	c := NewNet(log, func(_ string) FeedDrainCloserTraced {
-		return &TracedQueue[Records]{cCon}
-	}, func(_ string, t Traced) { cCon.Close() }, &NetTlsConfigOpt{tlsConfig("b.chotki.local")}, &NetWriteTimeoutOpt{Timeout: 1 * time.Minute})
+	cCon := utils.NewFDQueue[protocol.Records](1000, time.Minute, 1)
+	c := NewNet(log, func(_ string) protocol.FeedDrainCloserTraced {
+		return &TracedQueue[protocol.Records]{cCon}
+	}, func(_ string, t protocol.Traced) { cCon.Close() }, &NetTlsConfigOpt{tlsConfig("b.chotki.local")}, &NetWriteTimeoutOpt{Timeout: 1 * time.Minute})
 
 	err = c.Connect(loop)
 	assert.Nil(t, err)
 
 	// send a record
-	err = cCon.Drain(context.Background(), Records{Record('M', []byte("Hi there"))})
+	err = cCon.Drain(context.Background(), protocol.Records{protocol.Record('M', []byte("Hi there"))})
 	assert.Nil(t, err)
 
 	rec, err := lCon.Feed(context.Background())
 	assert.Nil(t, err)
 	assert.Greater(t, len(rec), 0)
 
-	lit, body, rest := TakeAny(rec[0])
+	lit, body, rest := protocol.TakeAny(rec[0])
 	assert.Equal(t, uint8('M'), lit)
 	assert.Equal(t, "Hi there", string(body))
 	assert.Equal(t, 0, len(rest))
 
 	// respond to that
-	err = lCon.Drain(context.Background(), Records{Record('M', []byte("Re: Hi there"))})
+	err = lCon.Drain(context.Background(), protocol.Records{protocol.Record('M', []byte("Re: Hi there"))})
 	assert.NoError(t, err)
 
 	rerec, err := cCon.Feed(context.Background())
 	assert.NoError(t, err)
 	assert.Greater(t, len(rerec), 0)
 
-	relit, rebody, rerest := TakeAny(rerec[0])
+	relit, rebody, rerest := protocol.TakeAny(rerec[0])
 	assert.Equal(t, uint8('M'), relit)
 	assert.Equal(t, "Re: Hi there", string(rebody))
 	assert.Equal(t, 0, len(rerest))
@@ -132,10 +133,10 @@ func TestTCPDepot_ConnectFailed(t *testing.T) {
 
 	log := utils.NewDefaultLogger(slog.LevelDebug)
 
-	cCon := utils.NewFDQueue[Records](16, time.Millisecond, 0)
-	c := NewNet(log, func(_ string) FeedDrainCloserTraced {
-		return &TracedQueue[Records]{cCon}
-	}, func(_ string, t Traced) { cCon.Close() }, &NetTlsConfigOpt{tlsConfig("b.chotki.local")})
+	cCon := utils.NewFDQueue[protocol.Records](16, time.Millisecond, 0)
+	c := NewNet(log, func(_ string) protocol.FeedDrainCloserTraced {
+		return &TracedQueue[protocol.Records]{cCon}
+	}, func(_ string, t protocol.Traced) { cCon.Close() }, &NetTlsConfigOpt{tlsConfig("b.chotki.local")})
 
 	err := c.Connect(loop)
 	assert.Nil(t, err)

@@ -87,13 +87,8 @@ import (
 const CaseBit uint8 = 'a' - 'A'
 
 var (
-	ErrAddressInvalid    = errors.New("the address invalid")
-	ErrAddressDuplicated = errors.New("the address already used")
-
-	ErrIncomplete     = errors.New("incomplete data")
-	ErrBadRecord      = errors.New("bad TLV record format")
-	ErrAddressUnknown = errors.New("address unknown")
-	ErrDisconnected   = errors.New("disconnected by user")
+	ErrIncomplete = errors.New("incomplete data")
+	ErrBadRecord  = errors.New("bad TLV record format")
 )
 
 // ProbeHeader analyzes a TLV record header and extracts type and size information.

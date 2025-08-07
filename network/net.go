@@ -1,4 +1,4 @@
-package protocol
+package network
 
 import (
 	"context"
@@ -11,12 +11,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/utils"
 	"github.com/google/uuid"
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
 type ConnType = uint
+
+var (
+	ErrAddressInvalid    = errors.New("the address invalid")
+	ErrAddressDuplicated = errors.New("the address already used")
+	ErrAddressUnknown    = errors.New("address unknown")
+	ErrDisconnected      = errors.New("disconnected by user")
+)
 
 const (
 	TCP ConnType = iota + 1
@@ -32,8 +40,8 @@ const (
 	MIN_RETRY_PERIOD = time.Second / 2
 )
 
-type InstallCallback func(name string) FeedDrainCloserTraced
-type DestroyCallback func(name string, p Traced)
+type InstallCallback func(name string) protocol.FeedDrainCloserTraced
+type DestroyCallback func(name string, p protocol.Traced)
 
 // A TCP/TLS/QUIC server/client for the use case of real-time async communication.
 // Differently from the case of request-response (like HTTP), we do not

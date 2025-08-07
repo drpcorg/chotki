@@ -1,4 +1,4 @@
-package protocol
+package network
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/utils"
 )
 
@@ -21,7 +22,7 @@ type Peer struct {
 	writeBatchSize *utils.AvgVal
 
 	conn                net.Conn
-	inout               FeedDrainCloserTraced
+	inout               protocol.FeedDrainCloserTraced
 	incomingBuffer      atomic.Int32
 	readAccumtTimeLimit time.Duration
 	bufferMaxSize       int
@@ -40,7 +41,7 @@ func (p *Peer) keepRead(ctx context.Context) error {
 	var buf bytes.Buffer
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	readChannel := make(chan Records)
+	readChannel := make(chan protocol.Records)
 	errChannel := make(chan error)
 	signal := make(chan struct{})
 	defer close(readChannel)
@@ -100,10 +101,10 @@ func (p *Peer) keepRead(ctx context.Context) error {
 		if (timelimit != nil && time.Now().After(*timelimit)) || buf.Len() >= p.bufferMinToProcess || buf.Len() >= p.bufferMaxSize {
 			select {
 			case signal <- struct{}{}:
-				recs, err := Split(&buf)
-				if err != nil && !errors.Is(err, ErrIncomplete) {
+				recs, err := protocol.Split(&buf)
+				if err != nil && !errors.Is(err, protocol.ErrIncomplete) {
 					return err
-				} else if errors.Is(err, ErrIncomplete) {
+				} else if errors.Is(err, protocol.ErrIncomplete) {
 					if buf.Len() >= p.bufferMaxSize {
 						return errors.Join(err, fmt.Errorf("buffer is not enough to read packet"))
 					}

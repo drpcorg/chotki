@@ -14,6 +14,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
+	"github.com/drpcorg/chotki/network"
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/drpcorg/chotki/utils"
@@ -188,7 +189,7 @@ type Chotki struct {
 	lock         sync.RWMutex
 	commitMutex  sync.Mutex
 	db           *pebble.DB
-	net          *protocol.Net
+	net          *network.Net
 	dir          string
 	opts         Options
 	log          utils.Logger
@@ -277,7 +278,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		waitGroup: &wg,
 	}
 
-	cho.net = protocol.NewNet(cho.log,
+	cho.net = network.NewNet(cho.log,
 		func(name string) protocol.FeedDrainCloserTraced { // new connection
 
 			queue := utils.NewFDQueue[protocol.Records](cho.opts.BroadcastQueueMaxSize, cho.opts.BroadcastQueueTimeLimit, cho.opts.BroadcastQueueMinBatchSize)
@@ -308,14 +309,14 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 				cho.log.Warn(fmt.Sprintf("closed the old conn to %s", name), "trace_id", p.GetTraceId())
 			}
 		},
-		&protocol.NetTlsConfigOpt{Config: opts.TlsConfig},
-		&protocol.NetReadBatchOpt{
+		&network.NetTlsConfigOpt{Config: opts.TlsConfig},
+		&network.NetReadBatchOpt{
 			ReadAccumTimeLimit: cho.opts.ReadAccumTimeLimit,
 			BufferMaxSize:      cho.opts.ReadMaxBufferSize,
 			BufferMinToProcess: cho.opts.ReadMinBufferSizeToProcess,
 		},
-		&protocol.TcpBufferSizeOpt{Read: cho.opts.TcpReadBufferSize, Write: cho.opts.TcpWriteBufferSize},
-		&protocol.NetWriteTimeoutOpt{Timeout: cho.opts.WriteTimeout},
+		&network.TcpBufferSizeOpt{Read: cho.opts.TcpReadBufferSize, Write: cho.opts.TcpWriteBufferSize},
+		&network.NetWriteTimeoutOpt{Timeout: cho.opts.WriteTimeout},
 	)
 	cho.indexManager = newIndexManager(&cho)
 	wg.Add(1)
@@ -593,12 +594,12 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 }
 
 type NetCollector struct {
-	net               *protocol.Net
+	net               *network.Net
 	read_buffers_size *prometheus.Desc
 	write_batch_size  *prometheus.Desc
 }
 
-func NewNetCollector(net *protocol.Net) *NetCollector {
+func NewNetCollector(net *network.Net) *NetCollector {
 	return &NetCollector{
 		net:               net,
 		read_buffers_size: prometheus.NewDesc("chotki_net_read_buffer_size", "", []string{"peer"}, prometheus.Labels{}),
