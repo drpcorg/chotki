@@ -400,45 +400,6 @@ func (cho *Chotki) Counter(rid rdx.ID, offset uint64, updatePeriod time.Duration
 	return counter.(*AtomicCounter)
 }
 
-func (cho *Chotki) KeepAliveLoop() {
-	var err error
-	for err == nil {
-		time.Sleep(time.Second * 30)
-		err = cho.KeepAlive()
-	}
-	if err != ErrClosed {
-		cho.log.Error(err.Error())
-		cho.log.Error("keep alives stop")
-	}
-}
-
-func (cho *Chotki) KeepAlive() error {
-	oid := rdx.IDfromSrcPro(cho.src, 0)
-	oldtlv, err := cho.ObjectRDTFieldTLV(oid.ToOff(YAckOff), 'V')
-	if err != nil {
-		return err
-	}
-	mysrc := cho.src
-	newvv, err := cho.VersionVector()
-	if err != nil {
-		return err
-	}
-	oldvv := make(rdx.VV)
-	_ = oldvv.PutTLV(oldtlv)
-	delete(oldvv, mysrc)
-	delete(newvv, mysrc)
-	tlv_delta := rdx.VVdelta(oldvv, newvv)
-	if len(tlv_delta) == 0 {
-		return nil
-	}
-	d := protocol.Records{
-		protocol.Record('F', rdx.ZipUint64(2)),
-		protocol.Record('V', tlv_delta),
-	}
-	_, err = cho.CommitPacket(context.Background(), 'E', oid, d)
-	return err
-}
-
 // ToyKV convention key, lit O, then O00000-00000000-000 id
 func (cho *Chotki) Source() uint64 {
 	return cho.src

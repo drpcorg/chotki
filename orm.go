@@ -1,13 +1,11 @@
 package chotki
 
 import (
-	"bytes"
 	"context"
 	"iter"
 	"reflect"
 	"slices"
 	"sync"
-	"text/template"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki/protocol"
@@ -297,99 +295,3 @@ func (orm *ORM) FindID(obj NativeObject) rdx.ID {
 	}
 	return id.(rdx.ID)
 }
-
-type templateState struct {
-	CId     rdx.ID
-	Name    string
-	Fields  Fields
-	Natives map[byte]string
-}
-
-func (orm *ORM) Compile(name string, cid rdx.ID) (code string, err error) {
-	class, e := template.New("test").Parse(ClassTemplate)
-	if e != nil {
-		return "", e
-	}
-	state := templateState{
-		CId:     cid,
-		Natives: FIRSTnatives,
-		Name:    name,
-	}
-	state.Fields, err = orm.Host.ClassFields(cid)
-	if err != nil {
-		return
-	}
-	buf := bytes.Buffer{}
-	err = class.Execute(&buf, state)
-	if err == nil {
-		code = buf.String()
-	}
-	return
-}
-
-var FIRSTnatives = map[byte]string{
-	'F': "float64",
-	'I': "int64",
-	'R': "rdx.ID",
-	'S': "string",
-	'T': "string",
-	'N': "uint64",
-	'Z': "int64",
-}
-
-// todo RDX formula
-var ClassTemplate = `
-{{$nat := .Natives}}
-type {{ .Name }} struct {
-	{{ range $n, $f := .Fields }}
-		{{ if eq $n 0 }} {{continue}} {{end }}
-		{{ $f.Name }} {{ index $nat $f.RdxType }}
-	{{ end }}
-}
-
-var {{.Name}}ClassId = rdx.IDFromString("{{.CId.String}}")
-
-func (o *{{.Name}}) Load(off uint64, rdt byte, tlv []byte) error {
-	switch (off) {
-	{{ range $n, $f := .Fields }}
-	{{ if eq $n 0 }} {{continue}} {{end }}
-    case {{$n}}:
-		{{ $rdt := printf "%c" $f.RdxType  }}
-		if rdt != '{{$rdt}}' { break }
-		o.{{$f.Name}} = rdx.{{$rdt}}native(tlv)
-	{{ end }}
-	default: return chotki.ErrUnknownFieldInAType
-	}
-	return nil
-}
-
-func (o *{{.Name}}) Store(off uint64, rdt byte, old []byte, clock rdx.Clock) (bare []byte, err error) {
-	switch (off) {
-	{{ range $n, $f := .Fields }}
-	{{ if eq $n 0 }} {{continue}} {{end }}
-    case {{$n}}:
-		{{ $rdt := printf "%c" $f.RdxType  }}
-		if rdt != '{{$rdt}}' { break }
-		if old == nil {
-            bare = rdx.{{$rdt}}tlv(o.{{$f.Name}})
-		} else {
-			bare = rdx.{{$rdt}}delta(old, o.{{$f.Name}}, clock)
-		}
-	{{ end }}
-	default: return nil, chotki.ErrUnknownFieldInAType
-	}
-	if bare==nil {
-		err = rdx.ErrBadValueForAType
-	}
-	return
-}
-`
-
-// todo collection description
-var ETemplate = `
-func (o *{{Name}}) Get{{- Name}}() {
-}
-
-func (o *{{Name}}) Put{{- Name}}() {
-}
-`
