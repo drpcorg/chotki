@@ -61,7 +61,7 @@
 // // Without cache: immediately returns 15 (5 + 10)
 // ```
 
-package chotki
+package counters
 
 import (
 	"context"
@@ -70,6 +70,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/drpcorg/chotki/host"
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 )
@@ -80,7 +81,7 @@ var ErrDecrementN error = fmt.Errorf("decrementing natural counter")
 
 type AtomicCounter struct {
 	data         atomic.Value
-	db           *Chotki
+	db           host.Host
 	rid          rdx.ID
 	offset       uint64
 	lock         sync.RWMutex
@@ -108,7 +109,7 @@ type atomicZCounter struct {
 // The counter uses lazy loading with time-based caching. When updatePeriod > 0,
 // data is cached to avoid expensive database reads, but may return stale values.
 // When updatePeriod = 0, fresh data is always read from the database.
-func NewAtomicCounter(db *Chotki, rid rdx.ID, offset uint64, updatePeriod time.Duration) *AtomicCounter {
+func NewAtomicCounter(db host.Host, rid rdx.ID, offset uint64, updatePeriod time.Duration) *AtomicCounter {
 	return &AtomicCounter{
 		db:           db,
 		rid:          rid,
@@ -148,7 +149,7 @@ func (a *AtomicCounter) load() (any, error) {
 	var data any
 	switch rdt {
 	case rdx.ZCounter:
-		total, mine, rev := rdx.Znative3(tlv, a.db.clock.Src())
+		total, mine, rev := rdx.Znative3(tlv, a.db.Source())
 		part := zpart{total: total, revision: rev}
 		c := atomicZCounter{
 			theirs: total - mine,
@@ -157,7 +158,7 @@ func (a *AtomicCounter) load() (any, error) {
 		c.part.Store(&part)
 		data = &c
 	case rdx.Natural:
-		total, mine := rdx.Nnative2(tlv, a.db.clock.Src())
+		total, mine := rdx.Nnative2(tlv, a.db.Source())
 		c := atomicNcounter{
 			theirs: total - mine,
 			total:  atomic.Uint64{},
@@ -214,7 +215,7 @@ func (a *AtomicCounter) Increment(ctx context.Context, val int64) (int64, error)
 			return 0, ErrDecrementN
 		}
 		nw := c.total.Add(uint64(val))
-		dtlv = rdx.Ntlvt(nw-c.theirs, a.db.clock.Src())
+		dtlv = rdx.Ntlvt(nw-c.theirs, a.db.Source())
 		result = int64(nw)
 		rdt = rdx.Natural
 	case *atomicZCounter:
@@ -226,7 +227,7 @@ func (a *AtomicCounter) Increment(ctx context.Context, val int64) (int64, error)
 			}
 			ok := c.part.CompareAndSwap(current, &nw)
 			if ok {
-				dtlv = rdx.Ztlvt(nw.total-c.theirs, a.db.clock.Src(), nw.revision)
+				dtlv = rdx.Ztlvt(nw.total-c.theirs, a.db.Source(), nw.revision)
 				result = nw.total
 				rdt = rdx.ZCounter
 				break

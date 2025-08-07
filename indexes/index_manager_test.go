@@ -1,4 +1,4 @@
-package chotki
+package indexes
 
 import (
 	"testing"
@@ -10,7 +10,7 @@ import (
 
 func TestIndexManager_ParseIndexTasks(t *testing.T) {
 	time := time.Now()
-	task := &reindexTask{
+	task := &ReindexTask{
 		State:      reindexTaskStateDone,
 		Field:      21,
 		LastUpdate: time,

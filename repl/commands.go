@@ -10,6 +10,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/drpcorg/chotki"
+	"github.com/drpcorg/chotki/classes"
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 )
@@ -259,7 +260,7 @@ func (repl *REPL) CommandNew(arg *rdx.RDX) (id rdx.ID, err error) {
 			}
 			pairs = pairs[2:]
 		}
-		var fields chotki.Fields
+		var fields classes.Fields
 		fields, err = repl.Host.ClassFields(tid)
 		if err != nil {
 			return

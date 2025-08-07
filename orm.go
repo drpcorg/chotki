@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/chotki_errors"
+	"github.com/drpcorg/chotki/host"
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 )
@@ -67,11 +69,11 @@ func (orm *ORM) Save(ctx context.Context, objs ...NativeObject) (err error) {
 	for _, obj := range objs {
 		id := orm.FindID(obj)
 		if id == rdx.BadId {
-			return ErrObjectUnknown
+			return chotki_errors.ErrObjectUnknown
 		}
 		it := orm.Host.ObjectIterator(id, orm.Snap)
 		if it == nil {
-			err = ErrObjectUnknown
+			err = chotki_errors.ErrObjectUnknown
 			break
 		}
 		cid := rdx.IDFromZipBytes(it.Value())
@@ -83,7 +85,7 @@ func (orm *ORM) Save(ctx context.Context, objs ...NativeObject) (err error) {
 		var changes protocol.Records
 		flags := [64]bool{}
 		for it.Next() {
-			lid, rdt := OKeyIdRdt(it.Key())
+			lid, rdt := host.OKeyIdRdt(it.Key())
 			off := lid.Off()
 			change, e := obj.Store(off, rdt, it.Value(), orm.Host.Clock())
 			flags[off] = true
@@ -130,7 +132,7 @@ func (orm *ORM) Clear() error {
 	defer orm.lock.Unlock()
 
 	if orm.Host == nil {
-		return ErrClosed
+		return chotki_errors.ErrClosed
 	}
 	orm.objects.Clear()
 	if orm.Snap != nil {
@@ -145,7 +147,7 @@ func (orm *ORM) Close() error {
 	defer orm.lock.Unlock()
 
 	if orm.Host == nil {
-		return ErrClosed
+		return chotki_errors.ErrClosed
 	}
 	orm.objects.Clear()
 	orm.ids = sync.Map{}
@@ -158,15 +160,15 @@ func (orm *ORM) Close() error {
 func (orm *ORM) UpdateObject(obj NativeObject, snap *pebble.Snapshot) error {
 	id := orm.FindID(obj)
 	if id == rdx.BadId {
-		return ErrObjectUnknown
+		return chotki_errors.ErrObjectUnknown
 	}
 	it := orm.Host.ObjectIterator(id, snap)
 	if it == nil {
-		return ErrObjectUnknown
+		return chotki_errors.ErrObjectUnknown
 	}
 	seq := orm.Snap.Seq()
 	for it.Next() {
-		lid, rdt := OKeyIdRdt(it.Key())
+		lid, rdt := host.OKeyIdRdt(it.Key())
 		off := lid.Off()
 		if it.Seq() > seq {
 			e := obj.Load(off, rdt, it.Value())
@@ -213,14 +215,14 @@ func (orm *ORM) Load(id rdx.ID, blanc NativeObject, skipFields ...uint64) (obj N
 	if ok {
 		return pre.(NativeObject), nil
 	}
-	fro, til := ObjectKeyRange(id)
+	fro, til := host.ObjectKeyRange(id)
 	io := pebble.IterOptions{
 		LowerBound: fro,
 		UpperBound: til,
 	}
 	it := orm.Snap.NewIter(&io)
 	for it.SeekGE(fro); it.Valid(); it.Next() {
-		lid, rdt := OKeyIdRdt(it.Key())
+		lid, rdt := host.OKeyIdRdt(it.Key())
 		off := lid.Off()
 		if !slices.Contains(skipFields, off) {
 			e := blanc.Load(off, rdt, it.Value())

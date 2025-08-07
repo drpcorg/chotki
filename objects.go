@@ -2,121 +2,20 @@ package chotki
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
-	"unicode/utf8"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/chotki_errors"
+	"github.com/drpcorg/chotki/classes"
+	"github.com/drpcorg/chotki/host"
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/pkg/errors"
 )
 
-func OKey(id rdx.ID, rdt byte) (key []byte) {
-	var ret = [18]byte{'O'}
-	key = binary.BigEndian.AppendUint64(ret[:1], id.Src())
-	key = binary.BigEndian.AppendUint64(key, id.Pro())
-	key = append(key, rdt)
-	return
-}
-
-const LidLKeyLen = 1 + 16 + 1
-
-func OKeyIdRdt(key []byte) (id rdx.ID, rdt byte) {
-	if len(key) != LidLKeyLen {
-		return rdx.BadId, 0
-	}
-
-	id = rdx.IDFromBytes(key[1 : LidLKeyLen-1])
-	rdt = key[LidLKeyLen-1]
-	return
-}
-
-var VKey0 = []byte{'V', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'V'}
-
-func VKey(id rdx.ID) (key []byte) {
-	var ret = [18]byte{'V'}
-	block := id.ProOr(SyncBlockMask)
-	key = binary.BigEndian.AppendUint64(ret[:1], block.Src())
-	key = binary.BigEndian.AppendUint64(key, block.Pro())
-	key = append(key, 'V')
-	return
-}
-
-func VKeyId(key []byte) rdx.ID {
-	if len(key) != LidLKeyLen {
-		return rdx.BadId
-	}
-	return rdx.IDFromBytes(key[1:]).ProAnd(^SyncBlockMask)
-}
-
-// A class contains a number of fields. Each Field has
-// some RDT type. A class can inherit another class.
-// New fields can be appended to a class, but never removed.
-// Max number of fields is 128, max inheritance depth 32.
-// When stored, a class is an append-only sequence of Ts.
-// The syntax for each T: "XName", where X is the RDT.
-// For the map types, can use "MSS_Name" or similar.
-// Each field has an Offset. The Offset+RdxType pair is the
-// *actual key* for the field in the database.
-// Entries having identical Offset+RdxType are considered *renames*!
-type Field struct {
-	Offset     int64
-	Name       string
-	RdxType    byte
-	RdxTypeExt []byte
-	Index      IndexType
-}
-
-// Fields
-type Fields []Field
-
-func (f Field) Valid() bool {
-	for _, l := range f.Name { // has unsafe chars
-		if l < ' ' {
-			return false
-		}
-	}
-
-	return (f.RdxType >= 'A' && f.RdxType <= 'Z' &&
-		len(f.Name) > 0 && utf8.ValidString(f.Name))
-}
-
-func (fs Fields) MaxOffset() (off int64) {
-	for _, f := range fs {
-		if f.Offset > off {
-			off = f.Offset
-		}
-	}
-	return
-}
-
-func (f Fields) FindRdtOff(rdx byte, off int64) int {
-	for i := 0; i < len(f); i++ {
-		if f[i].RdxType == rdx && f[i].Offset == off {
-			return i
-		}
-	}
-	return -1
-}
-
-func (f Fields) FindName(name string) (ndx int) { // fixme double naming?
-	for i := 0; i < len(f); i++ {
-		if f[i].Name == name {
-			return i
-		}
-	}
-	return -1
-}
-
-func ObjectKeyRange(oid rdx.ID) (fro, til []byte) {
-	oid = oid.ZeroOff()
-	return OKey(oid, 'O'), OKey(oid.IncPro(1), 0)
-}
-
 // returns nil for "not found"
 func (cho *Chotki) ObjectIterator(oid rdx.ID, snap *pebble.Snapshot) *pebble.Iterator {
-	fro, til := ObjectKeyRange(oid)
+	fro, til := host.ObjectKeyRange(oid)
 	io := pebble.IterOptions{
 		LowerBound: fro,
 		UpperBound: til,
@@ -129,7 +28,7 @@ func (cho *Chotki) ObjectIterator(oid rdx.ID, snap *pebble.Snapshot) *pebble.Ite
 	}
 
 	if it.SeekGE(fro) { // fixme
-		id, rdt := OKeyIdRdt(it.Key())
+		id, rdt := host.OKeyIdRdt(it.Key())
 		if rdt == 'O' && id == oid {
 			// An iterator is returned from a function, it cannot be closed
 			return it
@@ -141,58 +40,29 @@ func (cho *Chotki) ObjectIterator(oid rdx.ID, snap *pebble.Snapshot) *pebble.Ite
 	return nil
 }
 
-func parseClass(tlv []byte) (fields Fields) {
-	it := rdx.FIRSTIterator{TLV: tlv}
-	fields = append(fields, Field{ // todo inheritance
-		Offset:  0,
-		Name:    "_ref",
-		RdxType: rdx.Reference,
-	})
-	for it.Next() {
-		lit, t, name := it.ParsedValue()
-		if lit != rdx.Term || len(name) == 0 {
-			break // todo unique names etc
-		}
-		rdt := rdx.String
-		index := IndexType(0)
-		if name[0] >= 'A' && name[0] <= 'Z' {
-			rdt = name[0]
-			index = IndexType(name[1])
-			name = name[2:]
-		}
-		fields = append(fields, Field{
-			Offset:  t.Rev,
-			RdxType: rdt,
-			Name:    string(name),
-			Index:   index,
-		})
-	}
-	return
-}
-
 // todo note that the class may change as the program runs; in such a case
 // if the class fields are already cached, the current session will not
 // understand the new fields!
-func (cho *Chotki) ClassFields(cid rdx.ID) (fields Fields, err error) {
+func (cho *Chotki) ClassFields(cid rdx.ID) (fields classes.Fields, err error) {
 	if fields, ok := cho.types.Load(cid); ok {
 		return fields, nil
 	}
 
-	okey := OKey(cid, 'C')
+	okey := host.OKey(cid, 'C')
 	tlv, clo, e := cho.db.Get(okey)
 	if e != nil {
-		return nil, ErrTypeUnknown
+		return nil, chotki_errors.ErrTypeUnknown
 	}
-	fields = parseClass(tlv)
+	fields = classes.ParseClass(tlv)
 	_ = clo.Close()
 	cho.types.Store(cid, fields)
 	return
 }
 
-func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact protocol.Records, err error) {
+func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl classes.Fields, fact protocol.Records, err error) {
 	it := cho.ObjectIterator(oid, nil)
 	if it == nil {
-		err = ErrObjectUnknown
+		err = chotki_errors.ErrObjectUnknown
 		return
 	}
 	defer it.Close()
@@ -205,7 +75,7 @@ func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact proto
 	}
 	fact = append(fact, it.Value())
 	for it.Next() {
-		id, rdt := OKeyIdRdt(it.Key())
+		id, rdt := host.OKeyIdRdt(it.Key())
 		off := int64(id.Off())
 		ndx := decl.FindRdtOff(rdt, off)
 		if ndx == -1 {
@@ -220,18 +90,18 @@ func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl Fields, fact proto
 func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) {
 	db := cho.db
 	if db == nil {
-		return 0, nil, ErrClosed
+		return 0, nil, chotki_errors.ErrClosed
 	}
 
 	it := cho.db.NewIter(&pebble.IterOptions{})
 	defer it.Close()
 
-	key := OKey(fid, 0)
+	key := host.OKey(fid, 0)
 	if !it.SeekGE(key) {
 		return 0, nil, pebble.ErrNotFound
 	}
 	var fidfact rdx.ID
-	fidfact, rdt = OKeyIdRdt(it.Key())
+	fidfact, rdt = host.OKeyIdRdt(it.Key())
 	if fidfact != fid {
 		return 0, nil, pebble.ErrNotFound
 	}
@@ -239,7 +109,7 @@ func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) 
 	return
 }
 
-func (cho *Chotki) NewClass(ctx context.Context, parent rdx.ID, fields ...Field) (id rdx.ID, err error) {
+func (cho *Chotki) NewClass(ctx context.Context, parent rdx.ID, fields ...classes.Field) (id rdx.ID, err error) {
 	var fspecs protocol.Records
 	maxidx := int64(-1)
 	for _, field := range fields {
@@ -252,11 +122,11 @@ func (cho *Chotki) NewClass(ctx context.Context, parent rdx.ID, fields ...Field)
 		if !field.Valid() {
 			return rdx.BadId, ErrBadTypeDescription
 		}
-		if field.Index == FullscanIndex {
-			return rdx.BadId, ErrFullscanIndexField
+		if field.Index == classes.FullscanIndex {
+			return rdx.BadId, chotki_errors.ErrFullscanIndexField
 		}
-		if field.Index == HashIndex && !rdx.IsFirst(field.RdxType) {
-			return rdx.BadId, ErrHashIndexFieldNotFirst
+		if field.Index == classes.HashIndex && !rdx.IsFirst(field.RdxType) {
+			return rdx.BadId, chotki_errors.ErrHashIndexFieldNotFirst
 		}
 		name := append([]byte{}, field.RdxType)
 		name = append(name, byte(field.Index))
@@ -267,10 +137,10 @@ func (cho *Chotki) NewClass(ctx context.Context, parent rdx.ID, fields ...Field)
 }
 
 func (cho *Chotki) GetClassTLV(ctx context.Context, cid rdx.ID) ([]byte, error) {
-	okey := OKey(cid, 'C')
+	okey := host.OKey(cid, 'C')
 	tlv, clo, e := cho.db.Get(okey)
 	if e != nil {
-		return nil, ErrTypeUnknown
+		return nil, chotki_errors.ErrTypeUnknown
 	}
 	err := clo.Close()
 	if err != nil {
@@ -365,14 +235,14 @@ func (cho *Chotki) MapTRField(fid rdx.ID) (themap rdx.MapTR, err error) {
 }
 
 func (cho *Chotki) GetFieldTLV(id rdx.ID) (rdt byte, tlv []byte) {
-	key := OKey(id, 'A')
+	key := host.OKey(id, 'A')
 	it := cho.db.NewIter(&pebble.IterOptions{
 		LowerBound: []byte{'O'},
 		UpperBound: []byte{'P'},
 	})
 	defer it.Close()
 	if it.SeekGE(key) {
-		fact, r := OKeyIdRdt(it.Key())
+		fact, r := host.OKeyIdRdt(it.Key())
 		if fact == id {
 			tlv = it.Value()
 			rdt = r
