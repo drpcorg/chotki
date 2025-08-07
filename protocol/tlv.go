@@ -1,6 +1,80 @@
 // Protocol format is based on ToyTLV (MIT licence) written by Victor Grishchenko in 2024
 // Original project: https://github.com/learn-decentralized-systems/toytlv
 
+/*
+Package protocol implements a compact TLV (Type-Length-Value) encoding format optimized for efficiency.
+
+# TLV Record Format
+
+The protocol supports three encoding formats with automatic format selection based on record size:
+
+ 1. Tiny Format (1 byte header) - for records 0-9 bytes:
+    [('0' + body_length)]
+    Example: 3-byte body → ['3']
+    - Most compact encoding
+    - Type information is lost (normalized to '0')
+    - Only available with lowercase record types
+
+ 2. Short Format (2 bytes header) - for records up to 255 bytes:
+    [lowercase_type, body_length]
+    Example: type 'A', 100 bytes → ['a', 100]
+    - Medium efficiency
+    - Type preserved in lowercase form
+    - 1-byte length field
+
+ 3. Long Format (5 bytes header) - for records up to 2GB:
+    [uppercase_type, length_as_4byte_little_endian]
+    Example: type 'A', 1000 bytes → ['A', 0xE8, 0x03, 0x00, 0x00]
+    - Full capacity encoding
+    - Type preserved in uppercase form
+    - 4-byte little-endian length field
+
+# Record Types
+
+Record types are restricted to uppercase letters A-Z. The case of the type parameter
+in encoding functions affects format selection:
+- Lowercase ('a'-'z'): enables tiny format optimization for small records
+- Uppercase ('A'-'Z'): forces explicit encoding, no tiny format
+
+# Format Selection Logic
+
+The encoding format is automatically selected based on:
+- Body size (0-9 → tiny, 10-255 → short, >255 → long)
+- Type case (lowercase enables tiny, uppercase forces explicit)
+- Tiny format requires both: body_size ≤ 9 AND lowercase type
+
+# Parsing and Safety
+
+The package provides two levels of parsing functions:
+- Safe functions (Take, TakeAny): for trusted data sources, use nil returns for errors
+- Wary functions (TakeWary, TakeAnyWary): for untrusted data, return explicit errors
+
+# Streaming Support
+
+For large or dynamically-sized records, use the streaming API:
+
+	bookmark, buf := OpenHeader(buf, 'X')  // start record with placeholder length
+	buf = append(buf, data...)             // add body data incrementally
+	CloseHeader(buf, bookmark)             // finalize length field
+
+Example Usage
+
+	// Create a simple record
+	record := Record('M', []byte("Hello"))
+
+	// Parse records from buffer
+	data := bytes.NewBuffer(networkData)
+	records, err := Split(data)
+
+	// Extract specific record type
+	body, rest := Take('M', records[0])
+
+# Performance Considerations
+
+- Use Concat() instead of Join() for better memory efficiency
+- Prefer lowercase types for small frequent records (tiny format)
+- Use streaming API for large records to avoid intermediate allocations
+*/
 package protocol
 
 import (
@@ -22,10 +96,12 @@ var (
 	ErrDisconnected   = errors.New("disconnected by user")
 )
 
-// ProbeHeader probes a TLV record header. Return values:
-//   - 0  0 0 	incomplete header
-//   - '-' 0 0 	bad format
-//   - 'A' 2 123 success
+// ProbeHeader analyzes a TLV record header and extracts type and size information.
+//
+// Returns:
+//   - lit: record type ('A'-'Z', '0' for tiny, '-' for error, 0 for incomplete)
+//   - hdrlen: header length (1, 2, or 5 bytes)
+//   - bodylen: body length in bytes
 func ProbeHeader(data []byte) (lit byte, hdrlen, bodylen int) {
 	if len(data) == 0 {
 		return 0, 0, 0
@@ -60,43 +136,12 @@ func ProbeHeader(data []byte) (lit byte, hdrlen, bodylen int) {
 	return
 }
 
-// Incomplete returns the number of supposedly yet-unread bytes.
-// 0 for complete, -1 for bad format,
-// >0 for least-necessary read to complete either header or record.
-func Incomplete(data []byte) int {
-	if len(data) == 0 {
-		return 1 // get something
-	}
-	dlit := data[0]
-	var bodylen int
-	if dlit >= '0' && dlit <= '9' { // tiny
-		bodylen = int(dlit - '0')
-	} else if dlit >= 'a' && dlit <= 'z' { // short
-		if len(data) < 2 {
-			bodylen = 2
-		} else {
-			bodylen = int(data[1]) + 2
-		}
-	} else if dlit >= 'A' && dlit <= 'Z' { // long
-		if len(data) < 5 {
-			bodylen = 5
-		} else {
-			bl := binary.LittleEndian.Uint32(data[1:5])
-			if bl > 0x7fffffff {
-				return -1
-			}
-			bodylen = int(bl) + 5
-		}
-	} else {
-		return -1
-	}
-	if bodylen > len(data) {
-		return bodylen - len(data)
-	} else {
-		return 0
-	}
-}
-
+// Split parses a buffer containing multiple TLV records.
+// Modifies the buffer by consuming successfully parsed records.
+//
+// Returns:
+//   - recs: slice of complete TLV records (header + body)
+//   - err: ErrBadRecord or ErrIncomplete
 func Split(data *bytes.Buffer) (recs Records, err error) {
 	for data.Len() > 0 {
 		lit, hlen, blen := ProbeHeader(data.Bytes())
@@ -127,20 +172,9 @@ func Split(data *bytes.Buffer) (recs Records, err error) {
 	return
 }
 
-func ProbeHeaders(lits string, data []byte) int {
-	rest := data
-	for i := 0; i < len(lits); i++ {
-		l, hl, bl := ProbeHeader(rest)
-		if l != lits[i] {
-			return -1
-		}
-		rest = rest[hl+bl:]
-	}
-	return len(data) - len(rest)
-}
-
-// Feeds the header into the buffer.
-// Subtle: lower-case lit allows for defaulting, uppercase must be explicit.
+// AppendHeader constructs and appends a TLV record header.
+// Automatically selects format based on body length and case.
+// Lowercase lit enables tiny format optimization for small bodies.
 func AppendHeader(into []byte, lit byte, bodylen int) (ret []byte) {
 	biglit := lit &^ CaseBit
 	if biglit < 'A' || biglit > 'Z' {
@@ -160,8 +194,11 @@ func AppendHeader(into []byte, lit byte, bodylen int) (ret []byte) {
 	return ret
 }
 
-// Take is used to read safe TLV inputs (e.g. from own storage) with
-// record types known in advance.
+// Take extracts a TLV record from trusted data. Uses nil returns for errors.
+//
+// Returns:
+//   - body: record body content, nil if error
+//   - rest: remaining data, original data if incomplete
 func Take(lit byte, data []byte) (body, rest []byte) {
 	flit, hdrlen, bodylen := ProbeHeader(data)
 	if flit == 0 || hdrlen+bodylen > len(data) {
@@ -175,7 +212,12 @@ func Take(lit byte, data []byte) (body, rest []byte) {
 	return
 }
 
-// TakeAny is used for safe TLV inputs when record types can vary.
+// TakeAny extracts any TLV record from trusted data without type restrictions.
+//
+// Returns:
+//   - lit: record type found ('A'-'Z'), 0 if no data
+//   - body: record body content, nil if error
+//   - rest: remaining data, nil if error
 func TakeAny(data []byte) (lit byte, body, rest []byte) {
 	if len(data) == 0 {
 		return 0, nil, nil
@@ -185,7 +227,12 @@ func TakeAny(data []byte) (lit byte, body, rest []byte) {
 	return
 }
 
-// TakeWary reads TLV records of known type from unsafe input.
+// TakeWary extracts a TLV record from untrusted data with explicit error handling.
+//
+// Returns:
+//   - body: record body content, nil on error
+//   - rest: remaining data, original data if incomplete
+//   - err: ErrIncomplete or ErrBadRecord
 func TakeWary(lit byte, data []byte) (body, rest []byte, err error) {
 	flit, hdrlen, bodylen := ProbeHeader(data)
 	if flit == 0 || hdrlen+bodylen > len(data) {
@@ -199,7 +246,13 @@ func TakeWary(lit byte, data []byte) (body, rest []byte, err error) {
 	return
 }
 
-// TakeWary reads TLV records of arbitrary type from unsafe input.
+// TakeAnyWary extracts any TLV record from untrusted data with error handling.
+//
+// Returns:
+//   - lit: record type found ('A'-'Z'), 0 on error
+//   - body: record body content, nil on error
+//   - rest: remaining data, nil on error
+//   - err: ErrIncomplete for empty/insufficient data
 func TakeAnyWary(data []byte) (lit byte, body, rest []byte, err error) {
 	if len(data) == 0 {
 		return 0, nil, nil, ErrIncomplete
@@ -209,32 +262,7 @@ func TakeAnyWary(data []byte) (lit byte, body, rest []byte, err error) {
 	return
 }
 
-func TakeRecord(lit byte, data []byte) (rec, rest []byte) {
-	flit, hdrlen, bodylen := ProbeHeader(data)
-	if flit == 0 || hdrlen+bodylen > len(data) {
-		return nil, data // Incomplete
-	}
-	if flit != lit && flit != '0' {
-		return nil, nil // BadRecord
-	}
-	rec = data[0 : hdrlen+bodylen]
-	rest = data[hdrlen+bodylen:]
-	return
-}
-
-func TakeAnyRecord(data []byte) (lit byte, rec, rest []byte) {
-	lit, hdrlen, bodylen := ProbeHeader(data)
-	if lit == 0 || hdrlen+bodylen > len(data) {
-		return 0, nil, data // Incomplete
-	}
-	if lit == '-' {
-		return '-', nil, nil // BadRecord
-	}
-	rec = data[0 : hdrlen+bodylen]
-	rest = data[hdrlen+bodylen:]
-	return
-}
-
+// TotalLen calculates the total length of multiple byte slices.
 func TotalLen(inputs [][]byte) (sum int) {
 	for _, input := range inputs {
 		sum += len(input)
@@ -242,6 +270,8 @@ func TotalLen(inputs [][]byte) (sum int) {
 	return
 }
 
+// Lit extracts the canonical record type from a TLV record's first byte.
+// Returns ('A'-'Z', '0' for tiny format, or '-' for invalid).
 func Lit(rec []byte) byte {
 	b := rec[0]
 	if b >= 'a' && b <= 'z' {
@@ -255,8 +285,8 @@ func Lit(rec []byte) byte {
 	}
 }
 
-// Append appends a record to the buffer; note that uppercase type
-// is always explicit, lowercase can be defaulted.
+// Append constructs a complete TLV record and appends it to the buffer.
+// Lowercase lit enables tiny format optimization.
 func Append(into []byte, lit byte, body ...[]byte) (res []byte) {
 	total := TotalLen(body)
 	res = AppendHeader(into, lit, total)
@@ -266,7 +296,8 @@ func Append(into []byte, lit byte, body ...[]byte) (res []byte) {
 	return res
 }
 
-// Record composes a record of a given type
+// Record creates a complete TLV record with pre-allocated capacity.
+// Use Append() to add to existing buffer.
 func Record(lit byte, body ...[]byte) []byte {
 	total := TotalLen(body)
 	ret := make([]byte, 0, total+5)
@@ -277,20 +308,16 @@ func Record(lit byte, body ...[]byte) []byte {
 	return ret
 }
 
-func AppendTiny(into []byte, lit byte, body []byte) (res []byte) {
-	if len(body) > 9 {
-		return Append(into, lit, body)
-	}
-	res = append(into, '0'+byte(len(body)))
-	res = append(res, body...)
-	return
-}
-
+// TinyRecord creates a TLV record optimized for tiny format.
+// Equivalent to Record() with lowercase lit.
 func TinyRecord(lit byte, body []byte) (tiny []byte) {
-	var data [10]byte
-	return AppendTiny(data[:0], lit, body)
+	// Convert to lowercase to enable tiny format optimization in AppendHeader
+	lowercaseLit := (lit &^ CaseBit) | CaseBit
+	return Record(lowercaseLit, body)
 }
 
+// Join concatenates multiple TLV records into a single byte slice.
+// Useful for creating compound messages or batching records.
 func Join(records ...[]byte) (ret []byte) {
 	for _, rec := range records {
 		ret = append(ret, rec...)
@@ -298,13 +325,8 @@ func Join(records ...[]byte) (ret []byte) {
 	return
 }
 
-func Recs(lit byte, bodies ...[]byte) (recs Records) {
-	for _, body := range bodies {
-		recs = append(recs, Record(lit, body))
-	}
-	return
-}
-
+// Concat efficiently concatenates multiple byte slices with pre-allocation.
+// More efficient than Join() for performance-critical code.
 func Concat(msg ...[]byte) []byte {
 	total := TotalLen(msg)
 	ret := make([]byte, 0, total)
@@ -314,8 +336,31 @@ func Concat(msg ...[]byte) []byte {
 	return ret
 }
 
-// OpenHeader opens a streamed TLV record; use append() to create the
-// record body, then call CloseHeader(&buf, bookmark)
+// OpenHeader begins a streamed TLV record for incremental construction.
+// Must be paired with CloseHeader(). Use for large or dynamic records.
+//
+// This function starts a TLV record with a placeholder for the body length,
+// allowing the body to be built incrementally using append() operations.
+// Must be paired with CloseHeader() to finalize the length field.
+//
+// Use this pattern for large or dynamically-sized records where the final
+// body size is not known in advance.
+//
+// Parameters:
+//   - buf: buffer to append the record header to
+//   - lit: record type ('A'-'Z'), automatically converted to uppercase
+//
+// Return values:
+//   - bookmark: position marker needed for CloseHeader() call
+//   - res: buffer with the header appended (lit + 4 zero bytes for length)
+//
+// Usage pattern:
+//
+//	bookmark, buf := OpenHeader(buf, 'X')
+//	buf = append(buf, bodyData...)  // add body incrementally
+//	CloseHeader(buf, bookmark)      // finalize the length
+//
+// The function always uses long format (5-byte header) for simplicity.
 func OpenHeader(buf []byte, lit byte) (bookmark int, res []byte) {
 	lit &= ^CaseBit
 	if lit < 'A' || lit > 'Z' {
@@ -327,7 +372,23 @@ func OpenHeader(buf []byte, lit byte) (bookmark int, res []byte) {
 	return len(res), res
 }
 
-// CloseHeader closes a streamed TLV record
+// CloseHeader finalizes a streamed TLV record by writing the actual body length.
+//
+// This function completes a TLV record started with OpenHeader() by calculating
+// the actual body size and writing it into the length field placeholder.
+// Must be called after all body data has been appended to the buffer.
+//
+// Parameters:
+//   - buf: buffer containing the TLV record with body data appended
+//   - bookmark: position marker returned by OpenHeader()
+//
+// The function:
+// 1. Validates the bookmark position (must be ≥5 and ≤ buffer length)
+// 2. Calculates body length as: len(buf) - bookmark
+// 3. Writes the length as 4-byte little-endian uint32 at bookmark-4 position
+//
+// Panics if bookmark is invalid, indicating incorrect API usage.
+// Always pair with OpenHeader() - never call independently.
 func CloseHeader(buf []byte, bookmark int) {
 	if bookmark < 5 || len(buf) < bookmark {
 		panic("check the API docs")
