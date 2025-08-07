@@ -1,3 +1,66 @@
+// Package chotki provides AtomicCounter - a high-performance atomic counter implementation
+// for distributed systems with CRDT semantics.
+//
+// # AtomicCounter Architecture
+//
+// AtomicCounter provides atomic increment operations in distributed environments while
+// optimizing performance through intelligent caching. It supports Natural (increment-only)
+// and ZCounter (two-way) types with CRDT merge semantics.
+//
+// ## Core Design Principle
+//
+// The counter trades CPU usage for data freshness, but **only for data from other replicas**.
+// All writes to the current replica are immediately reflected in the counter value.
+// Caching only affects how frequently we read data that arrived via synchronization.
+//
+// ## How It Works
+//
+// The counter uses a lazy loading pattern with time-based caching. When data is requested:
+//
+// 1. **Cache Check**: If cached data hasn't expired, return it immediately
+// 2. **Database Load**: Otherwise, load fresh data from the LSM database
+// 3. **Parse & Cache**: Parse TLV data into internal structures and cache with expiration
+//
+// For increments, the process is:
+//
+// 1. **Load Data**: Get current counter state (cached or from DB)
+// 2. **Atomic Update**: Use Go's atomic primitives to update the value
+// 3. **Generate TLV**: Create TLV records for persistence
+// 4. **Commit**: Write changes to database with CRDT merge semantics
+//
+// ## Internal Structure
+//
+// The counter maintains two internal representations:
+//
+// - **atomicNcounter**: For Natural counters, uses atomic.Uint64 for thread-safe increments
+// - **atomicZCounter**: For ZCounter, uses atomic.Pointer with revision tracking for conflict resolution
+//
+// ## Performance Trade-offs
+//
+// The design trades CPU usage for freshness of **synchronized data from other replicas**.
+// With updatePeriod > 0, the counter caches data to avoid expensive database reads,
+// but may return slightly stale values from other replicas. Local writes are always
+// immediately visible. With updatePeriod = 0, it always reads fresh synchronized data.
+//
+// ## Thread Safety
+//
+// Operations are atomic when using a single instance. Multiple instances may have
+// race conditions due to the distributed nature of the system.
+//
+// ## Example: Cache vs Local Writes
+//
+// ```go
+// counter := NewAtomicCounter(db, objectID, fieldOffset, 1*time.Second)
+//
+// // Local write - immediately visible
+// counter.Increment(ctx, 5)  // Value: 5
+// value, _ := counter.Get(ctx)  // Returns 5 immediately
+//
+// // After sync from other replica (value: 10)
+// // With cache: may still return 5 until cache expires
+// // Without cache: immediately returns 15 (5 + 10)
+// ```
+
 package chotki
 
 import (
@@ -40,13 +103,11 @@ type atomicZCounter struct {
 	part   atomic.Pointer[zpart]
 }
 
-// creates counter that has two properties
-//   - its atomic as long as you use single instance to do all increments, creating multiple instances will break this guarantee
-//   - it can ease CPU load if updatePeiod > 0, in that case it will not read from db backend
-//     current value of the counter
+// NewAtomicCounter creates a new atomic counter instance.
 //
-// Because we use LSM backend writes are cheap, reads are expensive. You can trade off up to date value of counter
-// for less CPU cycles
+// The counter uses lazy loading with time-based caching. When updatePeriod > 0,
+// data is cached to avoid expensive database reads, but may return stale values.
+// When updatePeriod = 0, fresh data is always read from the database.
 func NewAtomicCounter(db *Chotki, rid rdx.ID, offset uint64, updatePeriod time.Duration) *AtomicCounter {
 	return &AtomicCounter{
 		db:           db,
@@ -56,6 +117,13 @@ func NewAtomicCounter(db *Chotki, rid rdx.ID, offset uint64, updatePeriod time.D
 	}
 }
 
+// load retrieves and caches counter data from the database.
+//
+// Uses double-checked locking: first checks cache without lock, then acquires
+// write lock only if cache is expired. Loads TLV data from database and parses
+// into internal structures (atomicNcounter for Natural, atomicZCounter for ZCounter).
+// This method only affects how frequently we read synchronized data from other replicas.
+// Local writes are always immediately visible regardless of cache state.
 func (a *AtomicCounter) load() (any, error) {
 	now := time.Now()
 	if a.data.Load() != nil && now.Sub(a.expiration) < 0 {
@@ -104,6 +172,10 @@ func (a *AtomicCounter) load() (any, error) {
 	return data, nil
 }
 
+// Get retrieves the current value of the counter.
+//
+// Acquires read lock, loads data (cached or from DB), and returns the total value.
+// For Natural counters returns sum of all replica contributions, for ZCounter returns current total.
 func (a *AtomicCounter) Get(ctx context.Context) (int64, error) {
 	a.lock.RLock()
 	defer a.lock.RUnlock()
@@ -121,7 +193,11 @@ func (a *AtomicCounter) Get(ctx context.Context) (int64, error) {
 	}
 }
 
-// Loads (if needed) and increments counter
+// Increment atomically increments the counter by the specified value.
+//
+// Loads current data, performs atomic update using Go primitives (atomic.Uint64 for Natural,
+// CompareAndSwap for ZCounter), generates TLV data, and commits to database with CRDT semantics.
+// Natural counters only allow positive increments, ZCounter supports both positive and negative.
 func (a *AtomicCounter) Increment(ctx context.Context, val int64) (int64, error) {
 	a.lock.RLock()
 	defer a.lock.RUnlock()
