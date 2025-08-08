@@ -16,16 +16,23 @@ import (
 	"github.com/drpcorg/chotki/utils"
 )
 
-// Peer represents a single network connection with bidirectional communication capabilities.
-// It manages the lifecycle of a connection, handling read/write operations with
-// configurable buffering, batching, and timeout settings.
+// Peer implements a high-performance bidirectional network connection handler for the Chotki protocol.
+// It provides asynchronous, buffered I/O with intelligent batching strategies to minimize syscalls
+// and maximize throughput while maintaining protocol integrity.
 //
-// Key Features:
-//   - Concurrent read and write operations
-//   - Configurable buffer sizes and processing thresholds
-//   - Automatic batching of write operations
-//   - Graceful connection cleanup
-//   - Thread-safe state management
+// Architecture:
+//   - Separates read/write operations into independent goroutines for full duplex communication
+//   - Uses adaptive buffering with MTU-aligned growth (1500 bytes) to optimize network utilization
+//   - Implements protocol-aware packet boundary detection to handle TLV record fragmentation
+//   - Employs lock-free atomic operations for thread-safe state management and metrics collection
+//
+// Flow Control:
+//   - Read path: Accumulates data until bufferMinToProcess threshold or readAccumtTimeLimit timeout
+//   - Write path: Batches multiple protocol records using vectored I/O (WriteTo) for efficiency
+//   - Processing pipeline: Concurrent record parsing to prevent read stalls during heavy processing
+//
+// The FeedDrainCloserTraced interface bridges network transport with protocol processing layers,
+// providing Feed() for outbound records and Drain() for inbound record consumption.
 type Peer struct {
 	closed         atomic.Bool
 	wg             sync.WaitGroup
@@ -40,8 +47,6 @@ type Peer struct {
 	writeTimeout        time.Duration
 }
 
-// getReadTimeLimit returns the configured read time limit or a default value.
-// This determines how long to wait for incoming data before processing the buffer.
 func (p *Peer) getReadTimeLimit() time.Duration {
 	if p.readAccumtTimeLimit != 0 {
 		return p.readAccumtTimeLimit
@@ -49,12 +54,23 @@ func (p *Peer) getReadTimeLimit() time.Duration {
 	return 5 * time.Second
 }
 
-// keepRead continuously reads data from the network connection and processes it.
-// It implements a buffered reading strategy with configurable thresholds:
-//   - Accumulates data until buffer size reaches bufferMinToProcess
-//   - Processes data when read time limit is exceeded
-//   - Handles incomplete protocol packets gracefully
-//   - Uses goroutines for concurrent processing to avoid blocking reads
+// keepRead implements the asynchronous read path with intelligent buffering and concurrent processing.
+//
+// Buffer Management Strategy:
+//   - Maintains a growing bytes.Buffer that auto-expands in TYPICAL_MTU (1500 byte) chunks
+//   - Enforces bufferMaxSize limit to prevent unbounded memory growth
+//   - Uses SetReadDeadline() with adaptive timeouts to balance latency vs throughput
+//
+// Processing Pipeline:
+//   - Spawns dedicated goroutine for record processing to prevent I/O stalls
+//   - Coordinates via channels: signal triggers processing, readChannel carries parsed records
+//   - Handles protocol.ErrIncomplete for fragmented TLV records, buffering until complete
+//   - Updates atomic incomingBuffer counter for monitoring and flow control
+//
+// Termination Conditions:
+//   - bufferMinToProcess bytes accumulated (immediate processing for large batches)
+//   - readAccumtTimeLimit timeout exceeded (latency protection)
+//   - bufferMaxSize reached (backpressure protection)
 func (p *Peer) keepRead(ctx context.Context) error {
 	var buf bytes.Buffer
 	ctx, cancel := context.WithCancel(ctx)
@@ -148,15 +164,22 @@ func (p *Peer) GetIncomingPacketBufferSize() int32 {
 	return p.incomingBuffer.Load()
 }
 
-// keepWrite continuously writes data to the network connection.
-// It retrieves data from the protocol layer via the Feed method and
-// batches multiple records together for efficient network transmission.
-// The method tracks batch sizes for monitoring and optimization purposes.
+// keepWrite implements the asynchronous write path with vectored I/O optimization.
+//
+// Performance Optimizations:
+//   - Uses net.Buffers for vectored writes (WriteTo), reducing syscall overhead
+//   - Batches multiple protocol records in single network operations
+//   - Applies configurable write timeouts via SetWriteDeadline() to prevent hangs
+//   - Tracks batch size metrics via writeBatchSize for throughput monitoring
+//
+// The method continuously polls inout.Feed() for outbound records, aggregating
+// them into network-efficient batches. Each batch size is measured in bytes
+// and recorded for performance analysis and capacity planning.
 func (p *Peer) keepWrite(ctx context.Context) error {
 	for !p.closed.Load() {
 		select {
 		case <-ctx.Done():
-			break
+			return nil
 		default:
 			// continue
 		}
@@ -185,14 +208,24 @@ func (p *Peer) keepWrite(ctx context.Context) error {
 	return nil
 }
 
-// Keep manages the main lifecycle of the peer connection, running both
-// read and write operations concurrently. It returns three error values:
-//   - rerr: error from the read operation
-//   - werr: error from the write operation
-//   - cerr: error from closing the connection
+// Keep orchestrates the full-duplex peer lifecycle with coordinated error handling.
 //
-// The method ensures proper cleanup by closing the connection after
-// the write operation completes, which will cancel any ongoing read operations.
+// Concurrency Model:
+//   - Launches independent keepRead() and keepWrite() goroutines for parallel I/O
+//   - Uses buffered error channels to capture termination conditions from either path
+//   - Implements "write-first shutdown" pattern: write completion triggers connection close
+//
+// Error Semantics:
+//   - rerr: read path errors (filtered to ignore expected net.ErrClosed from shutdown)
+//   - werr: write path errors (triggers immediate connection termination)
+//   - cerr: connection close errors (resource cleanup failures)
+//
+// Shutdown Sequence:
+//  1. Write goroutine completes/fails → close connection → triggers read cancellation
+//  2. Read goroutine handles net.ErrClosed gracefully as expected shutdown signal
+//  3. Both goroutines terminate → final cleanup sets conn=nil
+//
+// This ensures writes complete before reads are cancelled, maintaining protocol coherence.
 func (p *Peer) Keep(ctx context.Context) (rerr, werr, cerr error) {
 	p.wg.Add(2) // read & write
 	defer p.wg.Add(-2)

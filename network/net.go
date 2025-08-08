@@ -1,46 +1,25 @@
-// Provides a high-performance TCP/TLS server and client implementation
-// for real-time asynchronous communication. This package is designed for continuous
-// bidirectional message streaming with high throughput and low latency, unlike
-// traditional request-response patterns (like HTTP).
+// Package network provides high-performance TCP/TLS transport for the Chotki protocol.
+// It implements a callback-driven architecture optimized for continuous bidirectional
+// streaming with automatic connection management and intelligent buffering.
 //
-// ARCHITECTURE OVERVIEW
-// ====================
+// # Architecture
 //
-// The network package uses a callback-based architecture where you provide a Protocol
-// Handler that already knows how to process data. The Net layer provides the transport
-// mechanism, while your Protocol Handler handles the actual data processing and
-// business logic.
+// Net is a basic networking for chotki. When creating a new net instance, we pass a callback (InstallCallback) that
+// creates a protocol handler for each connection (typically Syncer instance from replication package).
+// The protocol handler is responsible for
+// sending and receiving data to the connection.
+// Each duplex connection is represented by a Peer instance.
 //
-// Key Components:
-//   - Net: Manages connections, listeners, and network transport
-//   - Peer: Handles individual connection lifecycle and data buffering
-//   - Protocol Handler: Your application logic for data processing (Feed/Drain)
+// # Connection Management
 //
-// Key Features:
-//   - Support for TCP and TLS protocols
-//   - Automatic connection management with exponential backoff retry logic
-//   - Configurable buffer sizes and processing thresholds
-//   - Thread-safe concurrent operations with goroutines
-//   - Graceful connection handling and resource cleanup
-//   - Bidirectional data streaming with buffering and batching
+// Outbound: Connect("tcp://host:port") spawns persistent KeepConnecting() goroutines with
+// exponential backoff retry (500ms → 60s max). Each successful connection creates a Peer
+// that runs concurrent read/write loops until failure or close.
 //
-// CONNECTION ESTABLISHMENT FLOW
-// =============================
+// Inbound: Listen("tcp://:port") accepts connections and immediately wraps them in Peers
+// with the same bidirectional processing model.
 //
-// The network package uses a callback-based architecture where you provide a Protocol Handler
-// that already knows how to process data. When you create a Net instance with NewNet(),
-// you pass an install callback that returns a FeedDrainCloserTraced interface. This
-// Protocol Handler is the core component that:
-//   - Implements Feed() for outgoing data (application → network)
-//   - Implements Drain() for incoming data (network → application)
-//   - Handles protocol parsing and message processing
-//   - Contains the business logic for data handling
-//
-// When connections are established, the Net layer calls your install callback to get
-// a Protocol Handler instance for each connection, and the Peer uses this handler
-// for all data processing through the Feed()/Drain() methods.
-//
-// When you call Connect("tcp://localhost:8080"), here's what happens:
+// # Connection flow
 //
 // 1. Connect() calls ConnectPool() with a single address
 //   - This creates a connection pool entry with the name "tcp://localhost:8080"
@@ -70,30 +49,16 @@
 //   - The destroy callback is called
 //   - KeepConnecting() continues and will retry the connection
 //
-// READ BUFFERING STRATEGY
-// =======================
+// # Buffer Strategy for peer reads
 //
-// The read buffering system accumulates data from the network socket until
-// specific thresholds are met. This batching is crucial because the larger
-// the batch, the fewer resources are consumed by the Protocol Handler
-// (the entity passed during Net creation) for saving and processing data.
+// Peer actually accumulates data in the buffer until it reaches one of the following thresholds:
+//   - bufferMinToProcess: Efficiency threshold for normal operation
+//   - bufferMaxSize: Memory protection limit (triggers immediate processing)
+//   - readAccumTimeLimit: Latency protection timeout (default 5s)
 //
-// Buffering Thresholds:
-//   - bufferMinToProcess: Minimum data to accumulate before processing
-//   - bufferMaxSize: Maximum buffer size to prevent memory exhaustion
-//   - readAccumTimeLimit: Maximum time to wait for more data (default: 5s)
-//
-// Processing Triggers:
-// Buffer is processed when ANY condition is met:
-//  1. Buffer size reaches bufferMinToProcess (efficiency trigger)
-//  2. Buffer size reaches bufferMaxSize (memory protection trigger)
-//  3. Time since last read exceeds readAccumTimeLimit (latency trigger)
-//
-// Key Benefits:
-//   - Larger batches reduce CPU overhead for Protocol Handler operations
-//   - Fewer calls to Protocol.Drain() means better performance
-//   - Balances latency (small batches) vs efficiency (large batches)
-//   - Concurrent processing prevents blocking network reads
+// This maximizes throughput by reducing protocol handler invocations while maintaining
+// bounded latency and memory usage. Specifically, it can reduce amount of pebble.Batch Merge() operations,
+// which reduces amount of disk I/O and improves performance.
 //
 // Usage Example:
 //
@@ -162,14 +127,17 @@ const (
 	MIN_RETRY_PERIOD = time.Second / 2
 )
 
+// InstallCallback creates protocol handlers for new connections.
+// Called once per connection with the connection name for identification.
 type InstallCallback func(name string) protocol.FeedDrainCloserTraced
+
+// DestroyCallback handles protocol handler cleanup when connections terminate.
+// Receives the connection name and traced handler for resource deallocation.
 type DestroyCallback func(name string, p protocol.Traced)
 
-// Net provides a TCP/TLS/QUIC server/client for real-time async communication.
-// Unlike request-response patterns (like HTTP), this implementation constantly
-// sends many tiny messages without waiting for responses. This requires different
-// work patterns than typical HTTP/RPC servers, as one slow receiver cannot delay
-// event transmission to all other receivers.
+// Net manages TCP/TLS connection pools with automatic reconnection and load balancing.
+// Optimized for high-frequency message streaming where connection resilience and
+// batching efficiency are critical for performance.
 type Net struct {
 	wg        sync.WaitGroup
 	log       utils.Logger
@@ -232,14 +200,19 @@ func (opt *TcpBufferSizeOpt) Apply(n *Net) {
 	n.writeBufferTcpSize = opt.Write
 }
 
-// NewNet creates a new network instance with the specified logger and callbacks.
-// Additional configuration can be provided through NetOpt parameters.
+// NewNet creates a configured network manager with callback-based protocol handlers.
 //
-// Example:
+// Parameters:
+//   - log: Logger for connection events and debugging
+//   - install: Creates protocol handlers for new connections
+//   - destroy: Cleans up protocol handlers on connection termination
+//   - opts: Configuration options for performance tuning
 //
-//	net := NewNet(logger, installCallback, destroyCallback,
+// Example with TLS and custom buffering:
+//
+//	net := NewNet(logger, installHandler, destroyHandler,
 //		&NetTlsConfigOpt{Config: tlsConfig},
-//		&NetWriteTimeoutOpt{Timeout: 30 * time.Second},
+//		&NetReadBatchOpt{BufferMaxSize: 64*1024, BufferMinToProcess: 4*1024},
 //	)
 func NewNet(log utils.Logger, install InstallCallback, destroy DestroyCallback, opts ...NetOpt) *Net {
 	ctx, cancel := context.WithCancel(context.Background())
