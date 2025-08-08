@@ -11,8 +11,12 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/classes"
+	"github.com/drpcorg/chotki/host"
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
+	"github.com/drpcorg/chotki/replication"
+	testutils "github.com/drpcorg/chotki/test_utils"
 	"github.com/drpcorg/chotki/utils"
 	"github.com/stretchr/testify/assert"
 )
@@ -46,12 +50,12 @@ func testdirs(origs ...uint64) ([]string, func()) {
 
 func TestChotki_Debug(t *testing.T) {
 	oid := rdx.IDFromSrcSeqOff(0x1e, 0x1ab, 0)
-	key := OKey(oid.ToOff(1), 'I')
+	key := host.OKey(oid.ToOff(1), 'I')
 	value := rdx.Itlv(-13)
 	str := dumpKVString(key, value)
 	assert.Equal(t, "1e-1ab-1.I:\t-13", string(str))
 
-	skey := OKey(oid.ToOff(2), 'S')
+	skey := host.OKey(oid.ToOff(2), 'S')
 	svalue := rdx.Stlv("funny\tstring\n")
 	sstr := dumpKVString(skey, svalue)
 	assert.Equal(t, "1e-1ab-2.S:\t\"funny\\tstring\\n\"", string(sstr))
@@ -85,7 +89,7 @@ func TestChotki_Sync(t *testing.T) {
 	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B"})
 	assert.Nil(t, err)
 
-	syncData(a, b)
+	testutils.SyncData(a, b)
 
 	bvv, err := b.VersionVector()
 	assert.Nil(t, err)
@@ -115,14 +119,14 @@ func TestChotki_SyncEdit(t *testing.T) {
 	assert.NoError(t, err)
 	objectId := orm.FindID(obj)
 	orm.Close()
-	syncData(a, b)
+	testutils.SyncData(a, b)
 
 	orm = a.ObjectMapper()
 	resa, err := orm.Load(objectId, &Test{})
 	assert.NoError(t, err)
 	resa.(*Test).Test = "edited text"
 	assert.NoError(t, orm.Save(context.Background(), resa))
-	syncData(a, b)
+	testutils.SyncData(a, b)
 
 	borm := b.ObjectMapper()
 	res, err := borm.Load(objectId, &Test{})
@@ -144,44 +148,44 @@ func TestChotki_SyncLivePingsOk(t *testing.T) {
 	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B", Logger: utils.NewDefaultLogger(slog.LevelInfo)})
 	assert.Nil(t, err)
 
-	synca := Syncer{
+	synca := replication.Syncer{
 		Host:       a,
 		PingPeriod: 100 * time.Millisecond,
 		PingWait:   200 * time.Millisecond,
-		Mode:       SyncRWLive, Name: "a",
+		Mode:       replication.SyncRWLive, Name: "a",
 		Src:    a.src,
-		log:    utils.NewDefaultLogger(slog.LevelDebug),
-		oqueue: &FeedCloserTest{},
+		Log:    utils.NewDefaultLogger(slog.LevelDebug),
+		Oqueue: &FeedCloserTest{},
 	}
-	syncb := Syncer{
+	syncb := replication.Syncer{
 		Host:       b,
 		PingPeriod: 100 * time.Second,
-		Mode:       SyncRWLive,
+		Mode:       replication.SyncRWLive,
 		PingWait:   3 * time.Second,
 		Name:       "b",
 		Src:        b.src,
-		log:        utils.NewDefaultLogger(slog.LevelDebug),
-		oqueue:     &FeedCloserTest{},
+		Log:        utils.NewDefaultLogger(slog.LevelDebug),
+		Oqueue:     &FeedCloserTest{},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go protocol.PumpCtxCallback(ctx, &synca, &syncb, func() bool {
-		return synca.GetFeedState() != SendPing
+		return synca.GetFeedState() != replication.SendPing
 	})
 	go protocol.PumpCtx(ctx, &syncb, &synca)
 	time.Sleep(time.Millisecond * 10)
-	assert.Equal(t, SendLive, synca.GetFeedState())
-	assert.Equal(t, SendLive, syncb.GetFeedState())
-	assert.Equal(t, SendDiff, synca.GetDrainState())
-	assert.Equal(t, SendDiff, syncb.GetDrainState())
+	assert.Equal(t, replication.SendLive, synca.GetFeedState())
+	assert.Equal(t, replication.SendLive, syncb.GetFeedState())
+	assert.Equal(t, replication.SendDiff, synca.GetDrainState())
+	assert.Equal(t, replication.SendDiff, syncb.GetDrainState())
 
 	time.Sleep(time.Millisecond * 110)
-	assert.Equal(t, SendPing, synca.GetFeedState())
+	assert.Equal(t, replication.SendPing, synca.GetFeedState())
 	go protocol.PumpCtx(ctx, &synca, &syncb)
 	time.Sleep(time.Millisecond * 90)
 
-	assert.Equal(t, SendLive, synca.GetFeedState())
-	assert.Equal(t, SendLive, syncb.GetFeedState())
+	assert.Equal(t, replication.SendLive, synca.GetFeedState())
+	assert.Equal(t, replication.SendLive, syncb.GetFeedState())
 	cancel()
 	// wait until everything stopped
 	time.Sleep(time.Millisecond * 100)
@@ -201,48 +205,48 @@ func TestChotki_SyncLivePingsFail(t *testing.T) {
 	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B", Logger: utils.NewDefaultLogger(slog.LevelInfo)})
 	assert.Nil(t, err)
 
-	synca := Syncer{
+	synca := replication.Syncer{
 		Host:       a,
 		PingPeriod: 100 * time.Millisecond,
 		PingWait:   100 * time.Millisecond,
-		Mode:       SyncRWLive, Name: "a",
+		Mode:       replication.SyncRWLive, Name: "a",
 		Src:    a.src,
-		log:    utils.NewDefaultLogger(slog.LevelDebug),
-		oqueue: &FeedCloserTest{},
+		Log:    utils.NewDefaultLogger(slog.LevelDebug),
+		Oqueue: &FeedCloserTest{},
 	}
-	syncb := Syncer{
+	syncb := replication.Syncer{
 		Host:       b,
 		PingPeriod: 100 * time.Second,
-		Mode:       SyncRWLive,
+		Mode:       replication.SyncRWLive,
 		PingWait:   3 * time.Second,
 		Name:       "b",
 		Src:        b.src,
-		log:        utils.NewDefaultLogger(slog.LevelDebug),
-		oqueue:     &FeedCloserTest{},
+		Log:        utils.NewDefaultLogger(slog.LevelDebug),
+		Oqueue:     &FeedCloserTest{},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go protocol.PumpCtxCallback(ctx, &synca, &syncb, func() bool {
-		return synca.GetFeedState() != SendPing
+		return synca.GetFeedState() != replication.SendPing
 	})
 	go protocol.PumpCtxCallback(ctx, &syncb, &synca, func() bool {
-		return syncb.GetFeedState() != SendPong
+		return syncb.GetFeedState() != replication.SendPong
 	})
 	time.Sleep(time.Millisecond * 10)
-	assert.Equal(t, SendLive, synca.GetFeedState())
-	assert.Equal(t, SendLive, syncb.GetFeedState())
-	assert.Equal(t, SendDiff, synca.GetDrainState())
-	assert.Equal(t, SendDiff, syncb.GetDrainState())
+	assert.Equal(t, replication.SendLive, synca.GetFeedState())
+	assert.Equal(t, replication.SendLive, syncb.GetFeedState())
+	assert.Equal(t, replication.SendDiff, synca.GetDrainState())
+	assert.Equal(t, replication.SendDiff, syncb.GetDrainState())
 
 	time.Sleep(time.Millisecond * 110)
-	assert.Equal(t, SendPing, synca.GetFeedState())
+	assert.Equal(t, replication.SendPing, synca.GetFeedState())
 	go protocol.PumpCtx(ctx, &synca, &syncb)
 	time.Sleep(time.Millisecond * 200)
 
-	assert.Equal(t, SendNone, synca.GetFeedState())
-	assert.Equal(t, SendPong, syncb.GetFeedState())
-	assert.Equal(t, SendDiff, synca.GetDrainState())
-	assert.Equal(t, SendNone, syncb.GetDrainState())
+	assert.Equal(t, replication.SendNone, synca.GetFeedState())
+	assert.Equal(t, replication.SendPong, syncb.GetFeedState())
+	assert.Equal(t, replication.SendDiff, synca.GetDrainState())
+	assert.Equal(t, replication.SendNone, syncb.GetDrainState())
 
 	cancel()
 	syncb.Close()
@@ -267,7 +271,7 @@ func TestChotki_SyncGlobals(t *testing.T) {
 	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B"})
 	assert.Nil(t, err)
 
-	syncData(a, b)
+	testutils.SyncData(a, b)
 
 	names, err := b.MapTRField(IdNames)
 	assert.Nil(t, err)
@@ -332,7 +336,7 @@ func TestChotki_CheckMdeltaTR(t *testing.T) {
 	b, err := Open(dirs[1], Options{Src: 0xb, Name: "test replica B"})
 	assert.Nil(t, err)
 
-	syncData(a, b)
+	testutils.SyncData(a, b)
 
 	//check on second replica
 	names, err = b.MapTRField(IdNames)
@@ -343,38 +347,6 @@ func TestChotki_CheckMdeltaTR(t *testing.T) {
 
 	_ = a.Close()
 	_ = b.Close()
-}
-
-func syncData(a, b *Chotki) error {
-	synca := Syncer{
-		Host:          a,
-		Mode:          SyncRW,
-		Name:          "a",
-		WaitUntilNone: time.Millisecond,
-		Src:           a.src,
-		log:           utils.NewDefaultLogger(slog.LevelError),
-		PingWait:      time.Second,
-	}
-	syncb := Syncer{
-		Host:          b,
-		Mode:          SyncRW,
-		WaitUntilNone: time.Millisecond,
-		Name:          "b",
-		Src:           b.src,
-		log:           utils.NewDefaultLogger(slog.LevelError),
-		PingWait:      time.Second,
-	}
-	defer syncb.Close()
-	defer synca.Close()
-	// send handshake from b to a
-	err := protocol.Relay(&syncb, &synca)
-	if err != nil {
-		return err
-	}
-	go protocol.Pump(&syncb, &synca)
-	// send data a -> b
-	return protocol.Pump(&synca, &syncb)
-
 }
 
 func TestChotki_Sync3(t *testing.T) {
@@ -396,8 +368,8 @@ func TestChotki_Sync3(t *testing.T) {
 	assert.NoError(t, err)
 
 	// sync class a -> b -> c
-	assert.Equal(t, io.EOF, syncData(a, b))
-	assert.Equal(t, io.EOF, syncData(b, c))
+	assert.Equal(t, io.EOF, testutils.SyncData(a, b))
+	assert.Equal(t, io.EOF, testutils.SyncData(b, c))
 
 	for _, db := range []*Chotki{a, b, c} {
 		obj := &Test{
@@ -410,9 +382,9 @@ func TestChotki_Sync3(t *testing.T) {
 		orm.Close()
 	}
 
-	assert.Equal(t, io.EOF, syncData(b, c))
-	assert.Equal(t, io.EOF, syncData(a, b))
-	assert.Equal(t, io.EOF, syncData(b, c))
+	assert.Equal(t, io.EOF, testutils.SyncData(b, c))
+	assert.Equal(t, io.EOF, testutils.SyncData(a, b))
+	assert.Equal(t, io.EOF, testutils.SyncData(b, c))
 
 	for _, db := range []*Chotki{a, b, c} {
 		orm := db.ObjectMapper()
@@ -429,7 +401,7 @@ func TestChotki_Sync3(t *testing.T) {
 	_ = c.Close()
 }
 
-var Schema = []Field{
+var Schema = []classes.Field{
 	{Name: "test", RdxType: rdx.String},
 }
 
@@ -484,18 +456,18 @@ func TestChotki_ClassEdit(t *testing.T) {
 
 	sc, err := a.ClassFields(cid)
 	assert.NoError(t, err)
-	assert.Equal(t, Fields(Schema), sc[1:])
+	assert.Equal(t, classes.Fields(Schema), sc[1:])
 
 	_, err = b.ClassFields(cid)
 	assert.Error(t, err)
 
-	syncData(a, b)
+	testutils.SyncData(a, b)
 
 	sc, err = b.ClassFields(cid)
 	assert.NoError(t, err)
-	assert.Equal(t, Fields(Schema), sc[1:])
+	assert.Equal(t, classes.Fields(Schema), sc[1:])
 
-	Schema2 := []Field{
+	Schema2 := []classes.Field{
 		{Name: "test", RdxType: rdx.String, Offset: 0},
 		{Name: "test2", RdxType: rdx.Integer, Offset: 1},
 	}
@@ -505,13 +477,13 @@ func TestChotki_ClassEdit(t *testing.T) {
 
 	sc, err = a.ClassFields(cid)
 	assert.NoError(t, err)
-	assert.Equal(t, Fields(Schema2), sc[1:])
+	assert.Equal(t, classes.Fields(Schema2), sc[1:])
 
-	syncData(a, b)
+	testutils.SyncData(a, b)
 
 	sc, err = b.ClassFields(cid)
 	assert.NoError(t, err)
-	assert.Equal(t, Fields(Schema2), sc[1:])
+	assert.Equal(t, classes.Fields(Schema2), sc[1:])
 
 	_ = a.Close()
 	_ = b.Close()
@@ -535,30 +507,30 @@ func TestChotki_ClassEdit_Live(t *testing.T) {
 
 	sc, err := a.ClassFields(cid)
 	assert.NoError(t, err)
-	assert.Equal(t, Fields(Schema), sc[1:])
+	assert.Equal(t, classes.Fields(Schema), sc[1:])
 
 	_, err = b.ClassFields(cid)
 	assert.Error(t, err)
 
-	synca := Syncer{
+	synca := replication.Syncer{
 		Host:       a,
 		PingPeriod: 100 * time.Second,
 		PingWait:   3 * time.Second,
-		Mode:       SyncRWLive,
+		Mode:       replication.SyncRWLive,
 		Name:       "a",
 		Src:        a.src,
-		log:        utils.NewDefaultLogger(slog.LevelDebug),
-		oqueue:     &FeedCloserTest{},
+		Log:        utils.NewDefaultLogger(slog.LevelDebug),
+		Oqueue:     &FeedCloserTest{},
 	}
-	syncb := Syncer{
+	syncb := replication.Syncer{
 		Host:       b,
 		PingPeriod: 100 * time.Second,
-		Mode:       SyncRWLive,
+		Mode:       replication.SyncRWLive,
 		PingWait:   3 * time.Second,
 		Name:       "b",
 		Src:        b.src,
-		log:        utils.NewDefaultLogger(slog.LevelDebug),
-		oqueue:     &FeedCloserTest{},
+		Log:        utils.NewDefaultLogger(slog.LevelDebug),
+		Oqueue:     &FeedCloserTest{},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -572,9 +544,9 @@ func TestChotki_ClassEdit_Live(t *testing.T) {
 
 	sc, err = b.ClassFields(cid)
 	assert.NoError(t, err)
-	assert.Equal(t, Fields(Schema), sc[1:])
+	assert.Equal(t, classes.Fields(Schema), sc[1:])
 
-	Schema2 := []Field{
+	Schema2 := []classes.Field{
 		{Name: "test", RdxType: rdx.String, Offset: 0},
 		{Name: "test2", RdxType: rdx.Integer, Offset: 1},
 	}
@@ -584,13 +556,13 @@ func TestChotki_ClassEdit_Live(t *testing.T) {
 
 	sc, err = a.ClassFields(cid)
 	assert.NoError(t, err)
-	assert.Equal(t, Fields(Schema2), sc[1:])
+	assert.Equal(t, classes.Fields(Schema2), sc[1:])
 
 	time.Sleep(10 * time.Millisecond)
 
 	sc, err = b.ClassFields(cid)
 	assert.NoError(t, err)
-	assert.Equal(t, Fields(Schema2), sc[1:])
+	assert.Equal(t, classes.Fields(Schema2), sc[1:])
 
 	syncb.Close()
 	synca.Close()

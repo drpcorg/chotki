@@ -6,13 +6,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/drpcorg/chotki/chotki_errors"
+	"github.com/drpcorg/chotki/classes"
 	"github.com/drpcorg/chotki/rdx"
+	testutils "github.com/drpcorg/chotki/test_utils"
 	"github.com/drpcorg/chotki/utils"
 	"github.com/stretchr/testify/assert"
 )
 
-var SchemaIndex = []Field{
-	{Name: "test", RdxType: rdx.String, Index: HashIndex},
+var SchemaIndex = []classes.Field{
+	{Name: "test", RdxType: rdx.String, Index: classes.HashIndex},
 }
 
 func TestFullScanIndexSync(t *testing.T) {
@@ -52,8 +55,7 @@ func TestFullScanIndexSync(t *testing.T) {
 		data = append(data, *item)
 	}
 	assert.Equal(t, []Test{{Test: "test1"}}, data, "index in sync check after local update")
-
-	syncData(a, b)
+	testutils.SyncData(a, b)
 
 	borm := b.ObjectMapper()
 	defer borm.Close()
@@ -112,7 +114,7 @@ func TestHashIndexSyncCreateObject(t *testing.T) {
 	assert.NoError(t, err)
 
 	// sync data before creating object
-	syncData(a, b)
+	testutils.SyncData(a, b)
 
 	aorm := a.ObjectMapper()
 	defer aorm.Close()
@@ -128,7 +130,7 @@ func TestHashIndexSyncCreateObject(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, &Test{Test: "test1"}, test1data, "index in sync check after local update")
 
-	syncData(a, b)
+	testutils.SyncData(a, b)
 
 	borm := b.ObjectMapper()
 	defer borm.Close()
@@ -193,7 +195,7 @@ func TestHashIndexSyncEditObject(t *testing.T) {
 	aorm.UpdateAll()
 
 	// sync data before creating object
-	syncData(a, b)
+	testutils.SyncData(a, b)
 
 	test1data, err := GetByHash[*Test](aorm, cid, 1, []byte("test1"))
 	assert.NoError(t, err)
@@ -208,9 +210,9 @@ func TestHashIndexSyncEditObject(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, &Test{Test: "test10"}, test1data, "index in sync after local object edit")
 	_, err = GetByHash[*Test](aorm, cid, 1, []byte("test1"))
-	assert.Error(t, ErrObjectUnknown, err)
+	assert.Error(t, chotki_errors.ErrObjectUnknown, err)
 
-	syncData(a, b)
+	testutils.SyncData(a, b)
 
 	borm := b.ObjectMapper()
 	defer borm.Close()
@@ -273,7 +275,7 @@ func TestHashIndexRepairIndex(t *testing.T) {
 
 	aorm.UpdateAll()
 
-	syncData(a, b)
+	testutils.SyncData(a, b)
 	time.Sleep(time.Second * 1)
 
 	borm := b.ObjectMapper()
@@ -312,7 +314,7 @@ func TestHashIndexUniqueConstraint(t *testing.T) {
 	ob2 := Test{Test: "test1"}
 	err = aorm.New(context.Background(), cid, &ob2)
 	assert.Error(t, err, "should fail when creating object with duplicate indexed field value")
-	assert.ErrorIs(t, err, ErrHashIndexUinqueConstraintViolation)
+	assert.ErrorIs(t, err, chotki_errors.ErrHashIndexUinqueConstraintViolation)
 
 	// Verify only one object exists
 	data := make([]Test, 0)

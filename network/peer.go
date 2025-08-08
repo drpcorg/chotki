@@ -1,4 +1,4 @@
-package protocol
+package network
 
 import (
 	"bytes"
@@ -12,16 +12,27 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/utils"
 )
 
+// Peer represents a single network connection with bidirectional communication capabilities.
+// It manages the lifecycle of a connection, handling read/write operations with
+// configurable buffering, batching, and timeout settings.
+//
+// Key Features:
+//   - Concurrent read and write operations
+//   - Configurable buffer sizes and processing thresholds
+//   - Automatic batching of write operations
+//   - Graceful connection cleanup
+//   - Thread-safe state management
 type Peer struct {
 	closed         atomic.Bool
 	wg             sync.WaitGroup
 	writeBatchSize *utils.AvgVal
 
 	conn                net.Conn
-	inout               FeedDrainCloserTraced
+	inout               protocol.FeedDrainCloserTraced
 	incomingBuffer      atomic.Int32
 	readAccumtTimeLimit time.Duration
 	bufferMaxSize       int
@@ -29,6 +40,8 @@ type Peer struct {
 	writeTimeout        time.Duration
 }
 
+// getReadTimeLimit returns the configured read time limit or a default value.
+// This determines how long to wait for incoming data before processing the buffer.
 func (p *Peer) getReadTimeLimit() time.Duration {
 	if p.readAccumtTimeLimit != 0 {
 		return p.readAccumtTimeLimit
@@ -36,11 +49,17 @@ func (p *Peer) getReadTimeLimit() time.Duration {
 	return 5 * time.Second
 }
 
+// keepRead continuously reads data from the network connection and processes it.
+// It implements a buffered reading strategy with configurable thresholds:
+//   - Accumulates data until buffer size reaches bufferMinToProcess
+//   - Processes data when read time limit is exceeded
+//   - Handles incomplete protocol packets gracefully
+//   - Uses goroutines for concurrent processing to avoid blocking reads
 func (p *Peer) keepRead(ctx context.Context) error {
 	var buf bytes.Buffer
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	readChannel := make(chan Records)
+	readChannel := make(chan protocol.Records)
 	errChannel := make(chan error)
 	signal := make(chan struct{})
 	defer close(readChannel)
@@ -100,10 +119,10 @@ func (p *Peer) keepRead(ctx context.Context) error {
 		if (timelimit != nil && time.Now().After(*timelimit)) || buf.Len() >= p.bufferMinToProcess || buf.Len() >= p.bufferMaxSize {
 			select {
 			case signal <- struct{}{}:
-				recs, err := Split(&buf)
-				if err != nil && !errors.Is(err, ErrIncomplete) {
+				recs, err := protocol.Split(&buf)
+				if err != nil && !errors.Is(err, protocol.ErrIncomplete) {
 					return err
-				} else if errors.Is(err, ErrIncomplete) {
+				} else if errors.Is(err, protocol.ErrIncomplete) {
 					if buf.Len() >= p.bufferMaxSize {
 						return errors.Join(err, fmt.Errorf("buffer is not enough to read packet"))
 					}
@@ -129,6 +148,10 @@ func (p *Peer) GetIncomingPacketBufferSize() int32 {
 	return p.incomingBuffer.Load()
 }
 
+// keepWrite continuously writes data to the network connection.
+// It retrieves data from the protocol layer via the Feed method and
+// batches multiple records together for efficient network transmission.
+// The method tracks batch sizes for monitoring and optimization purposes.
 func (p *Peer) keepWrite(ctx context.Context) error {
 	for !p.closed.Load() {
 		select {
@@ -162,6 +185,14 @@ func (p *Peer) keepWrite(ctx context.Context) error {
 	return nil
 }
 
+// Keep manages the main lifecycle of the peer connection, running both
+// read and write operations concurrently. It returns three error values:
+//   - rerr: error from the read operation
+//   - werr: error from the write operation
+//   - cerr: error from closing the connection
+//
+// The method ensures proper cleanup by closing the connection after
+// the write operation completes, which will cancel any ongoing read operations.
 func (p *Peer) Keep(ctx context.Context) (rerr, werr, cerr error) {
 	p.wg.Add(2) // read & write
 	defer p.wg.Add(-2)

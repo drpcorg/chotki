@@ -14,8 +14,15 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
+	"github.com/drpcorg/chotki/chotki_errors"
+	"github.com/drpcorg/chotki/classes"
+	"github.com/drpcorg/chotki/counters"
+	"github.com/drpcorg/chotki/host"
+	"github.com/drpcorg/chotki/indexes"
+	"github.com/drpcorg/chotki/network"
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
+	"github.com/drpcorg/chotki/replication"
 	"github.com/drpcorg/chotki/utils"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/puzpuzpuz/xsync/v3"
@@ -28,7 +35,6 @@ var (
 	ErrHookNotFound   = errors.New("chotki: hook not found")
 	ErrBadIRecord     = errors.New("chotki: bad id-ref record")
 	ErrBadORecord     = errors.New("chotki: bad id-ref record")
-	ErrBadHPacket     = errors.New("chotki: bad handshake packet")
 	ErrBadEPacket     = errors.New("chotki: bad E packet")
 	ErrBadVPacket     = errors.New("chotki: bad V packet")
 	ErrBadYPacket     = errors.New("chotki: bad Y packet")
@@ -38,20 +44,13 @@ var (
 	ErrSrcUnknown     = errors.New("chotki: source unknown")
 	ErrSyncUnknown    = errors.New("chotki: sync session unknown")
 	ErrBadRRecord     = errors.New("chotki: bad ref record")
-	ErrClosed         = errors.New("chotki: no replica open")
 
 	ErrBadTypeDescription  = errors.New("chotki: bad type description")
-	ErrObjectUnknown       = errors.New("chotki: unknown object")
-	ErrTypeUnknown         = errors.New("chotki: unknown object type")
 	ErrUnknownFieldInAType = errors.New("chotki: unknown field for the type")
 	ErrBadClass            = errors.New("chotki: bad class description")
 
 	ErrOutOfOrder      = errors.New("chotki: order fail: sequence gap")
 	ErrCausalityBroken = errors.New("chotki: order fail: refs an unknown op")
-
-	ErrFullscanIndexField                 = errors.New("chotki: field can't have fullscan index")
-	ErrHashIndexFieldNotFirst             = errors.New("chotki: field can't have hash index if type is not FIRST")
-	ErrHashIndexUinqueConstraintViolation = errors.New("chotki: hash index unique constraint violation")
 )
 
 var EventsMetric = prometheus.NewCounter(prometheus.CounterOpts{
@@ -146,7 +145,7 @@ func (o *Options) SetDefaults() {
 			var rdt byte
 			switch key[0] {
 			case 'O':
-				_, rdt = OKeyIdRdt(key)
+				_, rdt = host.OKeyIdRdt(key)
 			case 'V':
 				rdt = 'V'
 			case 'I':
@@ -188,17 +187,17 @@ type Chotki struct {
 	lock         sync.RWMutex
 	commitMutex  sync.Mutex
 	db           *pebble.DB
-	net          *protocol.Net
+	net          *network.Net
 	dir          string
 	opts         Options
 	log          utils.Logger
 	counterCache sync.Map
-	indexManager *IndexManager
+	indexManager *indexes.IndexManager
 
 	outq  *xsync.MapOf[string, protocol.DrainCloser] // queues to broadcast all new packets
 	syncs *xsync.MapOf[rdx.ID, *syncPoint]
 	hooks *xsync.MapOf[rdx.ID, []Hook]
-	types *xsync.MapOf[rdx.ID, Fields]
+	types *xsync.MapOf[rdx.ID, classes.Fields]
 }
 
 func Exists(dirname string) (bool, error) {
@@ -272,12 +271,12 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		outq:      xsync.NewMapOf[string, protocol.DrainCloser](),
 		syncs:     xsync.NewMapOf[rdx.ID, *syncPoint](),
 		hooks:     xsync.NewMapOf[rdx.ID, []Hook](),
-		types:     xsync.NewMapOf[rdx.ID, Fields](),
+		types:     xsync.NewMapOf[rdx.ID, classes.Fields](),
 		cancelCtx: cancel,
 		waitGroup: &wg,
 	}
 
-	cho.net = protocol.NewNet(cho.log,
+	cho.net = network.NewNet(cho.log,
 		func(name string) protocol.FeedDrainCloserTraced { // new connection
 
 			queue := utils.NewFDQueue[protocol.Records](cho.opts.BroadcastQueueMaxSize, cho.opts.BroadcastQueueTimeLimit, cho.opts.BroadcastQueueMinBatchSize)
@@ -288,15 +287,15 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 				}
 			}
 
-			return &Syncer{
+			return &replication.Syncer{
 				Src:        cho.src,
 				Host:       &cho,
-				Mode:       SyncRWLive,
+				Mode:       replication.SyncRWLive,
 				PingPeriod: cho.opts.PingPeriod,
 				PingWait:   cho.opts.PingWait,
 				Name:       name,
-				log:        cho.log,
-				oqueue:     queue,
+				Log:        cho.log,
+				Oqueue:     queue,
 			}
 		},
 		func(name string, p protocol.Traced) { // destroy connection
@@ -308,16 +307,16 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 				cho.log.Warn(fmt.Sprintf("closed the old conn to %s", name), "trace_id", p.GetTraceId())
 			}
 		},
-		&protocol.NetTlsConfigOpt{Config: opts.TlsConfig},
-		&protocol.NetReadBatchOpt{
+		&network.NetTlsConfigOpt{Config: opts.TlsConfig},
+		&network.NetReadBatchOpt{
 			ReadAccumTimeLimit: cho.opts.ReadAccumTimeLimit,
 			BufferMaxSize:      cho.opts.ReadMaxBufferSize,
 			BufferMinToProcess: cho.opts.ReadMinBufferSizeToProcess,
 		},
-		&protocol.TcpBufferSizeOpt{Read: cho.opts.TcpReadBufferSize, Write: cho.opts.TcpWriteBufferSize},
-		&protocol.NetWriteTimeoutOpt{Timeout: cho.opts.WriteTimeout},
+		&network.TcpBufferSizeOpt{Read: cho.opts.TcpReadBufferSize, Write: cho.opts.TcpWriteBufferSize},
+		&network.NetWriteTimeoutOpt{Timeout: cho.opts.WriteTimeout},
 	)
-	cho.indexManager = newIndexManager(&cho)
+	cho.indexManager = indexes.NewIndexManager(&cho)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -394,48 +393,9 @@ func (cho *Chotki) Close() error {
 	return nil
 }
 
-func (cho *Chotki) Counter(rid rdx.ID, offset uint64, updatePeriod time.Duration) *AtomicCounter {
-	counter, _ := cho.counterCache.LoadOrStore(rid.ToOff(offset), NewAtomicCounter(cho, rid, offset, updatePeriod))
-	return counter.(*AtomicCounter)
-}
-
-func (cho *Chotki) KeepAliveLoop() {
-	var err error
-	for err == nil {
-		time.Sleep(time.Second * 30)
-		err = cho.KeepAlive()
-	}
-	if err != ErrClosed {
-		cho.log.Error(err.Error())
-		cho.log.Error("keep alives stop")
-	}
-}
-
-func (cho *Chotki) KeepAlive() error {
-	oid := rdx.IDfromSrcPro(cho.src, 0)
-	oldtlv, err := cho.ObjectRDTFieldTLV(oid.ToOff(YAckOff), 'V')
-	if err != nil {
-		return err
-	}
-	mysrc := cho.src
-	newvv, err := cho.VersionVector()
-	if err != nil {
-		return err
-	}
-	oldvv := make(rdx.VV)
-	_ = oldvv.PutTLV(oldtlv)
-	delete(oldvv, mysrc)
-	delete(newvv, mysrc)
-	tlv_delta := rdx.VVdelta(oldvv, newvv)
-	if len(tlv_delta) == 0 {
-		return nil
-	}
-	d := protocol.Records{
-		protocol.Record('F', rdx.ZipUint64(2)),
-		protocol.Record('V', tlv_delta),
-	}
-	_, err = cho.CommitPacket(context.Background(), 'E', oid, d)
-	return err
+func (cho *Chotki) Counter(rid rdx.ID, offset uint64, updatePeriod time.Duration) *counters.AtomicCounter {
+	counter, _ := cho.counterCache.LoadOrStore(rid.ToOff(offset), counters.NewAtomicCounter(cho, rid, offset, updatePeriod))
+	return counter.(*counters.AtomicCounter)
 }
 
 // ToyKV convention key, lit O, then O00000-00000000-000 id
@@ -449,6 +409,14 @@ func (cho *Chotki) Clock() rdx.Clock {
 
 func (cho *Chotki) Last() rdx.ID {
 	return cho.last
+}
+
+func (cho *Chotki) WriteOptions() *pebble.WriteOptions {
+	return cho.opts.PebbleWriteOptions
+}
+
+func (cho *Chotki) Logger() utils.Logger {
+	return cho.log
 }
 
 func (cho *Chotki) Snapshot() pebble.Reader {
@@ -505,7 +473,7 @@ func (cho *Chotki) Disconnect(addr string) error {
 }
 
 func (cho *Chotki) VersionVector() (vv rdx.VV, err error) {
-	val, clo, err := cho.db.Get(VKey0)
+	val, clo, err := cho.db.Get(host.VKey0)
 	if err == nil {
 		vv = make(rdx.VV)
 		err = vv.PutTLV(val)
@@ -579,7 +547,7 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 	DrainTime.WithLabelValues("commit lock").Observe(float64(time.Since(now)) / float64(time.Millisecond))
 
 	if cho.db == nil {
-		return rdx.BadId, ErrClosed
+		return rdx.BadId, chotki_errors.ErrClosed
 	}
 	id = cho.last.IncPro(1).ZeroOff()
 	i := protocol.Record('I', id.ZipBytes())
@@ -593,12 +561,12 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 }
 
 type NetCollector struct {
-	net               *protocol.Net
+	net               *network.Net
 	read_buffers_size *prometheus.Desc
 	write_batch_size  *prometheus.Desc
 }
 
-func NewNetCollector(net *protocol.Net) *NetCollector {
+func NewNetCollector(net *network.Net) *NetCollector {
 	return &NetCollector{
 		net:               net,
 		read_buffers_size: prometheus.NewDesc("chotki_net_read_buffer_size", "", []string{"peer"}, prometheus.Labels{}),
@@ -672,15 +640,15 @@ func (cho *Chotki) Metrics() []prometheus.Collector {
 		EventsBatchSize,
 		NewPebbleCollector(cho.db),
 		NewChotkiCollector(cho),
-		OpenedIterators,
-		OpenedSnapshots,
-		SessionsStates,
+		replication.OpenedIterators,
+		replication.OpenedSnapshots,
+		replication.SessionsStates,
 		DrainTime,
-		ReindexTaskCount,
-		ReindexResults,
-		ReindexDuration,
-		ReindexCount,
-		ReindexTaskStates,
+		indexes.ReindexTaskCount,
+		indexes.ReindexResults,
+		indexes.ReindexDuration,
+		indexes.ReindexCount,
+		indexes.ReindexTaskStates,
 	}
 }
 
@@ -692,7 +660,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			break
 		}
 
-		lit, id, ref, body, parseErr := ParsePacket(packet)
+		lit, id, ref, body, parseErr := replication.ParsePacket(packet)
 		if parseErr != nil {
 			cho.log.WarnCtx(ctx, "bad packet", "err", parseErr)
 			return parseErr
@@ -797,15 +765,15 @@ func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error)
 	cho.lock.RLock()
 	defer cho.lock.RUnlock()
 	if cho.db == nil {
-		return ErrClosed
+		return chotki_errors.ErrClosed
 	}
 	EventsBatchSize.Observe(float64(len(recs)))
 	return cho.drain(ctx, recs)
 }
 
 func dumpKVString(key, value []byte) (str string) {
-	if len(key) == LidLKeyLen {
-		id, rdt := OKeyIdRdt(key)
+	if len(key) == host.LidLKeyLen {
+		id, rdt := host.OKeyIdRdt(key)
 		str = fmt.Sprintf("%s.%c:\t%s", id, rdt, rdx.Xstring(rdt, value))
 	}
 	return
@@ -830,7 +798,7 @@ func (cho *Chotki) DumpVV(writer io.Writer) {
 	}
 	i := cho.db.NewIter(&io)
 	defer i.Close()
-	for i.SeekGE(VKey0); i.Valid(); i.Next() {
+	for i.SeekGE(host.VKey0); i.Valid(); i.Next() {
 		id := rdx.IDFromBytes(i.Key()[1:])
 		vv := make(rdx.VV)
 		_ = vv.PutTLV(i.Value())

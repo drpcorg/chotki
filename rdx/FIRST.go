@@ -64,7 +64,7 @@ func IsFirst(c byte) bool {
 func FIRSTtlv(rev int64, src uint64, value []byte) (bulk []byte) {
 	time := ZipIntUint64Pair(rev, src)
 	bulk = make([]byte, 0, len(time)+len(value)+2)
-	bulk = protocol.AppendTiny(bulk, 'T', time)
+	bulk = protocol.Append(bulk, 't', time)
 	bulk = append(bulk, value...)
 	return
 }

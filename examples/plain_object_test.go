@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/drpcorg/chotki"
+	"github.com/drpcorg/chotki/classes"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/stretchr/testify/assert"
 )
@@ -19,9 +20,9 @@ func TestPlainObjectORM(t *testing.T) {
 	orma := a.ObjectMapper()
 
 	tid, err := a.NewClass(context.Background(), rdx.ID0,
-		chotki.Field{Name: "Name", RdxType: rdx.String},
-		chotki.Field{Name: "Group", RdxType: rdx.Reference},
-		chotki.Field{Name: "Score", RdxType: rdx.Natural},
+		classes.Field{Name: "Name", RdxType: rdx.String},
+		classes.Field{Name: "Group", RdxType: rdx.Reference},
+		classes.Field{Name: "Score", RdxType: rdx.Natural},
 	)
 	assert.Nil(t, err)
 	sidorov := Student{

@@ -1,4 +1,4 @@
-package chotki
+package replication
 
 import (
 	"bytes"
@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/chotki_errors"
+	"github.com/drpcorg/chotki/host"
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/drpcorg/chotki/utils"
@@ -21,8 +23,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-const SyncBlockBits = 28
-const SyncBlockMask = uint64((1 << SyncBlockBits) - 1)
 const MaxParcelSize = 100_000_000
 
 var version string = fmt.Sprintf("%d", time.Now().Unix())
@@ -115,13 +115,13 @@ type Syncer struct {
 	PingWait      time.Duration
 	WaitUntilNone time.Duration
 
-	log        utils.Logger
+	Log        utils.Logger
 	vvit, ffit *pebble.Iterator
 	snap       pebble.Reader
 	snaplast   rdx.ID
 	feedState  SyncState
 	drainState SyncState
-	oqueue     protocol.FeedCloser
+	Oqueue     protocol.FeedCloser
 
 	hostvv, peervv rdx.VV
 	vpack          []byte
@@ -140,7 +140,7 @@ func (sync *Syncer) withDefaultArgs(reset bool) context.Context {
 	lctx := sync.lctx.Load()
 
 	if lctx == nil || reset {
-		nlctx := sync.log.WithDefaultArgs(context.Background(), "name", sync.Name, "trace_id", sync.GetTraceId())
+		nlctx := sync.Log.WithDefaultArgs(context.Background(), "name", sync.Name, "trace_id", sync.GetTraceId())
 		if !reset {
 			sync.lctx.CompareAndSwap(lctx, &nlctx)
 		} else {
@@ -151,8 +151,8 @@ func (sync *Syncer) withDefaultArgs(reset bool) context.Context {
 	return *lctx
 }
 
-func (sync *Syncer) logCtx(ctx context.Context) context.Context {
-	return sync.log.WithArgsFromCtx(ctx, sync.withDefaultArgs(false))
+func (sync *Syncer) LogCtx(ctx context.Context) context.Context {
+	return sync.Log.WithArgsFromCtx(ctx, sync.withDefaultArgs(false))
 }
 
 func (sync *Syncer) Close() error {
@@ -167,7 +167,7 @@ func (sync *Syncer) Close() error {
 
 	if sync.snap != nil {
 		if err := sync.snap.Close(); err != nil {
-			sync.log.ErrorCtx(sync.logCtx(context.Background()), "failed closing snapshot", "err", err.Error())
+			sync.Log.ErrorCtx(sync.LogCtx(context.Background()), "failed closing snapshot", "err", err.Error())
 		} else {
 			OpenedSnapshots.WithLabelValues(sync.Name, version).Set(0)
 		}
@@ -179,7 +179,7 @@ func (sync *Syncer) Close() error {
 	if sync.ffit != nil {
 		if err := sync.ffit.Close(); err != nil {
 			closediterators = false
-			sync.log.ErrorCtx(sync.logCtx(context.Background()), "failed closing ffit", "err", err)
+			sync.Log.ErrorCtx(sync.LogCtx(context.Background()), "failed closing ffit", "err", err)
 		}
 		sync.ffit = nil
 	}
@@ -187,7 +187,7 @@ func (sync *Syncer) Close() error {
 	if sync.vvit != nil {
 		if err := sync.vvit.Close(); err != nil {
 			closediterators = false
-			sync.log.ErrorCtx(sync.logCtx(context.Background()), "failed closing vvit", "err", err)
+			sync.Log.ErrorCtx(sync.LogCtx(context.Background()), "failed closing vvit", "err", err)
 		}
 		sync.vvit = nil
 	}
@@ -195,7 +195,7 @@ func (sync *Syncer) Close() error {
 		OpenedIterators.WithLabelValues(sync.Name, version).Set(0)
 	}
 
-	sync.log.InfoCtx(sync.logCtx(context.Background()), fmt.Sprintf("sync: connection %s closed: %v\n", sync.Name, sync.reason))
+	sync.Log.InfoCtx(sync.LogCtx(context.Background()), fmt.Sprintf("sync: connection %s closed: %v\n", sync.Name, sync.reason))
 
 	return nil
 }
@@ -239,7 +239,7 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 		defer cancel()
 		select {
 		case <-time.After(sync.PingWait):
-			sync.log.ErrorCtx(sync.logCtx(ctx), "sync: handshake took too long")
+			sync.Log.ErrorCtx(sync.LogCtx(ctx), "sync: handshake took too long")
 			sync.SetFeedState(ctx, SendEOF)
 			return
 		case <-sync.WaitDrainState(ctx, SendDiff):
@@ -258,7 +258,7 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 			if sync.snap != nil {
 				err = sync.snap.Close()
 				if err != nil {
-					sync.log.ErrorCtx(sync.logCtx(ctx), "sync: failed closing snapshot", "err", err)
+					sync.Log.ErrorCtx(sync.LogCtx(ctx), "sync: failed closing snapshot", "err", err)
 				} else {
 					OpenedSnapshots.WithLabelValues(sync.Name, version).Set(0)
 				}
@@ -274,7 +274,7 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 		sync.pingTimer.Stop()
 		sync.pingTimer = time.AfterFunc(sync.PingWait, func() {
 			sync.pingStage.Store(int32(PingBroken))
-			sync.log.ErrorCtx(sync.logCtx(ctx), "sync: peer did not respond to ping")
+			sync.Log.ErrorCtx(sync.LogCtx(ctx), "sync: peer did not respond to ping")
 		})
 		sync.pingStage.Store(int32(WaitingForPing))
 	case SendPong:
@@ -284,9 +284,9 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 		sync.pingStage.Store(int32(Inactive))
 		sync.SetFeedState(ctx, SendLive)
 	case SendLive:
-		recs, err = sync.oqueue.Feed(ctx)
+		recs, err = sync.Oqueue.Feed(ctx)
 		if err == utils.ErrClosed {
-			sync.log.InfoCtx(sync.logCtx(ctx), "sync: queue closed")
+			sync.Log.InfoCtx(sync.LogCtx(ctx), "sync: queue closed")
 			sync.SetFeedState(ctx, SendEOF)
 			err = nil
 		}
@@ -304,7 +304,7 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 		if sync.snap != nil {
 			err = sync.snap.Close()
 			if err != nil {
-				sync.log.ErrorCtx(sync.logCtx(ctx), "sync: failed closing snapshot", "error", err.Error())
+				sync.Log.ErrorCtx(sync.LogCtx(ctx), "sync: failed closing snapshot", "error", err.Error())
 			} else {
 				OpenedSnapshots.WithLabelValues(sync.Name, version).Set(0)
 			}
@@ -343,8 +343,8 @@ func (sync *Syncer) FeedHandshake() (vv protocol.Records, err error) {
 
 	OpenedIterators.WithLabelValues(sync.Name, version).Set(1)
 
-	ok := sync.vvit.SeekGE(VKey0)
-	if !ok || 0 != bytes.Compare(sync.vvit.Key(), VKey0) {
+	ok := sync.vvit.SeekGE(host.VKey0)
+	if !ok || 0 != bytes.Compare(sync.vvit.Key(), host.VKey0) {
 		return nil, rdx.ErrBadV0Record
 	}
 	sync.hostvv = make(rdx.VV)
@@ -402,10 +402,10 @@ func (sync *Syncer) getVVChanges() (hasChanges bool, sendvv rdx.VV, err error) {
 
 func (sync *Syncer) nextBlockDiff() (bool, rdx.VV, error) {
 	if sync.ffit != nil {
-		block := VKeyId(sync.vvit.Key()).ZeroOff()
-		till := block.ProPlus(SyncBlockMask + 1)
+		block := host.VKeyId(sync.vvit.Key()).ZeroOff()
+		till := block.ProPlus(host.SyncBlockMask + 1)
 		if sync.ffit.Valid() {
-			id, _ := OKeyIdRdt(sync.ffit.Key())
+			id, _ := host.OKeyIdRdt(sync.ffit.Key())
 			if id != rdx.BadId && id.Less(till) {
 				_, sendvv, err := sync.getVVChanges()
 				if err != nil {
@@ -426,8 +426,8 @@ func (sync *Syncer) nextBlockDiff() (bool, rdx.VV, error) {
 		return false, nil, nil
 	}
 
-	block := VKeyId(sync.vvit.Key()).ZeroOff()
-	key := OKey(block, 0)
+	block := host.VKeyId(sync.vvit.Key()).ZeroOff()
+	key := host.OKey(block, 0)
 	sync.ffit.SeekGE(key)
 	return true, sendvv, nil
 }
@@ -441,13 +441,13 @@ func (sync *Syncer) FeedBlockDiff(ctx context.Context) (diff protocol.Records, e
 		return protocol.Records{}, nil
 	}
 
-	block := VKeyId(sync.vvit.Key()).ZeroOff()
+	block := host.VKeyId(sync.vvit.Key()).ZeroOff()
 	bmark, parcel := protocol.OpenHeader(nil, 'D')
 	parcel = append(parcel, protocol.Record('T', sync.snaplast.ZipBytes())...)
 	parcel = append(parcel, protocol.Record('R', block.ZipBytes())...)
-	till := block.ProPlus(SyncBlockMask + 1)
+	till := block.ProPlus(host.SyncBlockMask + 1)
 	for ; sync.ffit.Valid(); sync.ffit.Next() {
-		id, rdt := OKeyIdRdt(sync.ffit.Key())
+		id, rdt := host.OKeyIdRdt(sync.ffit.Key())
 		if id == rdx.BadId || till.Less(id) {
 			break
 		}
@@ -460,7 +460,7 @@ func (sync *Syncer) FeedBlockDiff(ctx context.Context) (diff protocol.Records, e
 			val := sync.ffit.Value()
 			parcel = append(parcel, protocol.Record(rdt, val)...)
 			if len(val) > MaxParcelSize {
-				sync.log.WarnCtx(sync.logCtx(ctx), "too big key size", "size", len(val))
+				sync.Log.WarnCtx(sync.LogCtx(ctx), "too big key size", "size", len(val))
 			}
 			continue
 		}
@@ -469,7 +469,7 @@ func (sync *Syncer) FeedBlockDiff(ctx context.Context) (diff protocol.Records, e
 			parcel = append(parcel, protocol.Record('F', rdx.ZipUint64(uint64(id.Pro()-block.Pro())))...)
 			parcel = append(parcel, protocol.Record(rdt, diff)...)
 			if len(diff) > MaxParcelSize {
-				sync.log.WarnCtx(sync.logCtx(ctx), "too big diff size", "size", len(diff))
+				sync.Log.WarnCtx(sync.LogCtx(ctx), "too big diff size", "size", len(diff))
 			}
 		}
 	}
@@ -490,7 +490,7 @@ func (sync *Syncer) FeedDiffVV(ctx context.Context) (vv protocol.Records, err er
 		err = sync.ffit.Close()
 		if err != nil {
 			closediterators = false
-			sync.log.ErrorCtx(sync.logCtx(ctx), "failed closing ffit", "err", err)
+			sync.Log.ErrorCtx(sync.LogCtx(ctx), "failed closing ffit", "err", err)
 		}
 		sync.ffit = nil
 	}
@@ -498,7 +498,7 @@ func (sync *Syncer) FeedDiffVV(ctx context.Context) (vv protocol.Records, err er
 		err = sync.vvit.Close()
 		if err != nil {
 			closediterators = false
-			sync.log.ErrorCtx(sync.logCtx(ctx), "failed closing vvit", "err", err)
+			sync.Log.ErrorCtx(sync.LogCtx(ctx), "failed closing vvit", "err", err)
 		}
 		sync.vvit = nil
 	}
@@ -510,14 +510,14 @@ func (sync *Syncer) FeedDiffVV(ctx context.Context) (vv protocol.Records, err er
 
 func (sync *Syncer) SetFeedState(ctx context.Context, state SyncState) {
 	SessionsStates.WithLabelValues(sync.Name, "feed", version).Set(float64(state))
-	sync.log.InfoCtx(sync.logCtx(ctx), "sync: feed state", "state", state.String())
+	sync.Log.InfoCtx(sync.LogCtx(ctx), "sync: feed state", "state", state.String())
 	sync.lock.Lock()
 	sync.feedState = state
 	sync.lock.Unlock()
 }
 
 func (sync *Syncer) SetDrainState(ctx context.Context, state SyncState) {
-	sync.log.InfoCtx(sync.logCtx(ctx), "sync: drain state", "state", state.String())
+	sync.Log.InfoCtx(sync.LogCtx(ctx), "sync: drain state", "state", state.String())
 	SessionsStates.WithLabelValues(sync.Name, "drain", version).Set(float64(state))
 	sync.lock.Lock()
 	sync.drainState = state
@@ -589,11 +589,11 @@ func (sync *Syncer) processPings(recs protocol.Records) protocol.Records {
 			}
 			switch rdx.Snative(body) {
 			case PingVal:
-				sync.log.InfoCtx(sync.logCtx(context.Background()), "ping received")
+				sync.Log.InfoCtx(sync.LogCtx(context.Background()), "ping received")
 				// go to pong state next time
 				sync.pingStage.Store(int32(Pong))
 			case PongVal:
-				sync.log.InfoCtx(sync.logCtx(context.Background()), "pong received")
+				sync.Log.InfoCtx(sync.LogCtx(context.Background()), "pong received")
 			}
 		}
 	}
@@ -611,16 +611,16 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 	switch sync.GetDrainState() {
 	case SendHandshake:
 		if len(recs) == 0 {
-			return ErrBadHPacket
+			return chotki_errors.ErrBadHPacket
 		}
 		err = sync.DrainHandshake(recs[0:1])
 		if err == nil {
-			err = sync.Host.Drain(sync.logCtx(ctx), recs[0:1])
+			err = sync.Host.Drain(sync.LogCtx(ctx), recs[0:1])
 		}
 		if err != nil {
 			return
 		}
-		sync.Host.Broadcast(sync.logCtx(ctx), recs[0:1], sync.Name)
+		sync.Host.Broadcast(sync.LogCtx(ctx), recs[0:1], sync.Name)
 		recs = recs[1:]
 		sync.SetDrainState(ctx, SendDiff)
 		if len(recs) == 0 {
@@ -642,9 +642,9 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		if sync.Mode&SyncLive != 0 {
 			sync.resetPingTimer()
 		}
-		err = sync.Host.Drain(sync.logCtx(ctx), recs)
+		err = sync.Host.Drain(sync.LogCtx(ctx), recs)
 		if err == nil && broadcast {
-			sync.Host.Broadcast(sync.logCtx(ctx), recs, sync.Name)
+			sync.Host.Broadcast(sync.LogCtx(ctx), recs, sync.Name)
 		}
 
 	case SendLive:
@@ -653,23 +653,23 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		if lit == 'B' {
 			sync.SetDrainState(ctx, SendNone)
 		}
-		err = sync.Host.Drain(sync.logCtx(ctx), recs)
+		err = sync.Host.Drain(sync.LogCtx(ctx), recs)
 		if err == nil && lit != 'B' {
-			sync.Host.Broadcast(sync.logCtx(ctx), recs, sync.Name)
+			sync.Host.Broadcast(sync.LogCtx(ctx), recs, sync.Name)
 		}
 
 	case SendPong, SendPing:
 		panic("chotki: unacceptable sync-state")
 
 	case SendEOF, SendNone:
-		return ErrClosed
+		return chotki_errors.ErrClosed
 
 	default:
 		panic("chotki: unacceptable sync-state")
 	}
 
 	if err != nil { // todo send the error msg
-		sync.log.ErrorCtx(sync.logCtx(ctx), "error happened while drain", "error", err.Error())
+		sync.Log.ErrorCtx(sync.LogCtx(ctx), "error happened while drain", "error", err.Error())
 		sync.SetDrainState(ctx, SendEOF)
 	}
 
@@ -697,7 +697,7 @@ func (sync *Syncer) GetTraceId() string {
 func (sync *Syncer) DrainHandshake(recs protocol.Records) (err error) {
 	lit, _, _, body, e := ParsePacket(recs[0])
 	if lit != 'H' || e != nil {
-		return ErrBadHPacket
+		return chotki_errors.ErrBadHPacket
 	}
 	var mode SyncMode
 	var trace_id []byte
@@ -705,7 +705,7 @@ func (sync *Syncer) DrainHandshake(recs protocol.Records) (err error) {
 	sync.lock.Lock()
 	if trace_id != nil {
 		if len(trace_id) != TraceSize {
-			err = ErrBadHPacket
+			err = chotki_errors.ErrBadHPacket
 		} else {
 			traceId := [TraceSize]byte(trace_id)
 			sync.theirsTraceid.Store(&traceId)

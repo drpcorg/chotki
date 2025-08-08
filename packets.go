@@ -4,15 +4,17 @@ import (
 	"errors"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/host"
+	"github.com/drpcorg/chotki/indexes"
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 )
 
 func (cho *Chotki) UpdateVTree(id, ref rdx.ID, pb *pebble.Batch) (err error) {
 	v := protocol.Record('V', id.ZipBytes())
-	err = pb.Merge(VKey(ref), v, cho.opts.PebbleWriteOptions)
+	err = pb.Merge(host.VKey(ref), v, cho.opts.PebbleWriteOptions)
 	if err == nil {
-		err = pb.Merge(VKey0, v, cho.opts.PebbleWriteOptions)
+		err = pb.Merge(host.VKey0, v, cho.opts.PebbleWriteOptions)
 	}
 	return
 }
@@ -30,10 +32,10 @@ func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 		if rdt == 'C' {
 			cho.types.Clear()
 		}
-		err = batch.Merge(OKey(at, rdt), bare, cho.opts.PebbleWriteOptions)
+		err = batch.Merge(host.OKey(at, rdt), bare, cho.opts.PebbleWriteOptions)
 		if err == nil && rdt == 'O' {
 			cid := rdx.IDFromZipBytes(bare)
-			err = cho.indexManager.addFullScanIndex(cid, at, batch)
+			err = cho.indexManager.AddFullScanIndex(cid, at, batch)
 		} else {
 			err = cho.indexManager.OnFieldUpdate(rdt, at, rdx.BadId, bare, batch)
 		}
@@ -45,7 +47,7 @@ func (cho *Chotki) ApplyH(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 	_, rest := protocol.Take('M', body)
 	var vbody []byte
 	vbody, _ = protocol.Take('V', rest)
-	err = batch.Merge(VKey0, vbody, cho.opts.PebbleWriteOptions)
+	err = batch.Merge(host.VKey0, vbody, cho.opts.PebbleWriteOptions)
 	return
 }
 
@@ -56,7 +58,7 @@ func (cho *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 		rec, rest = protocol.Take('V', rest)
 		idb, rec = protocol.Take('R', rec)
 		id := rdx.IDFromZipBytes(idb)
-		key := VKey(id)
+		key := host.VKey(id)
 		if !rdx.VValid(rec) {
 			err = ErrBadVPacket
 		} else {
@@ -76,14 +78,14 @@ func (cho *Chotki) ApplyC(id, ref rdx.ID, body []byte, batch *pebble.Batch, call
 		cid = ref
 	}
 	err = batch.Merge(
-		OKey(cid, 'C'),
+		host.OKey(cid, 'C'),
 		body,
 		cho.opts.PebbleWriteOptions)
 	if err == nil {
 		err = cho.UpdateVTree(id, cid, batch)
 	}
 	if err == nil {
-		var tasks []reindexTask
+		var tasks []indexes.ReindexTask
 		tasks, err = cho.indexManager.HandleClassUpdate(id, cid, body)
 		if err == nil {
 			for _, task := range tasks {
@@ -99,7 +101,7 @@ func (cho *Chotki) ApplyC(id, ref rdx.ID, body []byte, batch *pebble.Batch, call
 
 func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
 	err = batch.Merge(
-		OKey(id, lot),
+		host.OKey(id, lot),
 		ref.ZipBytes(),
 		cho.opts.PebbleWriteOptions)
 	rest := body
@@ -116,7 +118,7 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 		}
 		bare = rest[hlen:rlen]
 		fid = id.ToOff(uint64(fno))
-		fkey := OKey(fid, lit)
+		fkey := host.OKey(fid, lit)
 		switch lit {
 		case 'F', 'I', 'R', 'S', 'T':
 			rebar, err = rdx.SetSourceFIRST(bare, id.Src())
@@ -141,7 +143,7 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 		err = cho.UpdateVTree(fid, id, batch)
 	}
 	if err == nil && lot == 'O' {
-		err = cho.indexManager.addFullScanIndex(ref, id, batch)
+		err = cho.indexManager.AddFullScanIndex(ref, id, batch)
 	}
 	return
 }
@@ -177,7 +179,7 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls 
 			break
 		}
 		fid := r.ToOff(field)
-		fkey := OKey(fid, lit)
+		fkey := host.OKey(fid, lit)
 		err = batch.Merge(
 			fkey,
 			rebar,

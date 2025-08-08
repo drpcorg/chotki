@@ -1,6 +1,7 @@
-package chotki
+package replication
 
 import (
+	"github.com/drpcorg/chotki/chotki_errors"
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 )
@@ -40,12 +41,12 @@ func ParseHandshake(body []byte) (mode SyncMode, vv rdx.VV, trace_id []byte, err
 	rest := body
 	mbody, rest = protocol.Take('M', rest)
 	if mbody == nil {
-		return 0, nil, nil, ErrBadHPacket
+		return 0, nil, nil, chotki_errors.ErrBadHPacket
 	}
 
 	vbody, rest = protocol.Take('V', rest)
 	if vbody == nil {
-		return 0, nil, nil, ErrBadHPacket
+		return 0, nil, nil, chotki_errors.ErrBadHPacket
 	}
 
 	vv = make(rdx.VV)
@@ -59,7 +60,7 @@ func ParseHandshake(body []byte) (mode SyncMode, vv rdx.VV, trace_id []byte, err
 
 	trace_id, _ = protocol.Take('S', rest)
 	if trace_id == nil {
-		return 0, nil, nil, ErrBadHPacket
+		return 0, nil, nil, chotki_errors.ErrBadHPacket
 	}
 	return mode, vv, trace_id, nil
 }

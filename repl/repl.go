@@ -162,8 +162,6 @@ func (repl *REPL) REPL(line string) (id rdx.ID, err error) {
 		id, err = repl.CommandInc(arg)
 	case "add":
 		id, err = repl.CommandAdd(arg)
-	case "choc":
-		id, err = repl.CommandCompile(arg)
 	// ----- networking -----
 	case "listen":
 		id, err = repl.CommandListen(arg)
@@ -174,25 +172,6 @@ func (repl *REPL) REPL(line string) (id rdx.ID, err error) {
 		id, err = repl.CommandDump(arg)
 	case "tell":
 		id, err = repl.CommandTell(arg)
-	case "ping":
-		id, err = repl.CommandPing(arg)
-	case "pong":
-		// args[1] is an object/field
-		// subscribe
-	case "pinc":
-		id, err = repl.CommandPinc(arg)
-	case "ponc":
-		id, err = repl.CommandPonc(arg)
-	case "mute":
-		id, err = repl.CommandMute(arg)
-	case "tinc":
-		id, err = repl.CommandTinc(arg)
-	case "sinc":
-		id, err = repl.CommandSinc(arg)
-	case "valid":
-		id, err = repl.CommandValid(arg)
-	case "whosaw":
-		id, err = repl.CommandWhoSaw(arg)
 	default:
 		_, _ = fmt.Fprintf(os.Stderr, "command unknown: %s\n", cmd)
 	}
