@@ -271,6 +271,7 @@
 // Object/fields ids are serialized as tiny `ZipUint64Pair`s.
 // Revisions are serialized as tiny `ZipIntUint64Pair`s.
 
+//
 // [x]: https://en.wikipedia.org/wiki/Causal_consistency
 // [v]: https://en.wikipedia.org/wiki/Version_vector
 // [r]: https://www.educative.io/answers/how-are-vector-clocks-used-in-dynamo
@@ -279,5 +280,4 @@
 // [g]: https://protobuf.dev/programming-guides/encoding/
 // [b]: https://en.wikipedia.org/wiki/LEB128
 // [m]: https://en.wikipedia.org/wiki/Merge_sort
-
 package rdx

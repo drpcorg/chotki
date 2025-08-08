@@ -1,5 +1,5 @@
 /*
-Package replication implements the Chotki distributed synchronization protocol.
+Implements the Chotki distributed synchronization protocol.
 
 # Protocol Overview
 

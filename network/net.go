@@ -1,4 +1,4 @@
-// Package network provides a high-performance TCP/TLS server and client implementation
+// Provides a high-performance TCP/TLS server and client implementation
 // for real-time asynchronous communication. This package is designed for continuous
 // bidirectional message streaming with high throughput and low latency, unlike
 // traditional request-response patterns (like HTTP).

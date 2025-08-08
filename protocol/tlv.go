@@ -1,8 +1,8 @@
-// Protocol format is based on ToyTLV (MIT licence) written by Victor Grishchenko in 2024
-// Original project: https://github.com/learn-decentralized-systems/toytlv
-
 /*
-Package protocol implements a compact TLV (Type-Length-Value) encoding format optimized for efficiency.
+Implements a compact TLV (Type-Length-Value) encoding format optimized for efficiency.
+
+Protocol format is based on ToyTLV (MIT licence) written by Victor Grishchenko in 2024
+Original project: https://github.com/learn-decentralized-systems/toytlv
 
 # TLV Record Format
 

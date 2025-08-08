@@ -1,4 +1,4 @@
-// Package chotki provides AtomicCounter - a high-performance atomic counter implementation
+// Provides AtomicCounter - a high-performance atomic counter implementation
 // for distributed systems with CRDT semantics.
 //
 // # AtomicCounter Architecture
@@ -60,7 +60,6 @@
 // // With cache: may still return 5 until cache expires
 // // Without cache: immediately returns 15 (5 + 10)
 // ```
-
 package counters
 
 import (
