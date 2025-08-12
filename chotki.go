@@ -316,11 +316,11 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		&network.TcpBufferSizeOpt{Read: cho.opts.TcpReadBufferSize, Write: cho.opts.TcpWriteBufferSize},
 		&network.NetWriteTimeoutOpt{Timeout: cho.opts.WriteTimeout},
 	)
-	cho.indexManager = indexes.NewIndexManager(&cho)
+	cho.IndexManager = indexes.NewIndexManager(&cho)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		cho.indexManager.CheckReindexTasks(ctx)
+		cho.IndexManager.CheckReindexTasks(ctx)
 	}()
 
 	wg.Add(1)
