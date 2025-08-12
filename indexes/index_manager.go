@@ -214,10 +214,12 @@ func (im *IndexManager) SeekClass(cid rdx.ID, reader pebble.Reader) iter.Seq[rdx
 }
 
 func (im *IndexManager) HandleClassUpdate(id rdx.ID, cid rdx.ID, newFieldsBody []byte) ([]ReindexTask, error) {
-	tasks := []ReindexTask{}
-
 	newFields := classes.ParseClass(newFieldsBody)
+	return im.HandleClassUpdateParsed(id, cid, newFields)
+}
 
+func (im *IndexManager) HandleClassUpdateParsed(id rdx.ID, cid rdx.ID, newFields classes.Fields) ([]ReindexTask, error) {
+	tasks := []ReindexTask{}
 	for i, newField := range newFields {
 		if newField.Index == classes.HashIndex {
 			oldFields, err := im.c.ClassFields(cid)
