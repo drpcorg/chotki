@@ -192,7 +192,7 @@ type Chotki struct {
 	opts         Options
 	log          utils.Logger
 	counterCache sync.Map
-	indexManager *indexes.IndexManager
+	IndexManager *indexes.IndexManager
 
 	outq  *xsync.MapOf[string, protocol.DrainCloser] // queues to broadcast all new packets
 	syncs *xsync.MapOf[rdx.ID, *syncPoint]
