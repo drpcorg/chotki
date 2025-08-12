@@ -215,10 +215,10 @@ func (im *IndexManager) SeekClass(cid rdx.ID, reader pebble.Reader) iter.Seq[rdx
 
 func (im *IndexManager) HandleClassUpdate(id rdx.ID, cid rdx.ID, newFieldsBody []byte) ([]ReindexTask, error) {
 	newFields := classes.ParseClass(newFieldsBody)
-	return im.HandleClassUpdateParsed(id, cid, newFields)
+	return im.HandleClassUpdateParsed(id, cid, newFields, false)
 }
 
-func (im *IndexManager) HandleClassUpdateParsed(id rdx.ID, cid rdx.ID, newFields classes.Fields) ([]ReindexTask, error) {
+func (im *IndexManager) HandleClassUpdateParsed(id rdx.ID, cid rdx.ID, newFields classes.Fields, force bool) ([]ReindexTask, error) {
 	tasks := []ReindexTask{}
 	for i, newField := range newFields {
 		if newField.Index == classes.HashIndex {
@@ -244,7 +244,7 @@ func (im *IndexManager) HandleClassUpdateParsed(id rdx.ID, cid rdx.ID, newFields
 					// field just created with index, no need to reindex
 					continue
 				}
-				if oldFields[oldField].Index != classes.HashIndex && newField.Index == classes.HashIndex {
+				if oldFields[oldField].Index != classes.HashIndex && newField.Index == classes.HashIndex || force {
 					ReindexTaskCount.WithLabelValues(id.String(), fmt.Sprintf("%d", i), "created_new_index").Inc()
 					task := &ReindexTask{
 						State:      reindexTaskStatePending,
