@@ -243,7 +243,7 @@ func (orm *ORM) Load(id rdx.ID, blanc NativeObject, skipFields ...uint64) (obj N
 
 func SeekClass[T NativeObject](orm *ORM, cid rdx.ID) iter.Seq[T] {
 	return func(yield func(obj T) bool) {
-		for id := range orm.Host.indexManager.SeekClass(cid, orm.Snap) {
+		for id := range orm.Host.IndexManager.SeekClass(cid, orm.Snap) {
 			var obj T
 			if reflect.TypeOf(obj).Kind() == reflect.Ptr {
 				obj = reflect.New(reflect.TypeOf(obj).Elem()).Interface().(T)
@@ -261,7 +261,7 @@ func SeekClass[T NativeObject](orm *ORM, cid rdx.ID) iter.Seq[T] {
 
 func GetByHash[T NativeObject](orm *ORM, cid rdx.ID, fid uint32, tlv []byte) (T, error) {
 	var obj T
-	id, err := orm.Host.indexManager.GetByHash(cid, fid, tlv, orm.Snap)
+	id, err := orm.Host.IndexManager.GetByHash(cid, fid, tlv, orm.Snap)
 	if err != nil {
 		return obj, err
 	}
@@ -276,11 +276,11 @@ func GetByHash[T NativeObject](orm *ORM, cid rdx.ID, fid uint32, tlv []byte) (T,
 }
 
 func (orm *ORM) GetIdByHash(cid rdx.ID, fid uint32, tlv []byte) (rdx.ID, error) {
-	return orm.Host.indexManager.GetByHash(cid, fid, tlv, orm.Snap)
+	return orm.Host.IndexManager.GetByHash(cid, fid, tlv, orm.Snap)
 }
 
 func (orm *ORM) SeekIds(cid rdx.ID) iter.Seq[rdx.ID] {
-	return orm.Host.indexManager.SeekClass(cid, orm.Snap)
+	return orm.Host.IndexManager.SeekClass(cid, orm.Snap)
 }
 
 // Find a registered object given its id. nil if none.

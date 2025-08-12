@@ -86,7 +86,7 @@ func (cho *Chotki) ApplyC(id, ref rdx.ID, body []byte, batch *pebble.Batch, call
 	}
 	if err == nil {
 		var tasks []indexes.ReindexTask
-		tasks, err = cho.indexManager.HandleClassUpdate(id, cid, body)
+		tasks, err = cho.IndexManager.HandleClassUpdate(id, cid, body)
 		if err == nil {
 			for _, task := range tasks {
 				err = batch.Merge(task.Key(), task.Value(), cho.opts.PebbleWriteOptions)
