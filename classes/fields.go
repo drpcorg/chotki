@@ -1,5 +1,4 @@
-package classes
-
+// Provides some helpers and structures for chotki classes.
 // A class contains a number of fields. Each Field has
 // some RDT type. A class can inherit another class.
 // New fields can be appended to a class, but never removed.
@@ -10,6 +9,8 @@ package classes
 // Each field has an Offset. The Offset+RdxType pair is the
 // *actual key* for the field in the database.
 // Entries having identical Offset+RdxType are considered *renames*!
+
+package classes
 
 import "unicode/utf8"
 

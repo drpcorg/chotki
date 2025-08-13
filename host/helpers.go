@@ -1,3 +1,4 @@
+// Defines Host interfaces for Chotki
 package host
 
 import (

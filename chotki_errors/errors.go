@@ -1,3 +1,4 @@
+// Provides commone chotki errors definitions.
 package chotki_errors
 
 import "errors"
