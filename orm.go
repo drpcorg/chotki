@@ -241,6 +241,7 @@ func (orm *ORM) Load(id rdx.ID, blanc NativeObject, skipFields ...uint64) (obj N
 	return blanc, nil
 }
 
+// Use full scan index to find all objects of a class.
 func SeekClass[T NativeObject](orm *ORM, cid rdx.ID) iter.Seq[T] {
 	return func(yield func(obj T) bool) {
 		for id := range orm.Host.IndexManager.SeekClass(cid, orm.Snap) {
@@ -259,6 +260,7 @@ func SeekClass[T NativeObject](orm *ORM, cid rdx.ID) iter.Seq[T] {
 	}
 }
 
+// Use hash index to find an object by its hash.
 func GetByHash[T NativeObject](orm *ORM, cid rdx.ID, fid uint32, tlv []byte) (T, error) {
 	var obj T
 	id, err := orm.Host.IndexManager.GetByHash(cid, fid, tlv, orm.Snap)
@@ -275,10 +277,12 @@ func GetByHash[T NativeObject](orm *ORM, cid rdx.ID, fid uint32, tlv []byte) (T,
 	return obk.(T), nil
 }
 
+// Use hash index to find an object rdx.ID by its hash.
 func (orm *ORM) GetIdByHash(cid rdx.ID, fid uint32, tlv []byte) (rdx.ID, error) {
 	return orm.Host.IndexManager.GetByHash(cid, fid, tlv, orm.Snap)
 }
 
+// Use full scan index to find all object rdx.IDs of a class.
 func (orm *ORM) SeekIds(cid rdx.ID) iter.Seq[rdx.ID] {
 	return orm.Host.IndexManager.SeekClass(cid, orm.Snap)
 }

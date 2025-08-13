@@ -176,7 +176,7 @@ type syncPoint struct {
 	start time.Time
 }
 
-// TLV all the way down
+// Main Chotki struct
 type Chotki struct {
 	last      rdx.ID
 	src       uint64
@@ -200,6 +200,7 @@ type Chotki struct {
 	types *xsync.MapOf[rdx.ID, classes.Fields]
 }
 
+// Checks if the directory exists and is a directory.
 func Exists(dirname string) (bool, error) {
 	stats, err := os.Stat(dirname)
 	if err != nil {
@@ -222,6 +223,8 @@ func Exists(dirname string) (bool, error) {
 	return desc.Exists, nil
 }
 
+// Worket that cleans diff syncs that took too long.
+// Otherwise they stay in the memmory forever if can't be finished
 func (cho *Chotki) cleanSyncs(ctx context.Context) {
 	for ctx.Err() == nil {
 		cho.syncs.Range(func(id rdx.ID, s *syncPoint) bool {
@@ -240,6 +243,7 @@ func (cho *Chotki) cleanSyncs(ctx context.Context) {
 	}
 }
 
+// Opens a new Chotki instance.
 func Open(dirname string, opts Options) (*Chotki, error) {
 	exists, err := Exists(dirname)
 	if err != nil {
@@ -261,11 +265,12 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	cho := Chotki{
-		db:    db,
-		src:   opts.Src,
-		dir:   absdir,
-		log:   opts.Logger,
-		opts:  opts,
+		db:   db,
+		src:  opts.Src,
+		dir:  absdir,
+		log:  opts.Logger,
+		opts: opts,
+		// TODO: delete as it is unused actually
 		clock: &rdx.LocalLogicalClock{Source: opts.Src},
 
 		outq:      xsync.NewMapOf[string, protocol.DrainCloser](),
@@ -318,12 +323,14 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 	)
 	cho.IndexManager = indexes.NewIndexManager(&cho)
 	wg.Add(1)
+	// reindex tasks are checked in a separate worker
 	go func() {
 		defer wg.Done()
 		cho.IndexManager.CheckReindexTasks(ctx)
 	}()
 
 	wg.Add(1)
+	// diff syncs are cleaned up in a separate worker
 	go func() {
 		defer wg.Done()
 		cho.cleanSyncs(ctx)
@@ -331,9 +338,11 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 
 	if !exists {
 		id0 := rdx.IDFromSrcSeqOff(opts.Src, 0, 0)
-
+		// apply log0, some default objects for all replicas
 		init := append(protocol.Records(nil), Log0...)
+		// log1 is parameter that allows to define some default objects for the replica
 		init = append(init, opts.Log1...)
+		// creates a replica object, however it is now unused
 		init = append(init, protocol.Record('Y',
 			protocol.Record('I', id0.ZipBytes()),
 			protocol.Record('R', rdx.ID0.ZipBytes()),
@@ -357,6 +366,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 	return &cho, nil
 }
 
+// Gracefully closes the Chotki instance.
 func (cho *Chotki) Close() error {
 	cho.lock.Lock()
 	defer cho.lock.Unlock()
@@ -393,85 +403,83 @@ func (cho *Chotki) Close() error {
 	return nil
 }
 
+// Returns an atomic counter object that can be used to increment/decrement a counter.
 func (cho *Chotki) Counter(rid rdx.ID, offset uint64, updatePeriod time.Duration) *counters.AtomicCounter {
 	counter, _ := cho.counterCache.LoadOrStore(rid.ToOff(offset), counters.NewAtomicCounter(cho, rid, offset, updatePeriod))
 	return counter.(*counters.AtomicCounter)
 }
 
-// ToyKV convention key, lit O, then O00000-00000000-000 id
+// Returns the source id of the Chotki instance.
 func (cho *Chotki) Source() uint64 {
 	return cho.src
 }
 
+// Returns the clock of the Chotki instance.
 func (cho *Chotki) Clock() rdx.Clock {
 	return cho.clock
 }
 
+// Returns the latest used rdx.ID of current replica
 func (cho *Chotki) Last() rdx.ID {
 	return cho.last
 }
 
+// Returns the write options of the Chotki instance.
 func (cho *Chotki) WriteOptions() *pebble.WriteOptions {
 	return cho.opts.PebbleWriteOptions
 }
 
+// Returns the logger of the Chotki instance.
 func (cho *Chotki) Logger() utils.Logger {
 	return cho.log
 }
 
+// Returns a new snapshot of the Chotki instance.
 func (cho *Chotki) Snapshot() pebble.Reader {
 	return cho.db.NewSnapshot()
 }
 
+// Returns the database of the Chotki instance.
 func (cho *Chotki) Database() *pebble.DB {
 	return cho.db
 }
 
+// Returns the directory of the Chotki instance.
 func (cho *Chotki) Directory() string {
 	return cho.dir
 }
 
+// Returns the new instance of the ORM object
 func (cho *Chotki) ObjectMapper() *ORM {
 	return NewORM(cho, cho.db.NewSnapshot())
 }
 
-func (cho *Chotki) RestoreNet() error {
-	i := cho.db.NewIter(&pebble.IterOptions{})
-	defer i.Close()
-
-	for i.SeekGE([]byte{'l'}); i.Valid() && i.Key()[0] == 'L'; i.Next() {
-		address := string(i.Key()[1:])
-		_ = cho.net.Listen(address)
-	}
-
-	for i.SeekGE([]byte{'c'}); i.Valid() && i.Key()[0] == 'C'; i.Next() {
-		address := string(i.Key()[1:])
-		_ = cho.net.Connect(address)
-	}
-
-	return nil
-}
-
+// Starts listening on the given address.
 func (cho *Chotki) Listen(addr string) error {
 	return cho.net.Listen(addr)
 }
 
+// Stops listening on the given address.
 func (cho *Chotki) Unlisten(addr string) error {
 	return cho.net.Unlisten(addr)
 }
 
+// Connects to the given address.
 func (cho *Chotki) Connect(addr string) error {
 	return cho.net.Connect(addr)
 }
 
+// Connects to the given address pool.
 func (cho *Chotki) ConnectPool(name string, addrs []string) error {
 	return cho.net.ConnectPool(name, addrs)
 }
 
+// Disconnects from the given address.
 func (cho *Chotki) Disconnect(addr string) error {
 	return cho.net.Disconnect(addr)
 }
 
+// Returns the version vector of the Chotki instance as rdx.VV structure.
 func (cho *Chotki) VersionVector() (vv rdx.VV, err error) {
 	val, clo, err := cho.db.Get(host.VKey0)
 	if err == nil {
@@ -519,6 +527,7 @@ func (cho *Chotki) RemoveAllHooks(fid rdx.ID) {
 	cho.hooks.Delete(fid)
 }
 
+// Broadcasts some records to all active replication sessions that this replica has, except one.
 func (cho *Chotki) Broadcast(ctx context.Context, records protocol.Records, except string) {
 	cho.outq.Range(func(name string, hose protocol.DrainCloser) bool {
 		if name != except {
@@ -533,7 +542,11 @@ func (cho *Chotki) Broadcast(ctx context.Context, records protocol.Records, exce
 	})
 }
 
-// Here new packets are timestamped and queued for save
+// Commits records to actual storage (pebble) and broadcasts the update to all active replication sessions.
+// Increments replica last rdx.ID and stamps this update with it. This id will be used as an ID of a new object (if it is an object), also
+// this will be the latest seen rdx.ID in the version vector.
+// Uses an exclusive lock, so all commits are serialized, but remember that Drain/drain calls are not.
+// All replication sessions will call Drain in parallel.
 func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body protocol.Records) (id rdx.ID, err error) {
 	// prevent cancellation as it can make this function non atomic
 	ctx = context.WithoutCancel(ctx)
@@ -549,8 +562,10 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 	if cho.db == nil {
 		return rdx.BadId, chotki_errors.ErrClosed
 	}
+	// create new last id
 	id = cho.last.IncPro(1).ZeroOff()
 	i := protocol.Record('I', id.ZipBytes())
+	// this is typically some higher order structure (like for object it will be class id, for field update it will be object id)
 	r := protocol.Record('R', ref.ZipBytes())
 	packet := protocol.Record(lit, i, r, protocol.Join(body...))
 	recs := protocol.Records{packet}
@@ -631,6 +646,8 @@ func (n *ChotkiCollector) Collect(m chan<- prometheus.Metric) {
 	}
 	n.collected_prev = nw_collected
 }
+
+// Returns a list of prometheus collectors for the Chotki instance.
 func (cho *Chotki) Metrics() []prometheus.Collector {
 	cho.db.Metrics()
 	return []prometheus.Collector{
@@ -652,6 +669,9 @@ func (cho *Chotki) Metrics() []prometheus.Collector {
 	}
 }
 
+// Handles all updates and actually writes the to storage.
+// the allowed types are 'C', 'O', 'E', 'H', 'D', 'V', 'B', 'P', 'Y'
+// do not confuse it with RDX types
 func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error) {
 	EventsMetric.Add(float64(len(recs)))
 	var calls []CallHook
@@ -660,12 +680,15 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			break
 		}
 
+		// parse the packet to understand what kind of packet is it
 		lit, id, ref, body, parseErr := replication.ParsePacket(packet)
 		if parseErr != nil {
 			cho.log.WarnCtx(ctx, "bad packet", "err", parseErr)
 			return parseErr
 		}
 
+		// if this is a packet commited by our replica we need to update our last id
+		// as current commit holds the mutex, it is safe to update this id
 		if id.Src() == cho.src && cho.last.Less(id) {
 			if id.Off() != 0 {
 				return rdx.ErrBadPacket
@@ -673,31 +696,32 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			cho.last = id
 		}
 
+		// noApply can be set to true if we don't want to apply the batch
 		pb, noApply := pebble.Batch{}, false
 
 		cho.log.DebugCtx(ctx, "new packet", "type", string(lit), "packet", id.String())
 
 		switch lit {
-		case 'Y': // create replica log
+		case 'Y': // creates a replica log
 			if ref != rdx.ID0 {
 				return ErrBadYPacket
 			}
 			err = cho.ApplyOY('Y', id, ref, body, &pb)
 
-		case 'C': // create class
+		case 'C': // creates a class
 			err = cho.ApplyC(id, ref, body, &pb, &calls)
 			if err == nil {
 				// clear cache for classes if class changed
 				cho.types.Clear()
 			}
 
-		case 'O': // create object
+		case 'O': // creates an object
 			if ref == rdx.ID0 {
 				return ErrBadOPacket
 			}
 			err = cho.ApplyOY('O', id, ref, body, &pb)
 
-		case 'E': // edit object
+		case 'E': // edits an object
 			if ref == rdx.ID0 {
 				return ErrBadEPacket
 			}
@@ -705,32 +729,40 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 
 		case 'H': // handshake
 			d := cho.db.NewBatch()
+			// we also create a new sync point, pebble batch that we will write diffs to
 			cho.syncs.Store(id, &syncPoint{batch: d, start: time.Now()})
 			err = cho.ApplyH(id, ref, body, d)
 
-		case 'D': // diff
+		case 'D': // diff packet
+			// load sync point if exists
 			s, ok := cho.syncs.Load(id)
 			if !ok {
 				return ErrSyncUnknown
 			}
 			err = cho.ApplyD(id, ref, body, s.batch)
+			// we use separate batch, so noApply is true
 			noApply = true
 
-		case 'V':
+		case 'V': // version vector sent in the end of diff sync
+			// load sync point if exists
 			s, ok := cho.syncs.Load(id)
 			if !ok {
 				return ErrSyncUnknown
 			}
+			// update blocks version vectors
 			err = cho.ApplyV(id, ref, body, s.batch)
 			if err == nil {
+				// apply batch anddelete sync point as diff sync is finished
 				err = cho.db.Apply(s.batch, cho.opts.PebbleWriteOptions)
 				cho.syncs.Delete(id)
 				cho.log.InfoCtx(ctx, "applied diff batch and deleted it", "id", id)
 			}
+			// we don't want to apply the batch as we already applied it
 			noApply = true
 
-		case 'B': // bye dear
+		case 'B': // session end
 			cho.log.InfoCtx(ctx, "received session end", "id", id.String(), "data", string(body))
+			// delete sync point if not already
 			cho.syncs.Delete(id)
 		case 'P': // ping noop
 		default:
@@ -744,7 +776,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 		}
 	}
 
-	if err != nil { // fixme separate packets
+	if err != nil {
 		return
 	}
 
@@ -757,6 +789,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 	return
 }
 
+// Public for drain method with some additional metrics
 func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error) {
 	now := time.Now()
 	defer func() {
@@ -779,6 +812,7 @@ func dumpKVString(key, value []byte) (str string) {
 	return
 }
 
+// Dumps all objects to the writer.
 func (cho *Chotki) DumpObjects(writer io.Writer) {
 	io := pebble.IterOptions{
 		LowerBound: []byte{'O'},
@@ -791,6 +825,7 @@ func (cho *Chotki) DumpObjects(writer io.Writer) {
 	}
 }
 
+// Dumps all version vectors to the writer.
 func (cho *Chotki) DumpVV(writer io.Writer) {
 	io := pebble.IterOptions{
 		LowerBound: []byte{'V'},
@@ -806,6 +841,7 @@ func (cho *Chotki) DumpVV(writer io.Writer) {
 	}
 }
 
+// Dumps all objects and version vectors to the writer.
 func (cho *Chotki) DumpAll(writer io.Writer) {
 	cho.DumpObjects(writer)
 	fmt.Fprintln(writer, "")

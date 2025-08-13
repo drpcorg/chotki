@@ -13,7 +13,8 @@ import (
 	"github.com/pkg/errors"
 )
 
-// returns nil for "not found"
+// Creates and iterator that only walks through the specific object.
+// Will return nil if the object does not exist.
 func (cho *Chotki) ObjectIterator(oid rdx.ID, snap *pebble.Snapshot) *pebble.Iterator {
 	fro, til := host.ObjectKeyRange(oid)
 	io := pebble.IterOptions{
@@ -40,9 +41,7 @@ func (cho *Chotki) ObjectIterator(oid rdx.ID, snap *pebble.Snapshot) *pebble.Ite
 	return nil
 }
 
-// todo note that the class may change as the program runs; in such a case
-// if the class fields are already cached, the current session will not
-// understand the new fields!
+// Returns class fields and caches them. If class is changed cache will be invalidated.
 func (cho *Chotki) ClassFields(cid rdx.ID) (fields classes.Fields, err error) {
 	if fields, ok := cho.types.Load(cid); ok {
 		return fields, nil
@@ -59,6 +58,7 @@ func (cho *Chotki) ClassFields(cid rdx.ID) (fields classes.Fields, err error) {
 	return
 }
 
+// Given object id, returns class definition and actual object fields values
 func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl classes.Fields, fact protocol.Records, err error) {
 	it := cho.ObjectIterator(oid, nil)
 	if it == nil {
@@ -86,7 +86,7 @@ func (cho *Chotki) ObjectFields(oid rdx.ID) (tid rdx.ID, decl classes.Fields, fa
 	return
 }
 
-// ObjectFieldTLV picks one field fast. No class checks, etc.
+// Returns the TLV-encoded value of the object field, given object rdx.ID with offset.
 func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) {
 	db := cho.db
 	if db == nil {
@@ -109,6 +109,7 @@ func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) 
 	return
 }
 
+// Creates or updates class definition. Remember that you can only add fields, not remove them.
 func (cho *Chotki) NewClass(ctx context.Context, parent rdx.ID, fields ...classes.Field) (id rdx.ID, err error) {
 	var fspecs protocol.Records
 	maxidx := int64(-1)
@@ -136,6 +137,7 @@ func (cho *Chotki) NewClass(ctx context.Context, parent rdx.ID, fields ...classe
 	return cho.CommitPacket(ctx, 'C', parent, fspecs)
 }
 
+// Returns the TLV-encoded class definition. Only used in REPL.
 func (cho *Chotki) GetClassTLV(ctx context.Context, cid rdx.ID) ([]byte, error) {
 	okey := host.OKey(cid, 'C')
 	tlv, clo, e := cho.db.Get(okey)
@@ -149,10 +151,12 @@ func (cho *Chotki) GetClassTLV(ctx context.Context, cid rdx.ID) ([]byte, error) 
 	return tlv, nil
 }
 
+// Thin wrapper around CommitPacket with 'O' type
 func (cho *Chotki) NewObjectTLV(ctx context.Context, tid rdx.ID, fields protocol.Records) (id rdx.ID, err error) {
 	return cho.CommitPacket(ctx, 'O', tid, fields)
 }
 
+// Returns the string representation of the object.
 func (cho *Chotki) ObjectString(oid rdx.ID) (txt string, err error) {
 	_, form, fact, e := cho.ObjectFields(oid)
 	if e != nil {
@@ -172,6 +176,7 @@ func (cho *Chotki) ObjectString(oid rdx.ID) (txt string, err error) {
 	return
 }
 
+// Edits the object fields using string RDX representation.
 func (cho *Chotki) EditObjectRDX(ctx context.Context, oid rdx.ID, pairs []rdx.RDX) (id rdx.ID, err error) {
 	tlvs := protocol.Records{}
 	_, form, fact, e := cho.ObjectFields(oid)
@@ -203,6 +208,7 @@ func (cho *Chotki) EditObjectRDX(ctx context.Context, oid rdx.ID, pairs []rdx.RD
 
 var ErrWrongFieldType = errors.New("wrong field type")
 
+// Increments only 'N' counters by arbitrary amount.
 func (cho *Chotki) AddToNField(ctx context.Context, fid rdx.ID, count uint64) (id rdx.ID, err error) {
 	rdt, tlv, err := cho.ObjectFieldTLV(fid)
 	if err != nil || rdt != rdx.Natural {
@@ -218,10 +224,12 @@ func (cho *Chotki) AddToNField(ctx context.Context, fid rdx.ID, count uint64) (i
 	return
 }
 
+// Increments only 'N' counters by 1.
 func (cho *Chotki) IncNField(ctx context.Context, fid rdx.ID) (id rdx.ID, err error) {
 	return cho.AddToNField(ctx, fid, 1)
 }
 
+// Extracts TLV value of the field that is supposed to be a map and converts it to golang map.
 func (cho *Chotki) MapTRField(fid rdx.ID) (themap rdx.MapTR, err error) {
 	rdt, tlv, e := cho.ObjectFieldTLV(fid)
 	if e != nil {
@@ -234,6 +242,7 @@ func (cho *Chotki) MapTRField(fid rdx.ID) (themap rdx.MapTR, err error) {
 	return
 }
 
+// Returns the TLV-encoded value of the object field, given object rdx.ID with offset.
 func (cho *Chotki) GetFieldTLV(id rdx.ID) (rdt byte, tlv []byte) {
 	key := host.OKey(id, 'A')
 	it := cho.db.NewIter(&pebble.IterOptions{
@@ -251,6 +260,7 @@ func (cho *Chotki) GetFieldTLV(id rdx.ID) (rdt byte, tlv []byte) {
 	return
 }
 
+// Edits the object field using TLV-encoded value.
 func (cho *Chotki) EditFieldTLV(ctx context.Context, fid rdx.ID, delta []byte) (id rdx.ID, err error) {
 	tlvs := protocol.Records{}
 	tlvs = append(tlvs, protocol.TinyRecord('F', rdx.ZipUint64(fid.Off())))
