@@ -208,6 +208,17 @@ State descriptions:
 
 More details in [../replication](../replication).
 
+One important thing for replication that is kind of outside of protocol is FDQueue.
+When replication protocol broadcasts some packets it calls Broadcast method on host.
+Chotki structure has outqueue field which is a map of FDQueues. Broadcast will iterate over all entries
+of this map and will call Drain. FDqueue is a thing that Syncer will check when Feed would be called on it byt network. So, the contents of the queue will be forwarded to the other replica. FDQueue implements few optjmisations:
+
+- feed will wait until some reasonable amount of packets accumulate (or some time pass)
+- it has some MAX bytes data it can handle after which it overflows and basically stops working
+  In case of overflow during Broadcast call the error will be returned and this FDQueue will be deleteted from outqueue map. It doesnt stop the syncing, but other replica will stop receiving any data from this one and next ping event will drop the connection, because there will be no way to respond.
+
+It shouldn't happen normally, only when network can't fan out all of the data to other replica due to network problems or other replica can't handle the amount of data it receives. So this is kind of backpressure.
+
 # Networking
 
 Chotki implements a high-performance, callback-driven networking layer optimized for continuous bidirectional streaming between replicas.
