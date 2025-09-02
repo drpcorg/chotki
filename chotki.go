@@ -75,11 +75,18 @@ var DrainTime = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 }, []string{"type"})
 
 // Size of diff sync in bytes
-var DiffSyncSize = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+var DiffSyncSize = prometheus.NewHistogram(prometheus.HistogramOpts{
 	Namespace: "chotki",
 	Name:      "diff_sync_size",
-	Buckets:   []float64{1, 10, 50, 100, 500, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000},
-}, []string{"id"})
+	Buckets: []float64{
+		1, 10, 100, 1000,
+		5000, 10000, 50000, 100000, 500000,
+		1000000, 2000000, 5000000, 10000000,
+		20000000, 50000000, 100000000,
+		200000000, 500000000, 1000000000,
+		2000000000, 5000000000,
+	},
+})
 
 type Options struct {
 	pebble.Options
@@ -769,7 +776,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			if !ok {
 				return ErrSyncUnknown
 			}
-			DiffSyncSize.WithLabelValues(id.String()).Observe(float64(s.batch.Len()))
+			DiffSyncSize.Observe(float64(s.batch.Len()))
 			// update blocks version vectors
 			err = cho.ApplyV(id, ref, body, s.batch)
 			if err == nil {
