@@ -74,6 +74,13 @@ var DrainTime = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 	Buckets:   []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 100, 500, 1000, 5000, 10000},
 }, []string{"type"})
 
+// Size of diff sync in bytes
+var DiffSyncSize = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Namespace: "chotki",
+	Name:      "diff_sync_size",
+	Buckets:   []float64{1, 10, 50, 100, 500, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000},
+}, []string{"id"})
+
 type Options struct {
 	pebble.Options
 
@@ -730,7 +737,19 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 		case 'H': // handshake
 			d := cho.db.NewBatch()
 			// we also create a new sync point, pebble batch that we will write diffs to
+			activeSyncs := make([]rdx.ID, 0)
+			cho.syncs.Range(func(key rdx.ID, value *syncPoint) bool {
+				if key.Src() == cho.src {
+					activeSyncs = append(activeSyncs, key)
+				}
+				return true
+			})
+			for _, sync := range activeSyncs {
+				cho.syncs.Delete(sync)
+				cho.log.InfoCtx(ctx, "deleted active sync", "id", sync.String())
+			}
 			cho.syncs.Store(id, &syncPoint{batch: d, start: time.Now()})
+			cho.log.InfoCtx(ctx, "created new sync point", "id", id.String())
 			err = cho.ApplyH(id, ref, body, d)
 
 		case 'D': // diff packet
@@ -749,6 +768,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			if !ok {
 				return ErrSyncUnknown
 			}
+			DiffSyncSize.WithLabelValues(id.String()).Observe(float64(s.batch.Len()))
 			// update blocks version vectors
 			err = cho.ApplyV(id, ref, body, s.batch)
 			if err == nil {
