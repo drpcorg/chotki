@@ -673,6 +673,7 @@ func (cho *Chotki) Metrics() []prometheus.Collector {
 		indexes.ReindexDuration,
 		indexes.ReindexCount,
 		indexes.ReindexTaskStates,
+		DiffSyncSize,
 	}
 }
 
