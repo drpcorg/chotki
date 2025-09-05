@@ -846,7 +846,10 @@ func (cho *Chotki) DumpObjects(writer io.Writer) {
 		LowerBound: []byte{'O'},
 		UpperBound: []byte{'P'},
 	}
-	i := cho.db.NewIter(&io)
+	i, err := cho.db.NewIter(&io)
+	if err != nil {
+		return
+	}
 	defer i.Close()
 	for i.SeekGE([]byte{'O'}); i.Valid(); i.Next() {
 		fmt.Fprintln(writer, dumpKVString(i.Key(), i.Value()))
@@ -859,7 +862,10 @@ func (cho *Chotki) DumpVV(writer io.Writer) {
 		LowerBound: []byte{'V'},
 		UpperBound: []byte{'W'},
 	}
-	i := cho.db.NewIter(&io)
+	i, err := cho.db.NewIter(&io)
+	if err != nil {
+		return
+	}
 	defer i.Close()
 	for i.SeekGE(host.VKey0); i.Valid(); i.Next() {
 		id := rdx.IDFromBytes(i.Key()[1:])

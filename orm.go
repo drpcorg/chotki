@@ -166,16 +166,13 @@ func (orm *ORM) UpdateObject(obj NativeObject, snap *pebble.Snapshot) error {
 	if it == nil {
 		return chotki_errors.ErrObjectUnknown
 	}
-	seq := orm.Snap.Seq()
 	for it.Next() {
 		lid, rdt := host.OKeyIdRdt(it.Key())
 		off := lid.Off()
-		if it.Seq() > seq {
-			e := obj.Load(off, rdt, it.Value())
-			// todo as of now, this may overwrite the object's changes
-			if e != nil { // the db may have garbage
-				_ = 0 // todo
-			}
+		e := obj.Load(off, rdt, it.Value())
+		// todo as of now, this may overwrite the object's changes
+		if e != nil { // the db may have garbage
+			_ = 0 // todo
 		}
 	}
 	_ = it.Close()
@@ -220,7 +217,10 @@ func (orm *ORM) Load(id rdx.ID, blanc NativeObject, skipFields ...uint64) (obj N
 		LowerBound: fro,
 		UpperBound: til,
 	}
-	it := orm.Snap.NewIter(&io)
+	it, err := orm.Snap.NewIter(&io)
+	if err != nil {
+		return nil, err
+	}
 	for it.SeekGE(fro); it.Valid(); it.Next() {
 		lid, rdt := host.OKeyIdRdt(it.Key())
 		off := lid.Off()

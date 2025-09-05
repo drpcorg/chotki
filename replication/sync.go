@@ -332,14 +332,20 @@ func (sync *Syncer) FeedHandshake() (vv protocol.Records, err error) {
 	sync.snap = sync.Host.Snapshot()
 
 	OpenedSnapshots.WithLabelValues(sync.Name, version).Set(1)
-	sync.vvit = sync.snap.NewIter(&pebble.IterOptions{
+	sync.vvit, err = sync.snap.NewIter(&pebble.IterOptions{
 		LowerBound: []byte{'V'},
 		UpperBound: []byte{'W'},
 	})
-	sync.ffit = sync.snap.NewIter(&pebble.IterOptions{
+	if err != nil {
+		return nil, err
+	}
+	sync.ffit, err = sync.snap.NewIter(&pebble.IterOptions{
 		LowerBound: []byte{'O'},
 		UpperBound: []byte{'P'},
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	OpenedIterators.WithLabelValues(sync.Name, version).Set(1)
 

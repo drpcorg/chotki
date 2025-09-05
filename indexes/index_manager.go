@@ -199,10 +199,13 @@ func (im *IndexManager) GetByHash(cid rdx.ID, fid uint32, otlv []byte, reader pe
 
 func (im *IndexManager) SeekClass(cid rdx.ID, reader pebble.Reader) iter.Seq[rdx.ID] {
 	return func(yield func(id rdx.ID) bool) {
-		iter := reader.NewIter(&pebble.IterOptions{
+		iter, err := reader.NewIter(&pebble.IterOptions{
 			LowerBound: fullScanKey(cid, rdx.ID{}),
 			UpperBound: fullScanKey(cid, rdx.BadId),
 		})
+		if err != nil {
+			return
+		}
 		defer iter.Close()
 		for valid := iter.First(); valid; valid = iter.Next() {
 			oid := fullScanKeyId(iter.Key())
@@ -276,10 +279,14 @@ func (im *IndexManager) HandleClassUpdateParsed(id rdx.ID, cid rdx.ID, newFields
 
 func (im *IndexManager) CheckReindexTasks(ctx context.Context) {
 	cycle := func() {
-		iter := im.c.Database().NewIter(&pebble.IterOptions{
+		iter, err := im.c.Database().NewIter(&pebble.IterOptions{
 			LowerBound: []byte{'I', 'T'},
 			UpperBound: []byte{'I', 'U'},
 		})
+		if err != nil {
+			im.c.Logger().ErrorCtx(ctx, "failed to create reindex tasks iterator: %s", err)
+			return
+		}
 		defer iter.Close()
 		for valid := iter.First(); valid; valid = iter.Next() {
 			tasks, err := parseReindexTasks(iter.Key(), iter.Value())
@@ -511,10 +518,15 @@ func (im *IndexManager) runReindexTask(ctx context.Context, task *ReindexTask) {
 		}
 	}
 	// repair index entries that are no longer needed
-	indexIter := im.c.Database().NewIter(&pebble.IterOptions{
+	indexIter, err := im.c.Database().NewIter(&pebble.IterOptions{
 		LowerBound: hashKey(task.Cid, uint32(task.Field), 0),
 		UpperBound: hashKey(task.Cid, uint32(task.Field), math.MaxUint64),
 	})
+	if err != nil {
+		ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "error", "fail_to_create_index_iterator").Inc()
+		im.c.Logger().ErrorCtx(ctx, "failed to create index iterator: %s, will restart", err)
+		return
+	}
 	defer indexIter.Close()
 	for valid := indexIter.First(); valid; valid = indexIter.Next() {
 		set := rdx.NewStampedSet[rdx.RdxRid]()

@@ -22,10 +22,17 @@ func (cho *Chotki) ObjectIterator(oid rdx.ID, snap *pebble.Snapshot) *pebble.Ite
 		UpperBound: til,
 	}
 	var it *pebble.Iterator
+	var err error
 	if snap != nil {
-		it = snap.NewIter(&io)
+		it, err = snap.NewIter(&io)
+		if err != nil {
+			return nil
+		}
 	} else {
-		it = cho.db.NewIter(&io)
+		it, err = cho.db.NewIter(&io)
+		if err != nil {
+			return nil
+		}
 	}
 
 	if it.SeekGE(fro) { // fixme
@@ -93,7 +100,10 @@ func (cho *Chotki) ObjectFieldTLV(fid rdx.ID) (rdt byte, tlv []byte, err error) 
 		return 0, nil, chotki_errors.ErrClosed
 	}
 
-	it := cho.db.NewIter(&pebble.IterOptions{})
+	it, err := cho.db.NewIter(&pebble.IterOptions{})
+	if err != nil {
+		return 0, nil, err
+	}
 	defer it.Close()
 
 	key := host.OKey(fid, 0)
@@ -245,10 +255,13 @@ func (cho *Chotki) MapTRField(fid rdx.ID) (themap rdx.MapTR, err error) {
 // Returns the TLV-encoded value of the object field, given object rdx.ID with offset.
 func (cho *Chotki) GetFieldTLV(id rdx.ID) (rdt byte, tlv []byte) {
 	key := host.OKey(id, 'A')
-	it := cho.db.NewIter(&pebble.IterOptions{
+	it, err := cho.db.NewIter(&pebble.IterOptions{
 		LowerBound: []byte{'O'},
 		UpperBound: []byte{'P'},
 	})
+	if err != nil {
+		return 0, nil
+	}
 	defer it.Close()
 	if it.SeekGE(key) {
 		fact, r := host.OKeyIdRdt(it.Key())
