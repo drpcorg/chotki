@@ -797,11 +797,13 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			}
 			s.mu.Lock()
 			if s.batch == nil {
-				// Sync already completed or cleaned up — skip silently.
-				// Returning an error here would kill the Syncer session.
+				// Sync point exists in the map but its batch has already been
+				// closed (timeout in cleanSyncs, session end, displaced by a
+				// new 'H', or a concurrent 'V'). Silently skipping would cause
+				// partial data loss invisible to the peer, so surface the same
+				// error as for a missing sync point and let the session restart.
 				s.mu.Unlock()
-				noApply = true
-				continue
+				return ErrSyncUnknown
 			}
 			err = cho.ApplyD(id, ref, body, s.batch)
 			s.mu.Unlock()
@@ -816,10 +818,10 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			}
 			s.mu.Lock()
 			if s.batch == nil {
-				// Sync already completed or cleaned up — skip silently.
+				// See the 'D' case for rationale: batch was closed out from
+				// under us, so treat it the same as an unknown sync.
 				s.mu.Unlock()
-				noApply = true
-				continue
+				return ErrSyncUnknown
 			}
 			DiffSyncSize.Observe(float64(s.batch.Len()))
 			// update blocks version vectors

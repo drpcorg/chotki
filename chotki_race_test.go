@@ -230,6 +230,95 @@ func TestSyncPointRace_DrainAndClose(t *testing.T) {
 	}
 }
 
+// TestSyncPointExpired_DPacketReturnsErrSyncUnknown covers the narrow race
+// window where cleanSyncs has closed the batch but the map entry has not yet
+// been deleted (or the drain goroutine already loaded the pointer before the
+// delete). A subsequent 'D' packet must surface ErrSyncUnknown rather than
+// silently drop data, so that the peer restarts the sync instead of believing
+// it succeeded.
+func TestSyncPointExpired_DPacketReturnsErrSyncUnknown(t *testing.T) {
+	src := uint64(0xab01)
+	dirs, clear := testdirs(src)
+	defer clear()
+
+	cho, err := Open(dirs[0], Options{
+		Src:             src,
+		Name:            "expired-d",
+		Logger:          utils.NewDefaultLogger(slog.LevelWarn),
+		MaxSyncDuration: 10 * time.Minute,
+	})
+	require.NoError(t, err)
+	defer cho.Close()
+
+	syncID := rdx.IDFromSrcSeqOff(0xbeef, 1, 0)
+	blockID := rdx.IDFromSrcSeqOff(0xbeef, 1, 0)
+
+	vv, err := cho.VersionVector()
+	require.NoError(t, err)
+
+	err = cho.Drain(context.Background(), protocol.Records{makeHPacket(syncID, vv)})
+	require.NoError(t, err)
+
+	// Emulate what cleanSyncs / session end does: close the batch but keep the
+	// map entry so the drain goroutine still finds it via Load.
+	s, ok := cho.syncs.Load(syncID)
+	require.True(t, ok)
+	s.close()
+	require.Nil(t, s.batch)
+
+	err = cho.Drain(context.Background(), protocol.Records{makeDPacket(syncID, blockID, 3)})
+	require.ErrorIs(t, err, ErrSyncUnknown,
+		"drain must refuse 'D' after the sync's batch has been closed")
+}
+
+// TestSyncPointExpired_CleanSyncsDeletes covers the wider path: cleanSyncs has
+// already closed the batch and deleted the map entry. A subsequent 'D' packet
+// must return ErrSyncUnknown via the !ok branch. This is what an expired diff
+// sync actually looks like end-to-end.
+func TestSyncPointExpired_CleanSyncsDeletes(t *testing.T) {
+	// Speed up cleanSyncs so it fires during the test.
+	prev := cleanSyncInterval
+	cleanSyncInterval = 5 * time.Millisecond
+	defer func() { cleanSyncInterval = prev }()
+
+	src := uint64(0xab02)
+	dirs, clear := testdirs(src)
+	defer clear()
+
+	cho, err := Open(dirs[0], Options{
+		Src:             src,
+		Name:            "expired-cleanup",
+		Logger:          utils.NewDefaultLogger(slog.LevelWarn),
+		MaxSyncDuration: 5 * time.Millisecond,
+	})
+	require.NoError(t, err)
+	defer cho.Close()
+
+	syncID := rdx.IDFromSrcSeqOff(0xbeee, 1, 0)
+	blockID := rdx.IDFromSrcSeqOff(0xbeee, 1, 0)
+
+	vv, err := cho.VersionVector()
+	require.NoError(t, err)
+
+	err = cho.Drain(context.Background(), protocol.Records{makeHPacket(syncID, vv)})
+	require.NoError(t, err)
+
+	// Wait until cleanSyncs both closes the batch and removes the entry.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := cho.syncs.Load(syncID); !ok {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	_, ok := cho.syncs.Load(syncID)
+	require.False(t, ok, "cleanSyncs should have removed the expired sync point")
+
+	err = cho.Drain(context.Background(), protocol.Records{makeDPacket(syncID, blockID, 3)})
+	require.ErrorIs(t, err, ErrSyncUnknown,
+		"drain must refuse 'D' for an expired/removed sync")
+}
+
 // TestSyncPointRace_ReconnectionStorm simulates rapid peer reconnections
 // with 4 concurrent peers doing connect/sync/disconnect cycles while
 // cleanSyncs fires every 5ms.
