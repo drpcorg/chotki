@@ -112,7 +112,7 @@ type Options struct {
 	TcpWriteBufferSize         int
 	WriteTimeout               time.Duration
 	TlsConfig                  *tls.Config
-	MaxSyncDuration time.Duration
+	MaxSyncDuration            time.Duration
 }
 
 func (o *Options) SetDefaults() {
@@ -188,10 +188,26 @@ type CallHook struct {
 }
 
 type syncPoint struct {
-	mu     sync.Mutex
-	batch  *pebble.Batch
-	start  time.Time
-	closed bool
+	mu sync.Mutex
+	// batch is nilled out under mu once closed or applied,
+	// so any later reader can detect this and skip the apply.
+	batch *pebble.Batch
+	start time.Time
+}
+
+// closeLocked closes the batch if it's still open. Must be called with s.mu held.
+func (s *syncPoint) closeLocked() {
+	if s.batch != nil {
+		_ = s.batch.Close()
+		s.batch = nil
+	}
+}
+
+// close acquires s.mu and closes the batch if it's still open.
+func (s *syncPoint) close() {
+	s.mu.Lock()
+	s.closeLocked()
+	s.mu.Unlock()
 }
 
 // Main Chotki struct
@@ -247,12 +263,7 @@ func (cho *Chotki) cleanSyncs(ctx context.Context) {
 	for ctx.Err() == nil {
 		cho.syncs.Range(func(id rdx.ID, s *syncPoint) bool {
 			if time.Since(s.start) > cho.opts.MaxSyncDuration {
-				s.mu.Lock()
-				if !s.closed {
-					s.batch.Close()
-					s.closed = true
-				}
-				s.mu.Unlock()
+				s.close()
 				cho.syncs.Delete(id)
 				cho.log.WarnCtx(ctx, "diff sync took too long", "id", id, "duration", time.Since(s.start))
 			}
@@ -417,12 +428,7 @@ func (cho *Chotki) Close() error {
 
 	cho.outq.Clear()
 	cho.syncs.Range(func(id rdx.ID, s *syncPoint) bool {
-		s.mu.Lock()
-		if !s.closed {
-			s.batch.Close()
-			s.closed = true
-		}
-		s.mu.Unlock()
+		s.close()
 		return true
 	})
 	cho.syncs.Clear()
@@ -772,12 +778,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			})
 			for _, s := range activeSyncs {
 				if old, ok := cho.syncs.Load(s); ok {
-					old.mu.Lock()
-					if !old.closed {
-						old.batch.Close()
-						old.closed = true
-					}
-					old.mu.Unlock()
+					old.close()
 				}
 				cho.syncs.Delete(s)
 				cho.log.InfoCtx(ctx, "deleted active sync", "id", s.String())
@@ -795,7 +796,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 				return ErrSyncUnknown
 			}
 			s.mu.Lock()
-			if s.closed {
+			if s.batch == nil {
 				// Sync already completed or cleaned up — skip silently.
 				// Returning an error here would kill the Syncer session.
 				s.mu.Unlock()
@@ -814,7 +815,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 				return ErrSyncUnknown
 			}
 			s.mu.Lock()
-			if s.closed {
+			if s.batch == nil {
 				// Sync already completed or cleaned up — skip silently.
 				s.mu.Unlock()
 				noApply = true
@@ -826,7 +827,10 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			if err == nil {
 				// apply batch and delete sync point as diff sync is finished
 				err = cho.db.Apply(s.batch, cho.opts.PebbleWriteOptions)
-				s.closed = true
+				// db.Apply doesn't return the batch to the pool on its own,
+				// so close it explicitly to avoid leaking a pool slot.
+				_ = s.batch.Close()
+				s.batch = nil
 				cho.syncs.Delete(id)
 				cho.log.InfoCtx(ctx, "applied diff batch and deleted it", "id", id)
 			}
@@ -838,12 +842,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			cho.log.InfoCtx(ctx, "received session end", "id", id.String(), "data", string(body))
 			// close and delete sync point if not already
 			if s, ok := cho.syncs.Load(id); ok {
-				s.mu.Lock()
-				if !s.closed {
-					s.batch.Close()
-					s.closed = true
-				}
-				s.mu.Unlock()
+				s.close()
 			}
 			cho.syncs.Delete(id)
 		case 'P': // ping noop
