@@ -16,12 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func init() {
-	// Override the package-level cleanSyncs interval so the real cleanSyncs
-	// goroutine fires frequently during tests instead of every 60s.
-	cleanSyncInterval = 1 * time.Second
-}
-
 // makeHPacket constructs a synthetic 'H' handshake packet.
 func makeHPacket(syncID rdx.ID, vv rdx.VV) []byte {
 	vvTlv := vv.TLV()

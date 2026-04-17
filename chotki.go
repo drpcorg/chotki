@@ -782,12 +782,11 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 				cho.syncs.Delete(s)
 				cho.log.InfoCtx(ctx, "deleted active sync", "id", s.String())
 			}
-			sp := &syncPoint{batch: d, start: time.Now()}
-			sp.mu.Lock()
-			cho.syncs.Store(id, sp)
-			cho.log.InfoCtx(ctx, "created new sync point", "id", id.String())
 			err = cho.ApplyH(id, ref, body, d)
-			sp.mu.Unlock()
+			// Store after ApplyH so no goroutine can Load the sync point
+			// until the batch is fully initialized.
+			cho.syncs.Store(id, &syncPoint{batch: d, start: time.Now()})
+			cho.log.InfoCtx(ctx, "created new sync point", "id", id.String())
 
 		case 'D': // diff packet
 			// load sync point if exists
@@ -797,8 +796,11 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			}
 			s.mu.Lock()
 			if s.closed {
+				// Sync already completed or cleaned up — skip silently.
+				// Returning an error here would kill the Syncer session.
 				s.mu.Unlock()
-				return ErrSyncUnknown
+				noApply = true
+				continue
 			}
 			err = cho.ApplyD(id, ref, body, s.batch)
 			s.mu.Unlock()
@@ -813,8 +815,10 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			}
 			s.mu.Lock()
 			if s.closed {
+				// Sync already completed or cleaned up — skip silently.
 				s.mu.Unlock()
-				return ErrSyncUnknown
+				noApply = true
+				continue
 			}
 			DiffSyncSize.Observe(float64(s.batch.Len()))
 			// update blocks version vectors
