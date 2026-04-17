@@ -53,6 +53,8 @@ var (
 	ErrCausalityBroken = errors.New("chotki: order fail: refs an unknown op")
 )
 
+var cleanSyncInterval = time.Minute
+
 var EventsMetric = prometheus.NewCounter(prometheus.CounterOpts{
 	Namespace: "chotki",
 	Name:      "packet_count",
@@ -110,7 +112,7 @@ type Options struct {
 	TcpWriteBufferSize         int
 	WriteTimeout               time.Duration
 	TlsConfig                  *tls.Config
-	MaxSyncDuration            time.Duration
+	MaxSyncDuration time.Duration
 }
 
 func (o *Options) SetDefaults() {
@@ -186,8 +188,10 @@ type CallHook struct {
 }
 
 type syncPoint struct {
-	batch *pebble.Batch
-	start time.Time
+	mu     sync.Mutex
+	batch  *pebble.Batch
+	start  time.Time
+	closed bool
 }
 
 // Main Chotki struct
@@ -243,7 +247,12 @@ func (cho *Chotki) cleanSyncs(ctx context.Context) {
 	for ctx.Err() == nil {
 		cho.syncs.Range(func(id rdx.ID, s *syncPoint) bool {
 			if time.Since(s.start) > cho.opts.MaxSyncDuration {
-				s.batch.Close()
+				s.mu.Lock()
+				if !s.closed {
+					s.batch.Close()
+					s.closed = true
+				}
+				s.mu.Unlock()
 				cho.syncs.Delete(id)
 				cho.log.WarnCtx(ctx, "diff sync took too long", "id", id, "duration", time.Since(s.start))
 			}
@@ -252,7 +261,7 @@ func (cho *Chotki) cleanSyncs(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(time.Minute):
+		case <-time.After(cleanSyncInterval):
 		}
 	}
 }
@@ -407,6 +416,15 @@ func (cho *Chotki) Close() error {
 	}
 
 	cho.outq.Clear()
+	cho.syncs.Range(func(id rdx.ID, s *syncPoint) bool {
+		s.mu.Lock()
+		if !s.closed {
+			s.batch.Close()
+			s.closed = true
+		}
+		s.mu.Unlock()
+		return true
+	})
 	cho.syncs.Clear()
 	cho.hooks.Clear()
 	cho.types.Clear()
@@ -752,13 +770,24 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 				}
 				return true
 			})
-			for _, sync := range activeSyncs {
-				cho.syncs.Delete(sync)
-				cho.log.InfoCtx(ctx, "deleted active sync", "id", sync.String())
+			for _, s := range activeSyncs {
+				if old, ok := cho.syncs.Load(s); ok {
+					old.mu.Lock()
+					if !old.closed {
+						old.batch.Close()
+						old.closed = true
+					}
+					old.mu.Unlock()
+				}
+				cho.syncs.Delete(s)
+				cho.log.InfoCtx(ctx, "deleted active sync", "id", s.String())
 			}
-			cho.syncs.Store(id, &syncPoint{batch: d, start: time.Now()})
+			sp := &syncPoint{batch: d, start: time.Now()}
+			sp.mu.Lock()
+			cho.syncs.Store(id, sp)
 			cho.log.InfoCtx(ctx, "created new sync point", "id", id.String())
 			err = cho.ApplyH(id, ref, body, d)
+			sp.mu.Unlock()
 
 		case 'D': // diff packet
 			// load sync point if exists
@@ -766,7 +795,13 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			if !ok {
 				return ErrSyncUnknown
 			}
+			s.mu.Lock()
+			if s.closed {
+				s.mu.Unlock()
+				return ErrSyncUnknown
+			}
 			err = cho.ApplyD(id, ref, body, s.batch)
+			s.mu.Unlock()
 			// we use separate batch, so noApply is true
 			noApply = true
 
@@ -776,21 +811,36 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			if !ok {
 				return ErrSyncUnknown
 			}
+			s.mu.Lock()
+			if s.closed {
+				s.mu.Unlock()
+				return ErrSyncUnknown
+			}
 			DiffSyncSize.Observe(float64(s.batch.Len()))
 			// update blocks version vectors
 			err = cho.ApplyV(id, ref, body, s.batch)
 			if err == nil {
-				// apply batch anddelete sync point as diff sync is finished
+				// apply batch and delete sync point as diff sync is finished
 				err = cho.db.Apply(s.batch, cho.opts.PebbleWriteOptions)
+				s.closed = true
 				cho.syncs.Delete(id)
 				cho.log.InfoCtx(ctx, "applied diff batch and deleted it", "id", id)
 			}
+			s.mu.Unlock()
 			// we don't want to apply the batch as we already applied it
 			noApply = true
 
 		case 'B': // session end
 			cho.log.InfoCtx(ctx, "received session end", "id", id.String(), "data", string(body))
-			// delete sync point if not already
+			// close and delete sync point if not already
+			if s, ok := cho.syncs.Load(id); ok {
+				s.mu.Lock()
+				if !s.closed {
+					s.batch.Close()
+					s.closed = true
+				}
+				s.mu.Unlock()
+			}
 			cho.syncs.Delete(id)
 		case 'P': // ping noop
 		default:
