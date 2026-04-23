@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -20,6 +21,32 @@ import (
 	"github.com/drpcorg/chotki/utils"
 	"github.com/stretchr/testify/assert"
 )
+
+// waitClassFields polls cho.ClassFields until the fields match the expected
+// schema (excluding the implicit parent-class entry at index 0) or the
+// timeout expires. Live-sync is async, so a check right after NewClass on
+// the other replica can legitimately miss the update on slow machines.
+// cho.types is evicted for cid on every attempt: types.Clear() inside drain
+// can race with a concurrent reader and cache a stale schema that would
+// otherwise never be refreshed until another 'C' packet arrives.
+func waitClassFields(cho *Chotki, cid rdx.ID, expected classes.Fields, timeout time.Duration) (classes.Fields, error) {
+	deadline := time.Now().Add(timeout)
+	var (
+		sc  classes.Fields
+		err error
+	)
+	for {
+		cho.types.Delete(cid)
+		sc, err = cho.ClassFields(cid)
+		if err == nil && len(sc) > 0 && reflect.DeepEqual(expected, sc[1:]) {
+			return sc, nil
+		}
+		if time.Now().After(deadline) {
+			return sc, err
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
 
 type FeedCloserTest struct{}
 
@@ -512,12 +539,17 @@ func TestChotki_ClassEdit_Live(t *testing.T) {
 	_, err = b.ClassFields(cid)
 	assert.Error(t, err)
 
+	// Syncer.Name must be the peer name, not the own replica name: Broadcast
+	// filters outq by except=sync.Name, so it has to match the outq key of
+	// the peer-facing hose (matches how production wires it in chotki.go).
+	// With Name="a" (own replica name) in A's Syncer, the filter never
+	// matched outq["b"] and every re-broadcast bounced right back into B.
 	synca := replication.Syncer{
 		Host:       a,
 		PingPeriod: 100 * time.Second,
 		PingWait:   3 * time.Second,
 		Mode:       replication.SyncRWLive,
-		Name:       "a",
+		Name:       "b",
 		Src:        a.src,
 		Log:        utils.NewDefaultLogger(slog.LevelDebug),
 		Oqueue:     &FeedCloserTest{},
@@ -527,7 +559,7 @@ func TestChotki_ClassEdit_Live(t *testing.T) {
 		PingPeriod: 100 * time.Second,
 		Mode:       replication.SyncRWLive,
 		PingWait:   3 * time.Second,
-		Name:       "b",
+		Name:       "a",
 		Src:        b.src,
 		Log:        utils.NewDefaultLogger(slog.LevelDebug),
 		Oqueue:     &FeedCloserTest{},
@@ -540,9 +572,8 @@ func TestChotki_ClassEdit_Live(t *testing.T) {
 
 	go protocol.PumpCtx(ctx, &synca, &syncb)
 	go protocol.PumpCtx(ctx, &syncb, &synca)
-	time.Sleep(time.Millisecond * 10)
 
-	sc, err = b.ClassFields(cid)
+	sc, err = waitClassFields(b, cid, classes.Fields(Schema), 5*time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, classes.Fields(Schema), sc[1:])
 
@@ -558,9 +589,7 @@ func TestChotki_ClassEdit_Live(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, classes.Fields(Schema2), sc[1:])
 
-	time.Sleep(10 * time.Millisecond)
-
-	sc, err = b.ClassFields(cid)
+	sc, err = waitClassFields(b, cid, classes.Fields(Schema2), 5*time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, classes.Fields(Schema2), sc[1:])
 
