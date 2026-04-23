@@ -2,6 +2,7 @@ package chotki
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -16,6 +17,37 @@ import (
 
 var SchemaIndex = []classes.Field{
 	{Name: "test", RdxType: rdx.String, Index: classes.HashIndex},
+}
+
+// waitGetByHash polls GetByHash until it finds the object or the timeout
+// expires. Hash indexes on the receiving replica can be populated
+// asynchronously by the reindex worker (see IndexManager.CheckReindexTasks),
+// so a fresh read right after SyncData may legitimately miss the index on
+// slower machines. orm.Clear() is called on every attempt to refresh the
+// snapshot the ORM reads through.
+func waitGetByHash[T NativeObject](t *testing.T, orm *ORM, cid rdx.ID, fid uint32, tlv []byte, timeout time.Duration) (T, error) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var (
+		obj T
+		err error
+	)
+	for {
+		if cerr := orm.Clear(); cerr != nil {
+			return obj, cerr
+		}
+		obj, err = GetByHash[T](orm, cid, fid, tlv)
+		if err == nil {
+			return obj, nil
+		}
+		if !errors.Is(err, chotki_errors.ErrObjectUnknown) {
+			return obj, err
+		}
+		if time.Now().After(deadline) {
+			return obj, err
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 func TestFullScanIndexSync(t *testing.T) {
@@ -135,7 +167,7 @@ func TestHashIndexSyncCreateObject(t *testing.T) {
 	borm := b.ObjectMapper()
 	defer borm.Close()
 
-	test1data, err = GetByHash[*Test](borm, cid, 1, []byte("test1"))
+	test1data, err = waitGetByHash[*Test](t, borm, cid, 1, []byte("test1"), 5*time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, &Test{Test: "test1"}, test1data, "index in sync check after diff sync")
 
@@ -152,9 +184,7 @@ func TestHashIndexSyncCreateObject(t *testing.T) {
 	assert.NoError(t, err)
 	borm.UpdateAll()
 
-	time.Sleep(time.Millisecond * 200)
-	aorm.UpdateAll()
-	test2data, err := GetByHash[*Test](aorm, cid, 1, []byte("test2"))
+	test2data, err := waitGetByHash[*Test](t, aorm, cid, 1, []byte("test2"), 5*time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, &Test{Test: "test2"}, test2data, "index in sync check after live sync")
 }
@@ -217,7 +247,7 @@ func TestHashIndexSyncEditObject(t *testing.T) {
 	borm := b.ObjectMapper()
 	defer borm.Close()
 
-	test1data, err = GetByHash[*Test](borm, cid, 1, []byte("test10"))
+	test1data, err = waitGetByHash[*Test](t, borm, cid, 1, []byte("test10"), 5*time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, &Test{Test: "test10"}, test1data, "index in sync check after diff sync")
 
@@ -233,9 +263,7 @@ func TestHashIndexSyncEditObject(t *testing.T) {
 	borm.Save(context.Background(), test1data)
 	borm.UpdateAll()
 
-	time.Sleep(time.Millisecond * 200)
-	aorm.UpdateAll()
-	test1data, err = GetByHash[*Test](aorm, cid, 1, []byte("test11"))
+	test1data, err = waitGetByHash[*Test](t, aorm, cid, 1, []byte("test11"), 5*time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, &Test{Test: "test11"}, test1data, "index in sync check after live sync")
 }
@@ -276,11 +304,10 @@ func TestHashIndexRepairIndex(t *testing.T) {
 	aorm.UpdateAll()
 
 	testutils.SyncData(a, b)
-	time.Sleep(time.Second * 1)
 
 	borm := b.ObjectMapper()
 	defer borm.Close()
-	test1data, err := GetByHash[*Test](borm, cid, 1, []byte("test1"))
+	test1data, err := waitGetByHash[*Test](t, borm, cid, 1, []byte("test1"), 5*time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, &Test{Test: "test1"}, test1data, "index in sync check after diff sync")
 }
