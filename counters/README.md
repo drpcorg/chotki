@@ -1,59 +1,42 @@
-# AtomicCounter Architecture
+# AtomicCounter & AtomicCounterManager
 
-AtomicCounter provides atomic increment operations in distributed environments while
-optimizing performance through intelligent caching. It supports Natural (increment-only)
-and ZCounter (two-way) types with CRDT merge semantics.
+`AtomicCounter` is a **lock-free** CRDT counter (Natural increment-only or ZCounter
+two-way). `Get`/`Increment` touch only in-memory atomics; an `AtomicCounterManager`
+background goroutine periodically persists the local contribution and reloads other
+replicas' contributions.
 
-## Core Design Principle
+## Model
 
-The counter trades CPU usage for data freshness, but **only for data from other replicas**.
-All writes to the current replica are immediately reflected in the counter value.
-Caching only affects how frequently we read data that arrived via synchronization.
+- Each field tracks `mine` (this replica's contribution, `atomic.Int64`) and `theirs`
+  (the last-loaded sum of all other replicas, `atomic.Int64`).
+- `Get()` returns `mine + theirs`.
+- `Increment(v)` adds to `mine` (Natural rejects `v < 0`).
+- The background goroutine, every `Options.CounterSyncPeriod`, **flushes** every changed
+  field (writes the full `mine` via the normal commit/broadcast path) and **reloads**
+  `theirs` for fields touched since the last tick (idle fields cost nothing).
 
-## How It Works
+Local increments are visible immediately via `Get`. Other replicas' increments become
+visible after the next reload. Obtain a counter with `cho.Counter(rid, offset)`.
 
-The counter uses a lazy loading pattern with time-based caching. When data is requested:
+## Durability tradeoff
 
-1. **Cache Check**: If cached data hasn't expired, return it immediately
-2. **Database Load**: Otherwise, load fresh data from the LSM database
-3. **Parse & Cache**: Parse TLV data into internal structures and cache with expiration
+Increments live in memory between flushes. A **graceful** `Close()` flushes everything; a
+**hard crash** (panic / kill -9 / power loss) loses increments since the last flush. This is
+the deliberate tradeoff for a lock-free hot path. Absent a crash, **no event is missed**:
+each flush writes the full accumulated `mine`, so a skipped or coalesced flush is fully
+recovered by the next one.
 
-For increments, the process is:
+## Forcing a cycle
 
-1. **Load Data**: Get current counter state (cached or from DB)
-2. **Atomic Update**: Use Go's atomic primitives to update the value
-3. **Generate TLV**: Create TLV records for persistence
-4. **Commit**: Write changes to database with CRDT merge semantics
+`cho.SyncCounters(ctx)` runs one flush + full reload synchronously (used in tests and when a
+caller wants an immediate, complete sync). The background ticker uses the same machinery but
+only reloads fields touched since the previous tick (and retries any that failed to load).
 
-## Internal Structure
-
-The counter maintains two internal representations:
-
-- **atomicNcounter**: For Natural counters, uses atomic.Uint64 for thread-safe increments
-- **atomicZCounter**: For ZCounter, uses atomic.Pointer with revision tracking for conflict resolution
-
-## Performance Trade-offs
-
-The design trades CPU usage for freshness of **synchronized data from other replicas**.
-With updatePeriod > 0, the counter caches data to avoid expensive database reads,
-but may return slightly stale values from other replicas. Local writes are always
-immediately visible. With updatePeriod = 0, it always reads fresh synchronized data.
-
-## Thread Safety
-
-Operations are atomic when using a single instance. Multiple instances may have
-race conditions due to the distributed nature of the system.
-
-## Example: Cache vs Local Writes
+## Example
 
 ```go
-counter := NewAtomicCounter(db, objectID, fieldOffset, 1*time.Second)
-
-// Local write - immediately visible
-counter.Increment(ctx, 5)  // Value: 5
-value, _ := counter.Get(ctx)  // Returns 5 immediately
-
-After sync from other replica (value: 10)
-With cache: may still return 5 until cache expires
-Without cache: immediately returns 15 (5 + 10)
+c := cho.Counter(objectID, fieldOffset)
+c.Increment(ctx, 5)   // in-memory; no DB write
+v, _ := c.Get(ctx)    // 5, immediately
+// ... background goroutine flushes within CounterSyncPeriod ...
 ```

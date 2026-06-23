@@ -113,6 +113,7 @@ type Options struct {
 	WriteTimeout               time.Duration
 	TlsConfig                  *tls.Config
 	MaxSyncDuration            time.Duration
+	CounterSyncPeriod          time.Duration // how often the counter manager flushes local contributions and reloads others'
 }
 
 func (o *Options) SetDefaults() {
@@ -151,6 +152,10 @@ func (o *Options) SetDefaults() {
 
 	if o.MaxSyncDuration == 0 {
 		o.MaxSyncDuration = 10 * time.Minute
+	}
+
+	if o.CounterSyncPeriod == 0 {
+		o.CounterSyncPeriod = time.Second
 	}
 
 	o.Merger = &pebble.Merger{
@@ -239,7 +244,7 @@ type Chotki struct {
 	dir          string
 	opts         Options
 	log          utils.Logger
-	counterCache sync.Map
+	counters     *counters.AtomicCounterManager
 	IndexManager *indexes.IndexManager
 
 	outq  *xsync.MapOf[string, protocol.DrainCloser] // queues to broadcast all new packets
@@ -329,6 +334,23 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		waitGroup: &wg,
 	}
 
+	// If Open fails after the background workers start, the caller gets nil and can never
+	// call Close, so stop the workers and release resources here instead.
+	opened := false
+	defer func() {
+		if opened {
+			return
+		}
+		cancel()
+		wg.Wait()
+		if cho.net != nil {
+			_ = cho.net.Close()
+		}
+		if cho.db != nil {
+			_ = cho.db.Close()
+		}
+	}()
+
 	cho.net = network.NewNet(cho.log,
 		func(name string) protocol.FeedDrainCloserTraced { // new connection
 
@@ -384,6 +406,14 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		cho.cleanSyncs(ctx)
 	}()
 
+	cho.counters = counters.NewAtomicCounterManager(&cho, opts.CounterSyncPeriod, cho.log)
+	wg.Add(1)
+	// counters are periodically flushed and reloaded in a separate worker
+	go func() {
+		defer wg.Done()
+		cho.counters.Run(ctx)
+	}()
+
 	if !exists {
 		id0 := rdx.IDFromSrcSeqOff(opts.Src, 0, 0)
 		// apply log0, some default objects for all replicas
@@ -411,6 +441,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 
 	cho.last = vv.GetID(cho.src)
 
+	opened = true
 	return &cho, nil
 }
 
@@ -457,10 +488,17 @@ func (cho *Chotki) Close() error {
 	return nil
 }
 
-// Returns an atomic counter object that can be used to increment/decrement a counter.
-func (cho *Chotki) Counter(rid rdx.ID, offset uint64, updatePeriod time.Duration) *counters.AtomicCounter {
-	counter, _ := cho.counterCache.LoadOrStore(rid.ToOff(offset), counters.NewAtomicCounter(cho, rid, offset, updatePeriod))
-	return counter.(*counters.AtomicCounter)
+// Counter returns a lock-free counter handle for the given object field. Get/Increment are
+// lock-free and DB-free; the background goroutine flushes the local contribution and reloads
+// other replicas' on a single cadence. Increments are lost on a hard crash (a graceful Close
+// flushes).
+func (cho *Chotki) Counter(rid rdx.ID, offset uint64) *counters.AtomicCounter {
+	return cho.counters.Counter(rid, offset)
+}
+
+// SyncCounters forces one flush+reload cycle of all counters.
+func (cho *Chotki) SyncCounters(ctx context.Context) {
+	cho.counters.Cycle(ctx)
 }
 
 // Returns the source id of the Chotki instance.
