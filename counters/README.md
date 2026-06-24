@@ -11,9 +11,10 @@ replicas' contributions.
   (the last-loaded sum of all other replicas, `atomic.Int64`).
 - `Get()` returns `mine + theirs`.
 - `Increment(v)` adds to `mine` (Natural rejects `v < 0`).
-- The background goroutine, every `Options.CounterSyncPeriod`, **flushes** every changed
-  field (writes the full `mine` via the normal commit/broadcast path) and **reloads**
-  `theirs` for fields touched since the last tick (idle fields cost nothing).
+- The background goroutine, every `Options.CounterSyncPeriod`, **flushes** all changed fields
+  (writing each one's full `mine`) in **batched commits** — up to 1024 fields per Pebble batch
+  + broadcast — and **reloads** `theirs` for fields touched since the last tick (idle fields
+  cost nothing).
 
 Local increments are visible immediately via `Get`. Other replicas' increments become
 visible after the next reload. Obtain a counter with `cho.Counter(rid, offset)`.

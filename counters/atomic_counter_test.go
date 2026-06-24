@@ -20,8 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// openReplica opens a fresh chotki replica. A long period keeps the background goroutine
-// from firing during tests, so cycles can be driven deterministically via SyncCounters.
+// openReplica opens a fresh replica; a long period prevents background cycles so tests drive them manually.
 func openReplica(t *testing.T, src uint64, period time.Duration) *chotki.Chotki {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "*")
@@ -37,8 +36,7 @@ func openReplica(t *testing.T, src uint64, period time.Duration) *chotki.Chotki 
 	return cho
 }
 
-// newCounterObject creates a class with an N field (offset 1) and a Z field (offset 2)
-// and an object of that class, returning the object id.
+// newCounterObject creates a class with an N field (offset 1) and a Z field (offset 2), then returns the object id.
 func newCounterObject(t *testing.T, cho *chotki.Chotki) rdx.ID {
 	t.Helper()
 	cid, err := cho.NewClass(context.Background(), rdx.ID0,
@@ -55,8 +53,7 @@ func newCounterObject(t *testing.T, cho *chotki.Chotki) rdx.ID {
 	return rid
 }
 
-// persistedN reads the Natural field's persisted total straight from the DB, bypassing any
-// in-memory counter state, so it actually verifies that a flush happened.
+// persistedN reads the Natural field's total directly from the DB, bypassing in-memory state.
 func persistedN(t *testing.T, cho *chotki.Chotki, rid rdx.ID, offset uint64) int64 {
 	t.Helper()
 	rdt, tlv, err := cho.ObjectFieldTLV(rid.ToOff(offset))
@@ -81,7 +78,7 @@ func TestAtomicCounter(t *testing.T) {
 	a := openReplica(t, 0x1a, time.Hour)
 	rid := newCounterObject(t, a)
 
-	// Two handles for the same field share one state and stay consistent.
+	// Two handles for the same field share state.
 	ca := a.Counter(rid, 1)
 	cb := a.Counter(rid, 1)
 
@@ -109,14 +106,13 @@ func TestBatchedNoLossNatural(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	// Local increments are visible immediately, before any flush.
+	// Local increments are visible before flush; DB is 0 until a cycle runs.
 	got, err := c.Get(ctx)
 	assert.NoError(t, err)
 	assert.EqualValues(t, 5, got)
-	// ...but nothing is in the DB yet (no cycle ran).
 	assert.EqualValues(t, 0, persistedN(t, a, rid, 1))
 
-	// One cycle flushes; a fresh DB read (not the in-memory mine) confirms persistence.
+	// One cycle flushes; fresh DB read confirms persistence.
 	a.SyncCounters(ctx)
 	assert.EqualValues(t, 5, persistedN(t, a, rid, 1))
 
@@ -139,10 +135,10 @@ func TestBatchedZCounterTwoWay(t *testing.T) {
 	got, err := cz.Get(ctx)
 	assert.NoError(t, err)
 	assert.EqualValues(t, 7, got)
-	assert.EqualValues(t, 0, persistedZ(t, a, rid, 2)) // not flushed yet
+	assert.EqualValues(t, 0, persistedZ(t, a, rid, 2)) // unflushed
 
 	a.SyncCounters(ctx)
-	assert.EqualValues(t, 7, persistedZ(t, a, rid, 2)) // fresh DB read
+	assert.EqualValues(t, 7, persistedZ(t, a, rid, 2))
 
 	got, err = cz.Get(ctx)
 	assert.NoError(t, err)
@@ -164,17 +160,17 @@ func TestNotLoadedThenRetry(t *testing.T) {
 	b := openReplica(t, 0x1b, time.Hour)
 	rid := newCounterObject(t, a)
 
-	// b does not have the object yet -> initial load fails -> not loaded.
+	// b lacks the object -> initial load fails.
 	cb := b.Counter(rid, 1)
 	_, err := cb.Get(ctx)
 	assert.ErrorIs(t, err, counters.ErrCounterNotLoaded)
 
-	// Give a a value, propagate to b, then a cycle on b retries the load.
+	// Propagate a value to b; b's next cycle retries the load.
 	ca := a.Counter(rid, 1)
 	_, err = ca.Increment(ctx, 4)
 	assert.NoError(t, err)
 	a.SyncCounters(ctx)
-	testutils.SyncData(a, b) // returns io.EOF on normal completion; discard like the rest of the codebase
+	testutils.SyncData(a, b) // returns io.EOF on normal completion
 	b.SyncCounters(ctx)
 
 	got, err := cb.Get(ctx)
@@ -227,7 +223,7 @@ func TestEventualConsistencyTwoReplicas(t *testing.T) {
 	_, err = cb.Increment(ctx, 5)
 	assert.NoError(t, err)
 
-	// Bounded staleness: before any sync, each replica sees only its own contribution.
+	// Before sync, each replica sees only its own contribution.
 	gotA0, err := ca.Get(ctx)
 	assert.NoError(t, err)
 	assert.EqualValues(t, 3, gotA0)
@@ -235,7 +231,7 @@ func TestEventualConsistencyTwoReplicas(t *testing.T) {
 	assert.NoError(t, err)
 	assert.EqualValues(t, 5, gotB0)
 
-	// Flush both, exchange, reload both.
+	// Flush, exchange, reload both sides.
 	a.SyncCounters(ctx)
 	b.SyncCounters(ctx)
 	testutils.SyncData(a, b)
@@ -250,8 +246,7 @@ func TestEventualConsistencyTwoReplicas(t *testing.T) {
 	assert.EqualValues(t, 8, gotB)
 }
 
-// Headline guarantee: absent a crash, no event is missed. Every increment on A eventually
-// shows up on B, exactly.
+// Headline: no missed events — every increment on A must appear on B exactly.
 func TestNoMissedEventsOverManyCycles(t *testing.T) {
 	ctx := context.Background()
 	a := openReplica(t, 0x1a, time.Hour)
@@ -296,7 +291,7 @@ func TestManyCountersOneCycle(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	a.SyncCounters(ctx) // one cycle flushes + reloads all of them
+	a.SyncCounters(ctx) // one cycle flushes all 50
 
 	for i := 0; i < n; i++ {
 		assert.EqualValues(t, i+1, persistedN(t, a, rids[i], 1))
@@ -311,15 +306,15 @@ func TestGracefulShutdownFlushes(t *testing.T) {
 	a, err := chotki.Open(dir, chotki.Options{
 		Src: 0x1a, Name: "replica",
 		Options:           pebble.Options{ErrorIfExists: true},
-		CounterSyncPeriod: time.Hour, // no background cycle; rely on shutdown flush
+		CounterSyncPeriod: time.Hour, // no background cycle; flush happens on Close
 	})
 	assert.NoError(t, err)
 	rid := newCounterObject(t, a)
 
 	c := a.Counter(rid, 1)
-	_, err = c.Increment(ctx, 5) // lock-free; NOT yet flushed (no cycle ran)
+	_, err = c.Increment(ctx, 5) // not yet flushed
 	assert.NoError(t, err)
-	assert.NoError(t, a.Close()) // graceful shutdown must flush the 5
+	assert.NoError(t, a.Close()) // shutdown must flush the 5
 
 	// Reopen the same directory (it now exists).
 	a2, err := chotki.Open(dir, chotki.Options{
@@ -331,13 +326,12 @@ func TestGracefulShutdownFlushes(t *testing.T) {
 	defer a2.Close()
 
 	assert.EqualValues(t, 5, persistedN(t, a2, rid, 1))
-	got, err := a2.Counter(rid, 1).Get(ctx) // fresh handle, mine loaded from DB
+	got, err := a2.Counter(rid, 1).Get(ctx) // fresh handle loaded from DB
 	assert.NoError(t, err)
 	assert.EqualValues(t, 5, got)
 }
 
-// Z counters carry a per-source revision that must be restored from the DB on reopen, or a
-// post-reopen flush could emit a stale revision and be dropped by the merge (silent loss).
+// Z counters carry a per-source revision; it must survive reopen or a post-reopen flush emits a stale rev and is silently dropped.
 func TestZCounterRevisionAcrossReopen(t *testing.T) {
 	ctx := context.Background()
 	dir, err := os.MkdirTemp("", "*")
@@ -352,7 +346,7 @@ func TestZCounterRevisionAcrossReopen(t *testing.T) {
 	rid := newCounterObject(t, a)
 	_, err = a.Counter(rid, 2).Increment(ctx, 7)
 	assert.NoError(t, err)
-	a.SyncCounters(ctx) // flush Z at rev 1
+	a.SyncCounters(ctx) // persists Z at rev 1
 	assert.NoError(t, a.Close())
 
 	a2, err := chotki.Open(dir, chotki.Options{
@@ -361,7 +355,7 @@ func TestZCounterRevisionAcrossReopen(t *testing.T) {
 		CounterSyncPeriod: time.Hour,
 	})
 	assert.NoError(t, err)
-	got, err := a2.Counter(rid, 2).Increment(ctx, 3) // must use rev 2 (> persisted rev 1)
+	got, err := a2.Counter(rid, 2).Increment(ctx, 3) // must use rev 2 > persisted rev 1
 	assert.NoError(t, err)
 	assert.EqualValues(t, 10, got)
 	a2.SyncCounters(ctx)
@@ -374,14 +368,13 @@ func TestZCounterRevisionAcrossReopen(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	defer a3.Close()
-	assert.EqualValues(t, 10, persistedZ(t, a3, rid, 2)) // both flush generations survived
+	assert.EqualValues(t, 10, persistedZ(t, a3, rid, 2)) // both flush generations persisted
 	got, err = a3.Counter(rid, 2).Get(ctx)
 	assert.NoError(t, err)
 	assert.EqualValues(t, 10, got)
 }
 
-// Many goroutines creating the same counter must all share one state (so increments add up
-// rather than diverging) and be race-free.
+// Concurrent Counter() calls for the same field must all share one state and be race-free.
 func TestConcurrentCounterCreation(t *testing.T) {
 	ctx := context.Background()
 	a := openReplica(t, 0x1a, time.Hour)
@@ -399,7 +392,7 @@ func TestConcurrentCounterCreation(t *testing.T) {
 	}
 	wg.Wait()
 
-	// All handles share one state: one increment via each totals n, not 1.
+	// All handles share state: n increments of 1 must total n.
 	for _, h := range handles {
 		_, err := h.Increment(ctx, 1)
 		assert.NoError(t, err)
@@ -412,61 +405,56 @@ func TestConcurrentCounterCreation(t *testing.T) {
 	assert.EqualValues(t, n, persistedN(t, a, rid, 1))
 }
 
-// flushFaultHost wraps a host and fails CommitPacket for one object ref when armed.
-type flushFaultHost struct {
+// batchFaultHost wraps a host and fails the whole CommitBatch when armed.
+type batchFaultHost struct {
 	host.Host
-	failRef rdx.ID
-	fail    atomic.Bool
+	fail atomic.Bool
 }
 
-func (f *flushFaultHost) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body protocol.Records) (rdx.ID, error) {
-	if f.fail.Load() && ref == f.failRef {
-		return rdx.BadId, fmt.Errorf("injected flush failure")
+func (f *batchFaultHost) CommitBatch(ctx context.Context, edits []host.Edit) error {
+	if f.fail.Load() {
+		return fmt.Errorf("injected batch flush failure")
 	}
-	return f.Host.CommitPacket(ctx, lit, ref, body)
+	return f.Host.CommitBatch(ctx, edits)
 }
 
-// One counter's flush failure must not block the others, must not advance its lastSynced,
-// and must be retried (no increment lost) once the fault clears.
-func TestFlushFailureIsolation(t *testing.T) {
+// Batch commit failure is all-or-nothing: nothing persisted, nothing marked; retained increments flush on the next cycle.
+func TestBatchFlushFailureRetried(t *testing.T) {
 	ctx := context.Background()
 	a := openReplica(t, 0x1a, time.Hour)
 
 	cid, err := a.NewClass(ctx, rdx.ID0, classes.Field{Name: "n", RdxType: rdx.Natural})
 	assert.NoError(t, err)
-	goodRid, err := a.NewObjectTLV(ctx, cid, protocol.Records{protocol.Record('N', rdx.Ntlv(0))})
+	rid1, err := a.NewObjectTLV(ctx, cid, protocol.Records{protocol.Record('N', rdx.Ntlv(0))})
 	assert.NoError(t, err)
-	badRid, err := a.NewObjectTLV(ctx, cid, protocol.Records{protocol.Record('N', rdx.Ntlv(0))})
+	rid2, err := a.NewObjectTLV(ctx, cid, protocol.Records{protocol.Record('N', rdx.Ntlv(0))})
 	assert.NoError(t, err)
 
-	fh := &flushFaultHost{Host: a, failRef: badRid.ZeroOff()}
+	fh := &batchFaultHost{Host: a}
 	mgr := counters.NewAtomicCounterManager(fh, 0, nil)
-	good := mgr.Counter(goodRid, 1)
-	bad := mgr.Counter(badRid, 1)
-	_, err = good.Increment(ctx, 3)
+	_, err = mgr.Counter(rid1, 1).Increment(ctx, 3)
 	assert.NoError(t, err)
-	_, err = bad.Increment(ctx, 7)
+	_, err = mgr.Counter(rid2, 1).Increment(ctx, 7)
 	assert.NoError(t, err)
 
 	fh.fail.Store(true)
-	mgr.Cycle(ctx) // good flushes; bad's flush fails
-
-	assert.EqualValues(t, 3, persistedN(t, a, goodRid, 1)) // isolated: good still persisted
-	assert.EqualValues(t, 0, persistedN(t, a, badRid, 1))  // bad did not persist
+	mgr.Cycle(ctx) // batch fails: nothing persisted
+	assert.EqualValues(t, 0, persistedN(t, a, rid1, 1))
+	assert.EqualValues(t, 0, persistedN(t, a, rid2, 1))
 
 	fh.fail.Store(false)
-	mgr.Cycle(ctx) // bad retries with its full mine
-
-	assert.EqualValues(t, 7, persistedN(t, a, badRid, 1)) // no increment lost
+	mgr.Cycle(ctx) // retry flushes retained increments
+	assert.EqualValues(t, 3, persistedN(t, a, rid1, 1))
+	assert.EqualValues(t, 7, persistedN(t, a, rid2, 1))
 }
 
-// The production background ticker (not just the manual SyncCounters path) must flush.
+// The background ticker (not just manual SyncCounters) must flush counters.
 func TestBackgroundTimerFlushes(t *testing.T) {
 	ctx := context.Background()
 	a := openReplica(t, 0x1a, 20*time.Millisecond) // real, short period
 
 	rid := newCounterObject(t, a)
-	_, err := a.Counter(rid, 1).Increment(ctx, 9) // batched; NO manual SyncCounters
+	_, err := a.Counter(rid, 1).Increment(ctx, 9) // no manual SyncCounters
 	assert.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
@@ -479,9 +467,7 @@ func TestBackgroundTimerFlushes(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 }
 
-// A field whose baseline load fails (object not yet replicated) must keep being retried by
-// the background ticker until the data arrives — even if it is never re-accessed after the
-// retry signal is consumed.
+// A failed baseline load must keep being retried by the ticker until data arrives, even if never re-accessed.
 func TestNotLoadedRetriedByBackgroundTick(t *testing.T) {
 	ctx := context.Background()
 	a := openReplica(t, 0x1a, time.Hour)
@@ -492,19 +478,64 @@ func TestNotLoadedRetriedByBackgroundTick(t *testing.T) {
 	assert.NoError(t, err)
 	a.SyncCounters(ctx)
 
-	cb := b.Counter(rid, 1) // initial load fails: b lacks the object
-	_, err = cb.Get(ctx)    // arms the accessed retry signal
+	cb := b.Counter(rid, 1) // load fails: b lacks the object
+	_, err = cb.Get(ctx)    // arms the accessed-retry signal
 	assert.ErrorIs(t, err, counters.ErrCounterNotLoaded)
 
-	// Let a tick consume the accessed signal while the data is still absent (load fails),
-	// so recovery can only come from retrying an unloaded field — not from the stale signal.
+	// Let a tick consume the accessed signal while data is still absent, so recovery
+	// can only come from retrying unloaded fields — not the stale signal.
 	time.Sleep(100 * time.Millisecond)
 	testutils.SyncData(a, b) // b now has the object
 
-	// Wait on the ticker alone; do NOT call Get during the wait (a Get would re-arm the
-	// retry and mask a regression). One settled Get afterwards must see the value.
+	// Wait for ticker alone; no Get during wait (would re-arm retry, masking regressions).
 	time.Sleep(400 * time.Millisecond)
 	got, err := cb.Get(ctx)
 	assert.NoError(t, err)
 	assert.EqualValues(t, 6, got)
+}
+
+// Increments from many goroutines concurrent with flush cycles; must be race-free and lose no increments.
+func TestConcurrentIncrementDuringCycles(t *testing.T) {
+	ctx := context.Background()
+	a := openReplica(t, 0x1a, time.Hour) // manual cycles maximize contention
+	rid := newCounterObject(t, a)
+	c := a.Counter(rid, 1)
+
+	const goroutines, perG = 8, 200
+	stop := make(chan struct{})
+	var cyc sync.WaitGroup
+	cyc.Add(1)
+	go func() {
+		defer cyc.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				a.SyncCounters(ctx) // flush+reload concurrent with increments
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perG; i++ {
+				if _, err := c.Increment(ctx, 1); err != nil {
+					t.Errorf("increment: %v", err)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(stop)
+	cyc.Wait()
+
+	a.SyncCounters(ctx) // final flush
+	assert.EqualValues(t, goroutines*perG, persistedN(t, a, rid, 1))
+	got, err := c.Get(ctx)
+	assert.NoError(t, err)
+	assert.EqualValues(t, goroutines*perG, got)
 }

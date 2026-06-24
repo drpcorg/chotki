@@ -6,14 +6,13 @@ import (
 	"time"
 
 	"github.com/drpcorg/chotki/host"
+	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/drpcorg/chotki/utils"
 )
 
-// AtomicCounterManager owns the per-field AtomicCounters, a mutex that serializes all DB I/O
-// (load/flush), and a background goroutine that periodically flushes local contributions and
-// reloads others'. The hot path (Counter().Get/Increment) never takes the mutex, so the
-// goroutine can never block it.
+// AtomicCounterManager owns per-field AtomicCounters; a mutex serializes DB I/O while the hot
+// path (Get/Increment) never takes it.
 type AtomicCounterManager struct {
 	mu     sync.Mutex
 	period time.Duration
@@ -26,9 +25,8 @@ func NewAtomicCounterManager(db host.Host, period time.Duration, log utils.Logge
 	return &AtomicCounterManager{db: db, period: period, log: log}
 }
 
-// Counter returns the counter for (rid, offset), creating it on first use. On creation it
-// attempts the baseline load; on failure the counter stays unloaded (Get/Increment return
-// ErrCounterNotLoaded) and the background tick retries the load every cycle until it succeeds.
+// Counter returns the counter for (rid, offset), creating it on first use; failed initial loads
+// are retried each background cycle.
 func (m *AtomicCounterManager) Counter(rid rdx.ID, offset uint64) *AtomicCounter {
 	key := rid.ToOff(offset)
 	if existing, ok := m.states.Load(key); ok {
@@ -37,7 +35,7 @@ func (m *AtomicCounterManager) Counter(rid rdx.ID, offset uint64) *AtomicCounter
 	c := newAtomicCounter(m.db, rid, offset)
 	actual, loaded := m.states.LoadOrStore(key, c)
 	if loaded {
-		return actual.(*AtomicCounter) // someone else won the race; use theirs
+		return actual.(*AtomicCounter) // lost the race; use the winner's counter
 	}
 	m.mu.Lock()
 	if err := c.load(); err != nil && m.log != nil {
@@ -47,26 +45,19 @@ func (m *AtomicCounterManager) Counter(rid rdx.ID, offset uint64) *AtomicCounter
 	return c
 }
 
-// Cycle forces one flush + full reload pass over every counter under the mutex. Used by the
-// explicit Chotki.SyncCounters entry point (and tests) when the caller wants everything synced.
+// Cycle forces a flush + full reload of all counters; used by SyncCounters and tests.
 func (m *AtomicCounterManager) Cycle(ctx context.Context) {
 	m.cycle(ctx, true)
 }
 
-// cycle flushes every dirty counter, then reloads either every counter (force) or only the
-// ones touched since the last cycle / still unloaded (the background tick uses force=false so
-// idle loaded counters cost nothing beyond a cheap flush no-op).
+// cycle flushes dirty counters, then reloads all (force) or only touched/unloaded ones (background tick uses force=false).
 func (m *AtomicCounterManager) cycle(ctx context.Context, force bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.flushAllLocked(ctx)
+	// Swap runs unconditionally to clear the accessed flag even when skipping reload.
 	m.states.Range(func(_, v any) bool {
 		c := v.(*AtomicCounter)
-		if err := c.flush(ctx); err != nil && m.log != nil {
-			m.log.Warn("counter flush failed", "rid", c.rid.String(), "offset", c.offset, "err", err)
-		}
-		// Reload when: a hot-path op touched it (refresh theirs), a force cycle was requested,
-		// or it never loaded yet (retry the baseline until it succeeds — the Swap must run
-		// unconditionally to clear the accessed flag).
 		if c.accessed.Swap(false) || force || !c.loaded.Load() {
 			if err := c.load(); err != nil && m.log != nil {
 				m.log.Warn("counter load failed", "rid", c.rid.String(), "offset", c.offset, "err", err)
@@ -76,8 +67,54 @@ func (m *AtomicCounterManager) cycle(ctx context.Context, force bool) {
 	})
 }
 
-// Run is the background goroutine: it runs a (gated) cycle every period and performs a final
-// flush when ctx is cancelled (so a graceful Close persists everything).
+type pendingMark struct {
+	c        *AtomicCounter
+	syncedTo int64
+}
+
+// maxFlushBatch caps edits per CommitBatch; a var so tests can shrink it.
+var maxFlushBatch = 1024
+
+// flushAllLocked commits changed counters in maxFlushBatch chunks; failed chunks are retried next
+// cycle. Caller holds m.mu.
+func (m *AtomicCounterManager) flushAllLocked(ctx context.Context) {
+	var edits []host.Edit
+	var marks []pendingMark
+	m.states.Range(func(_, v any) bool {
+		c := v.(*AtomicCounter)
+		changed, rdt, op, syncedTo := c.pendingFlush()
+		if !changed {
+			return true
+		}
+		edits = append(edits, host.Edit{
+			Ref: c.rid.ZeroOff(),
+			Body: protocol.Records{
+				protocol.Record('F', rdx.ZipUint64(c.offset)),
+				protocol.Record(rdt, op),
+			},
+		})
+		marks = append(marks, pendingMark{c, syncedTo})
+		return true
+	})
+	// Each chunk is all-or-nothing; a failed chunk is retried next cycle.
+	for start := 0; start < len(edits); start += maxFlushBatch {
+		end := start + maxFlushBatch
+		if end > len(edits) {
+			end = len(edits)
+		}
+		if err := m.db.CommitBatch(ctx, edits[start:end]); err != nil {
+			if m.log != nil {
+				m.log.Warn("counter batch flush failed", "edits", end-start, "err", err)
+			}
+			continue // this chunk is retried next cycle
+		}
+		for _, mk := range marks[start:end] {
+			mk.c.markSynced(mk.syncedTo)
+		}
+	}
+}
+
+// Run is the background goroutine; ticks cycle every period and flushes on shutdown.
 func (m *AtomicCounterManager) Run(ctx context.Context) {
 	if m.period <= 0 {
 		<-ctx.Done()
@@ -100,12 +137,6 @@ func (m *AtomicCounterManager) Run(ctx context.Context) {
 func (m *AtomicCounterManager) flushOnShutdown() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// CommitPacket strips cancellation internally, so Background is safe here.
-	m.states.Range(func(_, v any) bool {
-		c := v.(*AtomicCounter)
-		if err := c.flush(context.Background()); err != nil && m.log != nil {
-			m.log.Warn("counter shutdown flush failed", "rid", c.rid.String(), "offset", c.offset, "err", err)
-		}
-		return true
-	})
+	// CommitBatch ignores cancellation internally, so Background is safe.
+	m.flushAllLocked(context.Background())
 }

@@ -113,7 +113,7 @@ type Options struct {
 	WriteTimeout               time.Duration
 	TlsConfig                  *tls.Config
 	MaxSyncDuration            time.Duration
-	CounterSyncPeriod          time.Duration // how often the counter manager flushes local contributions and reloads others'
+	CounterSyncPeriod          time.Duration // flush+reload cadence for the counter manager
 }
 
 func (o *Options) SetDefaults() {
@@ -334,8 +334,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		waitGroup: &wg,
 	}
 
-	// If Open fails after the background workers start, the caller gets nil and can never
-	// call Close, so stop the workers and release resources here instead.
+	// Guard: if Open fails after workers start, clean up here since the caller has no Close to call.
 	opened := false
 	defer func() {
 		if opened {
@@ -488,17 +487,22 @@ func (cho *Chotki) Close() error {
 	return nil
 }
 
-// Counter returns a lock-free counter handle for the given object field. Get/Increment are
-// lock-free and DB-free; the background goroutine flushes the local contribution and reloads
-// other replicas' on a single cadence. Increments are lost on a hard crash (a graceful Close
-// flushes).
+// Counter returns a lock-free handle for the field; increments are flushed periodically and on Close (hard crash loses them).
 func (cho *Chotki) Counter(rid rdx.ID, offset uint64) *counters.AtomicCounter {
 	return cho.counters.Counter(rid, offset)
 }
 
-// SyncCounters forces one flush+reload cycle of all counters.
+// SyncCounters forces an immediate flush+reload cycle of all counters.
 func (cho *Chotki) SyncCounters(ctx context.Context) {
 	cho.counters.Cycle(ctx)
+}
+
+// ObjectIDByHash resolves an object's id from a hash-indexed first-field value (e.g. a
+// UUID) without allocating a snapshot: it serves from the IndexManager's hash cache
+// (invalidated as objects change) and reads the live DB only on a miss. For hot paths
+// that need just the id, not a consistent object read.
+func (cho *Chotki) ObjectIDByHash(cid rdx.ID, fid uint32, fieldValue []byte) (rdx.ID, error) {
+	return cho.IndexManager.GetByHash(cid, fid, fieldValue, cho.db)
 }
 
 // Returns the source id of the Chotki instance.
@@ -676,6 +680,54 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 	DrainTime.WithLabelValues("commit").Observe(float64(time.Since(now)) / float64(time.Millisecond))
 	cho.Broadcast(ctx, recs, "")
 	return
+}
+
+// CommitBatch applies edits as one all-or-nothing Pebble batch + broadcast. Each edit is stamped in
+// slice order; correctness relies on 'E' ops being commutative Merge calls (no read-back).
+func (cho *Chotki) CommitBatch(ctx context.Context, edits []host.Edit) (err error) {
+	if len(edits) == 0 {
+		return nil
+	}
+	// prevent cancellation as it can make this function non atomic
+	ctx = context.WithoutCancel(ctx)
+
+	now := time.Now()
+	defer func() {
+		DrainTime.WithLabelValues("commitbatch").Observe(float64(time.Since(now)) / float64(time.Millisecond))
+	}()
+	cho.commitMutex.Lock()
+	defer cho.commitMutex.Unlock()
+
+	if cho.db == nil {
+		return chotki_errors.ErrClosed
+	}
+
+	pb := pebble.Batch{}
+	var calls []CallHook
+	recs := make(protocol.Records, 0, len(edits))
+	for _, e := range edits {
+		// stamp next id; IncPro ignores its arg — one call per packet
+		cho.last = cho.last.IncPro(1).ZeroOff()
+		id := cho.last
+		bare := protocol.Join(e.Body...)
+		if err = cho.ApplyE(id, e.Ref, bare, &pb, &calls); err != nil {
+			return err
+		}
+		recs = append(recs, protocol.Record('E',
+			protocol.Record('I', id.ZipBytes()),
+			protocol.Record('R', e.Ref.ZipBytes()),
+			bare))
+	}
+	// keep drain's event accounting in sync
+	EventsMetric.Add(float64(len(recs)))
+	if err = cho.db.Apply(&pb, cho.opts.PebbleWriteOptions); err != nil {
+		return err
+	}
+	cho.Broadcast(ctx, recs, "")
+	for _, call := range calls {
+		go call.hook(cho, call.id)
+	}
+	return nil
 }
 
 type NetCollector struct {

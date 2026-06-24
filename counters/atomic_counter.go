@@ -1,11 +1,6 @@
-// Provides AtomicCounter, a lock-free CRDT counter (Natural increment-only or ZCounter
-// two-way). Increment/Get touch only in-memory atomics; the owning AtomicCounterManager
-// runs a background goroutine that periodically flushes the local contribution (mine) and
-// reloads other replicas' contributions (theirs) on a single cadence.
-//
-// Local increments are visible immediately; other replicas' increments become visible after
-// the next reload. Increments since the last flush are lost on a hard crash (a graceful
-// Close flushes); this is the deliberate tradeoff for a lock-free hot path.
+// Package counters provides AtomicCounter, a lock-free CRDT counter (N or Z).
+// Get/Increment are lock-free; the manager periodically flushes mine and reloads theirs.
+// Increments since last flush are lost on hard crash — deliberate tradeoff for a lock-free hot path.
 package counters
 
 import (
@@ -14,7 +9,6 @@ import (
 	"sync/atomic"
 
 	"github.com/drpcorg/chotki/host"
-	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 )
 
@@ -22,15 +16,14 @@ var ErrNotCounter error = fmt.Errorf("not a counter")
 var ErrCounterNotLoaded error = fmt.Errorf("counter not loaded")
 var ErrDecrementN error = fmt.Errorf("decrementing natural counter")
 
-// AtomicCounter is the in-memory state for one (rid, offset) field. Increment/Get are
-// lock-free; load/flush are mutex-free and assume the caller (the manager) holds its mutex.
+// AtomicCounter is the in-memory state for one (rid, offset) counter field; Increment/Get are lock-free.
 type AtomicCounter struct {
 	data     any    // *nState | *zState; set once on first successful load
 	rid      rdx.ID
 	offset   uint64
 	db       host.Host
 	loaded   atomic.Bool
-	accessed atomic.Bool // set by Get/Increment; tells the background tick to reload
+	accessed atomic.Bool // set by Get/Increment to request a reload on the next background tick
 }
 
 type nState struct {
@@ -48,9 +41,8 @@ func newAtomicCounter(db host.Host, rid rdx.ID, offset uint64) *AtomicCounter {
 	return &AtomicCounter{db: db, rid: rid, offset: offset}
 }
 
-// load reads the field from the DB and refreshes theirs. On the first successful load it also
-// fixes the counter kind (N/Z) and the mine/lastSynced baseline. Mutex-free: the caller (the
-// manager cycle or factory) must hold the manager mutex.
+// load refreshes theirs from DB; on first call sets counter kind and mine/lastSynced baseline.
+// Mutex-free: caller holds the manager mutex.
 func (a *AtomicCounter) load() error {
 	rdt, tlv, err := a.db.ObjectFieldTLV(a.rid.ToOff(a.offset))
 	if err != nil {
@@ -86,48 +78,39 @@ func (a *AtomicCounter) load() error {
 	default:
 		return ErrNotCounter
 	}
-	a.loaded.Store(true) // publish baseline before any lock-free op is accepted
+	a.loaded.Store(true) // publish baseline before any lock-free op
 	return nil
 }
 
-// flush persists the full local contribution if it changed since the last flush, reusing the
-// existing CommitPacket. lastSynced advances only after a successful commit. Mutex-free: the
-// caller must hold the manager mutex.
-func (a *AtomicCounter) flush(ctx context.Context) error {
-	var rdt byte
-	var op []byte
-	var synced int64
+// pendingFlush returns the field-edit op if mine changed since last flush (bumps Z rev); changed=false means nothing to do.
+// Does NOT commit — manager batches via CommitBatch and calls markSynced on success. Mutex-free: caller holds manager mutex.
+func (a *AtomicCounter) pendingFlush() (changed bool, rdt byte, op []byte, syncedTo int64) {
 	switch c := a.data.(type) {
 	case *nState:
 		m := c.mine.Load()
 		if m == c.lastSynced {
-			return nil
+			return false, 0, nil, 0
 		}
-		rdt, op, synced = rdx.Natural, rdx.Ntlvt(uint64(m), a.db.Source()), m
+		return true, rdx.Natural, rdx.Ntlvt(uint64(m), a.db.Source()), m
 	case *zState:
 		m := c.mine.Load()
 		if m == c.lastSynced {
-			return nil
+			return false, 0, nil, 0
 		}
 		c.rev++
-		rdt, op, synced = rdx.ZCounter, rdx.Ztlvt(m, a.db.Source(), c.rev), m
-	default:
-		return nil // not loaded yet: nothing to flush
+		return true, rdx.ZCounter, rdx.Ztlvt(m, a.db.Source(), c.rev), m
 	}
-	body := protocol.Records{
-		protocol.Record('F', rdx.ZipUint64(a.offset)),
-		protocol.Record(rdt, op),
-	}
-	if _, err := a.db.CommitPacket(ctx, 'E', a.rid.ZeroOff(), body); err != nil {
-		return err
-	}
+	return false, 0, nil, 0
+}
+
+// markSynced records that contributions up to syncedTo are persisted. Mutex-free: caller holds manager mutex.
+func (a *AtomicCounter) markSynced(syncedTo int64) {
 	switch c := a.data.(type) {
 	case *nState:
-		c.lastSynced = synced
+		c.lastSynced = syncedTo
 	case *zState:
-		c.lastSynced = synced
+		c.lastSynced = syncedTo
 	}
-	return nil
 }
 
 // value returns mine+theirs (lock-free). Assumes the counter is loaded.
@@ -141,17 +124,16 @@ func (a *AtomicCounter) value() int64 {
 	return 0
 }
 
-// Get returns the current value (mine + last-known others'). Lock-free and DB-free.
+// Get returns mine + last-known others'. Lock-free and DB-free.
 func (a *AtomicCounter) Get(ctx context.Context) (int64, error) {
-	a.accessed.Store(true) // request a reload on the next background tick
+	a.accessed.Store(true)
 	if !a.loaded.Load() {
 		return 0, ErrCounterNotLoaded
 	}
 	return a.value(), nil
 }
 
-// Increment adds val to the local contribution (Natural rejects val < 0) and returns the new
-// value. Lock-free and DB-free; the change is flushed by the manager on the next cycle.
+// Increment adds val to mine (Natural rejects val < 0); flushed by the manager on the next cycle. Lock-free and DB-free.
 func (a *AtomicCounter) Increment(ctx context.Context, val int64) (int64, error) {
 	a.accessed.Store(true)
 	if !a.loaded.Load() {
