@@ -702,31 +702,22 @@ func (cho *Chotki) CommitBatch(ctx context.Context, edits []host.Edit) (err erro
 		return chotki_errors.ErrClosed
 	}
 
-	pb := pebble.Batch{}
-	var calls []CallHook
 	recs := make(protocol.Records, 0, len(edits))
 	for _, e := range edits {
-		// stamp next id; IncPro ignores its arg — one call per packet
-		cho.last = cho.last.IncPro(1).ZeroOff()
-		id := cho.last
-		bare := protocol.Join(e.Body...)
-		if err = cho.ApplyE(id, e.Ref, bare, &pb, &calls); err != nil {
-			return err
-		}
+		// stamp next id via nextLast (lastLock) — one id per edit; shares the
+		// allocator with CommitPacket and own-source drains.
+		id := cho.nextLast()
 		recs = append(recs, protocol.Record('E',
 			protocol.Record('I', id.ZipBytes()),
 			protocol.Record('R', e.Ref.ZipBytes()),
-			bare))
+			protocol.Join(e.Body...)))
 	}
-	// keep drain's event accounting in sync
-	EventsMetric.Add(float64(len(recs)))
-	if err = cho.db.Apply(&pb, cho.opts.PebbleWriteOptions); err != nil {
+	// drain parses + ApplyE's the records into a single batch, applies once, runs
+	// field hooks, and updates EventsMetric. It does not broadcast, so we do that here.
+	if _, err = cho.drain(ctx, recs); err != nil {
 		return err
 	}
 	cho.Broadcast(ctx, recs, "")
-	for _, call := range calls {
-		go call.hook(cho, call.id)
-	}
 	return nil
 }
 
@@ -834,6 +825,11 @@ func (cho *Chotki) Metrics() []prometheus.Collector {
 func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied int, err error) {
 	EventsMetric.Add(float64(len(recs)))
 	var calls []CallHook
+	// Single batch for the non-sync packets (Y/C/O/E), applied once after the loop
+	// rather than per-packet, so a multi-packet drain is one pebble write. Sync packets
+	// (H/D/V) keep their own per-sync batch and commit it on 'V'.
+	pb := pebble.Batch{}
+	classChanged := false
 	for _, packet := range recs { // parse the packets
 		if err != nil {
 			break
@@ -864,9 +860,6 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 			cho.lastLock.Unlock()
 		}
 
-		// noApply can be set to true if we don't want to apply the batch
-		pb, noApply := pebble.Batch{}, false
-
 		cho.log.DebugCtx(ctx, "new packet", "type", string(lit), "packet", id.String())
 
 		switch lit {
@@ -879,8 +872,9 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 		case 'C': // creates a class
 			err = cho.ApplyC(id, ref, body, &pb, &calls)
 			if err == nil {
-				// clear cache for classes if class changed
-				cho.types.Clear()
+				// defer the type-cache clear until after the batch is applied, so a
+				// concurrent rebuild can't repopulate it from the pre-class state.
+				classChanged = true
 			}
 
 		case 'O': // creates an object
@@ -950,8 +944,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 			}
 			err = cho.ApplyD(id, ref, body, s.batch)
 			s.mu.Unlock()
-			// we use separate batch, so noApply is true
-			noApply = true
+			// applied into the sync point's own batch, not pb
 
 		case 'V': // version vector sent in the end of diff sync
 			// load sync point if exists
@@ -980,8 +973,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 				cho.log.InfoCtx(ctx, "applied diff batch and deleted it", "id", id)
 			}
 			s.mu.Unlock()
-			// we don't want to apply the batch as we already applied it
-			noApply = true
+			// already applied the sync point's own batch above
 
 		case 'B': // session end
 			cho.log.InfoCtx(ctx, "received session end", "id", id.String(), "data", string(body))
@@ -995,18 +987,24 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 			return applied, fmt.Errorf("unsupported packet type %c", lit)
 		}
 
-		if !noApply && err == nil {
-			if err := cho.db.Apply(&pb, cho.opts.PebbleWriteOptions); err != nil {
-				return applied, err
-			}
-		}
+		// Count records processed before any error. The accumulated Y/C/O/E
+		// batch (pb) is applied once after the loop; sync packets commit their
+		// own batch on 'V'. Replication rebroadcasts recs[:applied].
 		if err == nil {
 			applied++
 		}
 	}
 
+	// Apply the accumulated Y/C/O/E batch once; sync packets already committed theirs.
+	// Skip when empty (e.g. a drain call carrying only H/D/V sync packets).
+	if err == nil && pb.Count() > 0 {
+		err = cho.db.Apply(&pb, cho.opts.PebbleWriteOptions)
+	}
 	if err != nil {
 		return
+	}
+	if classChanged {
+		cho.types.Clear()
 	}
 
 	if len(calls) > 0 {
