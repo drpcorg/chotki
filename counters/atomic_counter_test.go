@@ -178,6 +178,40 @@ func TestNotLoadedThenRetry(t *testing.T) {
 	assert.EqualValues(t, 4, got)
 }
 
+// A counter whose object wasn't local at first touch must load on the next Counter()
+// lookup once the object is readable, WITHOUT waiting for a background cycle. Regression:
+// the manager loaded once at handle creation and cached the unloaded handle, so a
+// just-synced counter stayed ErrCounterNotLoaded until the next tick. Callers (e.g. dproxy)
+// re-resolve via Counter() on every op, so Counter() must return a loaded handle.
+func TestLazyLoadOnAccessAfterSync(t *testing.T) {
+	ctx := context.Background()
+	a := openReplica(t, 0x1a, time.Hour)
+	b := openReplica(t, 0x1b, time.Hour)
+	rid := newCounterObject(t, a)
+
+	// b touches the counter before it has the object -> handle cached unloaded.
+	_, err := b.Counter(rid, 1).Get(ctx)
+	assert.ErrorIs(t, err, counters.ErrCounterNotLoaded)
+
+	// a contributes 4; replicate the object+value to b. Crucially, do NOT run b's
+	// counter cycle -- recovery must come from Counter() reloading on the next lookup.
+	ca := a.Counter(rid, 1)
+	_, err = ca.Increment(ctx, 4)
+	assert.NoError(t, err)
+	a.SyncCounters(ctx)
+	testutils.SyncData(a, b)
+
+	// A fresh Counter() lookup (as callers do per op) must return a loaded handle.
+	got, err := b.Counter(rid, 1).Get(ctx)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 4, got)
+
+	// Increment via a fresh lookup also works and adds to the loaded value.
+	got, err = b.Counter(rid, 1).Increment(ctx, 1)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 5, got)
+}
+
 func TestConcurrentIncrementsNoLoss(t *testing.T) {
 	ctx := context.Background()
 	a := openReplica(t, 0x1a, time.Hour)

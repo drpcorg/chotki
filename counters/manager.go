@@ -25,17 +25,21 @@ func NewAtomicCounterManager(db host.Host, period time.Duration, log utils.Logge
 	return &AtomicCounterManager{db: db, period: period, log: log}
 }
 
-// Counter returns the counter for (rid, offset), creating it on first use; failed initial loads
-// are retried each background cycle.
+// Counter returns the counter for (rid, offset), creating and loading it on first use; a load that
+// failed (object not local yet) is retried on each call and by the background cycle.
 func (m *AtomicCounterManager) Counter(rid rdx.ID, offset uint64) *AtomicCounter {
 	key := rid.ToOff(offset)
 	if existing, ok := m.states.Load(key); ok {
-		return existing.(*AtomicCounter)
+		c := existing.(*AtomicCounter)
+		m.ensureLoaded(c) // retry a previously-failed load; no-op once loaded
+		return c
 	}
 	c := newAtomicCounter(m.db, rid, offset)
 	actual, loaded := m.states.LoadOrStore(key, c)
 	if loaded {
-		return actual.(*AtomicCounter) // lost the race; use the winner's counter
+		c = actual.(*AtomicCounter) // lost the race; use the winner's counter
+		m.ensureLoaded(c)
+		return c
 	}
 	m.mu.Lock()
 	if err := c.load(); err != nil && m.log != nil {
@@ -43,6 +47,20 @@ func (m *AtomicCounterManager) Counter(rid rdx.ID, offset uint64) *AtomicCounter
 	}
 	m.mu.Unlock()
 	return c
+}
+
+// ensureLoaded retries the load for a cached counter whose object wasn't local at first touch;
+// no-op once loaded. Serialized with flush/reload via m.mu; the hot path never reaches the lock.
+func (m *AtomicCounterManager) ensureLoaded(c *AtomicCounter) {
+	if c.loaded.Load() {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if c.loaded.Load() {
+		return
+	}
+	_ = c.load()
 }
 
 // Cycle forces a flush + full reload of all counters; used by SyncCounters and tests.
