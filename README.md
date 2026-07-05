@@ -79,6 +79,10 @@ Internally, Chotki is [pebble db][p] using [RDX](./rdx) merge operators.
 See the RDX doc for further details on its serialization format
 (type-length-value) and a very predictable choice of CRDTs.
 
+The replication protocol is described in [replication](./replication)
+and has a formal TLA+ specification in [tla](./tla), model-checked with
+TLC (including reproductions of historical protocol bugs).
+
 ## Comparison to other projects
 
 Overall, RDX is the final version of RON (Replicated Object

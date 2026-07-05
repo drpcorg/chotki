@@ -193,6 +193,11 @@ type syncPoint struct {
 	// so any later reader can detect this and skip the apply.
 	batch *pebble.Batch
 	start time.Time
+	// via is the id of the replication session whose 'H' record created
+	// this sync point; the sync point is aborted when that session ends
+	// (AbortSyncsVia), as its remaining 'D'/'V' records die with the
+	// session's connection.
+	via string
 }
 
 // closeLocked closes the batch if it's still open. Must be called with s.mu held.
@@ -385,7 +390,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			protocol.Record('S', rdx.Stlv("")),
 		))
 
-		if err = cho.drain(context.Background(), init); err != nil {
+		if _, err = cho.drain(context.Background(), init); err != nil {
 			return nil, errors.Join(err, fmt.Errorf("unable to drain initial data to chotki"))
 		}
 	}
@@ -607,7 +612,7 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 	r := protocol.Record('R', ref.ZipBytes())
 	packet := protocol.Record(lit, i, r, protocol.Join(body...))
 	recs := protocol.Records{packet}
-	err = cho.drain(ctx, recs)
+	_, err = cho.drain(ctx, recs)
 	DrainTime.WithLabelValues("commit").Observe(float64(time.Since(now)) / float64(time.Millisecond))
 	cho.Broadcast(ctx, recs, "")
 	return
@@ -711,7 +716,10 @@ func (cho *Chotki) Metrics() []prometheus.Collector {
 // Handles all updates and actually writes the to storage.
 // the allowed types are 'C', 'O', 'E', 'H', 'D', 'V', 'B', 'P', 'Y'
 // do not confuse it with RDX types
-func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error) {
+// Returns the number of records that were fully applied before an error
+// (if any) stopped processing; replication uses this to rebroadcast
+// exactly the applied prefix of a batch.
+func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied int, err error) {
 	EventsMetric.Add(float64(len(recs)))
 	var calls []CallHook
 	for _, packet := range recs { // parse the packets
@@ -723,14 +731,14 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 		lit, id, ref, body, parseErr := replication.ParsePacket(packet)
 		if parseErr != nil {
 			cho.log.WarnCtx(ctx, "bad packet", "err", parseErr)
-			return parseErr
+			return applied, parseErr
 		}
 
 		// if this is a packet commited by our replica we need to update our last id
 		// as current commit holds the mutex, it is safe to update this id
 		if id.Src() == cho.src && cho.last.Less(id) {
 			if id.Off() != 0 {
-				return rdx.ErrBadPacket
+				return applied, rdx.ErrBadPacket
 			}
 			cho.last = id
 		}
@@ -743,7 +751,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 		switch lit {
 		case 'Y': // creates a replica log
 			if ref != rdx.ID0 {
-				return ErrBadYPacket
+				return applied, ErrBadYPacket
 			}
 			err = cho.ApplyOY('Y', id, ref, body, &pb)
 
@@ -756,22 +764,28 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 
 		case 'O': // creates an object
 			if ref == rdx.ID0 {
-				return ErrBadOPacket
+				return applied, ErrBadOPacket
 			}
 			err = cho.ApplyOY('O', id, ref, body, &pb)
 
 		case 'E': // edits an object
 			if ref == rdx.ID0 {
-				return ErrBadEPacket
+				return applied, ErrBadEPacket
 			}
 			err = cho.ApplyE(id, ref, body, &pb, &calls)
 
 		case 'H': // handshake
 			d := cho.db.NewBatch()
-			// we also create a new sync point, pebble batch that we will write diffs to
+			// "allow only 1 diff sync per src": a new handshake from a
+			// replica invalidates its previous, still unfinished diff sync
+			// (if any), so displace stale sync points of the same origin.
+			// Sync-point keys are the origins' snapshot ids, therefore the
+			// keys to drop are the ones sharing the source of the incoming
+			// handshake id (comparing against cho.src, as done previously,
+			// matched nothing: our own handshakes are never drained here).
 			activeSyncs := make([]rdx.ID, 0)
 			cho.syncs.Range(func(key rdx.ID, value *syncPoint) bool {
-				if key.Src() == cho.src {
+				if key.Src() == id.Src() {
 					activeSyncs = append(activeSyncs, key)
 				}
 				return true
@@ -784,16 +798,24 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 				cho.log.InfoCtx(ctx, "deleted active sync", "id", s.String())
 			}
 			err = cho.ApplyH(id, ref, body, d)
-			// Store after ApplyH so no goroutine can Load the sync point
-			// until the batch is fully initialized.
-			cho.syncs.Store(id, &syncPoint{batch: d, start: time.Now()})
-			cho.log.InfoCtx(ctx, "created new sync point", "id", id.String())
+			if err == nil {
+				// Store after ApplyH so no goroutine can Load the sync point
+				// until the batch is fully initialized.
+				cho.syncs.Store(id, &syncPoint{
+					batch: d,
+					start: time.Now(),
+					via:   replication.SessionIdFromCtx(ctx),
+				})
+				cho.log.InfoCtx(ctx, "created new sync point", "id", id.String())
+			} else {
+				_ = d.Close()
+			}
 
 		case 'D': // diff packet
 			// load sync point if exists
 			s, ok := cho.syncs.Load(id)
 			if !ok {
-				return ErrSyncUnknown
+				return applied, ErrSyncUnknown
 			}
 			s.mu.Lock()
 			if s.batch == nil {
@@ -803,7 +825,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 				// partial data loss invisible to the peer, so surface the same
 				// error as for a missing sync point and let the session restart.
 				s.mu.Unlock()
-				return ErrSyncUnknown
+				return applied, ErrSyncUnknown
 			}
 			err = cho.ApplyD(id, ref, body, s.batch)
 			s.mu.Unlock()
@@ -814,14 +836,14 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			// load sync point if exists
 			s, ok := cho.syncs.Load(id)
 			if !ok {
-				return ErrSyncUnknown
+				return applied, ErrSyncUnknown
 			}
 			s.mu.Lock()
 			if s.batch == nil {
 				// See the 'D' case for rationale: batch was closed out from
 				// under us, so treat it the same as an unknown sync.
 				s.mu.Unlock()
-				return ErrSyncUnknown
+				return applied, ErrSyncUnknown
 			}
 			DiffSyncSize.Observe(float64(s.batch.Len()))
 			// update blocks version vectors
@@ -849,13 +871,16 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 			cho.syncs.Delete(id)
 		case 'P': // ping noop
 		default:
-			return fmt.Errorf("unsupported packet type %c", lit)
+			return applied, fmt.Errorf("unsupported packet type %c", lit)
 		}
 
 		if !noApply && err == nil {
 			if err := cho.db.Apply(&pb, cho.opts.PebbleWriteOptions); err != nil {
-				return err
+				return applied, err
 			}
+		}
+		if err == nil {
+			applied++
 		}
 	}
 
@@ -874,6 +899,37 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (err error)
 
 // Public for drain method with some additional metrics
 func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error) {
+	_, err = cho.DrainApplied(ctx, recs)
+	return
+}
+
+// AbortSyncsVia closes and removes all pending diff-sync points created by
+// the given replication session. A sync point must not outlive its session:
+// the 'D'/'V' packets completing it travel through that session's
+// connection, so once the connection is gone the staged batch can never be
+// completed legitimately, while a 'V' relayed through a newer connection
+// could apply the staged handshake version vector without the data records
+// that died with the old connection — permanent, silent data loss
+// (see tla/README.md).
+func (cho *Chotki) AbortSyncsVia(ctx context.Context, sessionId string) {
+	if sessionId == "" {
+		return
+	}
+	cho.syncs.Range(func(key rdx.ID, s *syncPoint) bool {
+		if s.via == sessionId {
+			s.close()
+			cho.syncs.Delete(key)
+			cho.log.InfoCtx(ctx, "aborted sync point of a closed session", "id", key.String())
+		}
+		return true
+	})
+}
+
+// DrainApplied works like Drain but also reports how many records of the
+// batch were fully applied before an error (if any) stopped processing.
+// Replication sessions use the count to rebroadcast exactly the applied
+// prefix of a batch to the other sessions.
+func (cho *Chotki) DrainApplied(ctx context.Context, recs protocol.Records) (applied int, err error) {
 	now := time.Now()
 	defer func() {
 		DrainTime.WithLabelValues("drain").Observe(float64(time.Since(now)) / float64(time.Millisecond))
@@ -881,7 +937,7 @@ func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error)
 	cho.lock.RLock()
 	defer cho.lock.RUnlock()
 	if cho.db == nil {
-		return chotki_errors.ErrClosed
+		return 0, chotki_errors.ErrClosed
 	}
 	EventsBatchSize.Observe(float64(len(recs)))
 	return cho.drain(ctx, recs)

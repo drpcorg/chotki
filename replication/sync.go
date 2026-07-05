@@ -29,8 +29,33 @@ var version string = fmt.Sprintf("%d", time.Now().Unix())
 
 type SyncHost interface {
 	protocol.Drainer
+	// DrainApplied works like Drain but also reports how many records of
+	// the batch were fully applied before an error stopped processing.
+	DrainApplied(ctx context.Context, recs protocol.Records) (int, error)
+	// AbortSyncsVia closes and removes the pending diff-sync points
+	// created by the given replication session (see Syncer.SessionId).
+	AbortSyncsVia(ctx context.Context, sessionId string)
 	Snapshot() pebble.Reader
 	Broadcast(ctx context.Context, records protocol.Records, except string)
+}
+
+type sessionIdCtxKey struct{}
+
+// WithSessionId marks ctx with the id of the replication session that is
+// draining the records; the host binds the sync points (pending diff
+// batches) created by those records to the session lifetime, so they can
+// be aborted when the session ends (SyncHost.AbortSyncsVia).
+func WithSessionId(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, sessionIdCtxKey{}, id)
+}
+
+// SessionIdFromCtx extracts the replication session id set by WithSessionId,
+// or "" if none.
+func SessionIdFromCtx(ctx context.Context) string {
+	if v, ok := ctx.Value(sessionIdCtxKey{}).(string); ok {
+		return v
+	}
+	return ""
 }
 
 type SyncMode byte
@@ -134,6 +159,26 @@ type Syncer struct {
 	pingTimer *time.Timer
 	pingStage atomic.Int32
 	lctx      atomic.Pointer[context.Context]
+
+	// guards snap, vvit and ffit: the feed loop and Close may touch the
+	// snapshot and its iterators concurrently
+	snapLock    sync.Mutex
+	sessionOnce sync.Once
+	sessionUid  string
+}
+
+// SessionId returns a unique identifier of this replication session; the
+// host uses it to bind the sync points this session creates to its
+// lifetime (SyncHost.AbortSyncsVia).
+func (sync *Syncer) SessionId() string {
+	sync.sessionOnce.Do(func() {
+		if id, err := uuid.NewV7(); err == nil {
+			sync.sessionUid = id.String()
+		} else {
+			sync.sessionUid = fmt.Sprintf("%s-%d", sync.Name, time.Now().UnixNano())
+		}
+	})
+	return sync.sessionUid
 }
 
 func (sync *Syncer) withDefaultArgs(reset bool) context.Context {
@@ -162,8 +207,17 @@ func (sync *Syncer) Close() error {
 		return utils.ErrClosed
 	}
 
-	sync.lock.Lock()
-	defer sync.lock.Unlock()
+	// A sync point must not outlive the session that feeds it: the
+	// 'D'/'V' packets completing it travel through this session's
+	// connection, so once the session is gone the staged batch can never
+	// be completed legitimately, while a 'V' relayed through a newer
+	// connection could apply the staged handshake VV without the data
+	// records that died with this connection (permanent silent data
+	// loss, see tla/README.md). Abort whatever this session created.
+	sync.Host.AbortSyncsVia(sync.LogCtx(context.Background()), sync.SessionId())
+
+	sync.snapLock.Lock()
+	defer sync.snapLock.Unlock()
 
 	if sync.snap != nil {
 		if err := sync.snap.Close(); err != nil {
@@ -225,14 +279,24 @@ func (sync *Syncer) GetDrainState() SyncState {
 
 func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error) {
 	SessionsStates.WithLabelValues(sync.Name, "feed", version).Set(float64(sync.GetFeedState()))
-	// other side closed the connection already
+	// The other side said bye already. That only means it has nothing
+	// more to send: its drain side keeps applying our records until the
+	// connection actually closes. So finish our own handshake/diff phase
+	// first — cutting the diff short would leave the peer with a staged
+	// diff batch that never gets its 'V', i.e. the peer would silently
+	// miss the data we already promised in the handshake — and only then
+	// wind the feed down instead of going live.
 	if sync.GetDrainState() == SendNone {
-		sync.SetFeedState(ctx, SendNone)
+		if fs := sync.GetFeedState(); fs != SendHandshake && fs != SendDiff {
+			sync.SetFeedState(ctx, SendNone)
+		}
 	}
 	switch sync.GetFeedState() {
 	case SendHandshake:
 		recs, err = sync.FeedHandshake()
-		sync.SetFeedState(ctx, SendDiff)
+		if err == nil {
+			sync.SetFeedState(ctx, SendDiff)
+		}
 
 	case SendDiff:
 		ctx, cancel := context.WithCancel(ctx)
@@ -255,6 +319,7 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 				sync.SetFeedState(ctx, SendEOF)
 			}
 
+			sync.snapLock.Lock()
 			if sync.snap != nil {
 				err = sync.snap.Close()
 				if err != nil {
@@ -265,18 +330,25 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 				sync.snap = nil
 				err = nil
 			}
+			sync.snapLock.Unlock()
 		}
 	case SendPing:
 		recs = protocol.Records{
 			protocol.Record('P', rdx.Stlv(PingVal)),
 		}
 		sync.SetFeedState(ctx, SendLive)
-		sync.pingTimer.Stop()
+		sync.pingStage.Store(int32(WaitingForPing))
+		// pingTimer is shared with resetPingTimer (drain side), so it
+		// must only be touched under the lock
+		sync.lock.Lock()
+		if sync.pingTimer != nil {
+			sync.pingTimer.Stop()
+		}
 		sync.pingTimer = time.AfterFunc(sync.PingWait, func() {
 			sync.pingStage.Store(int32(PingBroken))
 			sync.Log.ErrorCtx(sync.LogCtx(ctx), "sync: peer did not respond to ping")
 		})
-		sync.pingStage.Store(int32(WaitingForPing))
+		sync.lock.Unlock()
 	case SendPong:
 		recs = protocol.Records{
 			protocol.Record('P', rdx.Stlv(PongVal)),
@@ -301,6 +373,7 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 			protocol.TinyRecord('T', sync.snaplast.ZipBytes()),
 			reason,
 		)}
+		sync.snapLock.Lock()
 		if sync.snap != nil {
 			err = sync.snap.Close()
 			if err != nil {
@@ -310,6 +383,7 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 			}
 			sync.snap = nil
 		}
+		sync.snapLock.Unlock()
 		sync.SetFeedState(ctx, SendNone)
 
 	case SendNone:
@@ -317,11 +391,14 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 		if wait == 0 {
 			wait = time.Second
 		}
-		timer := time.AfterFunc(wait, func() {
-			sync.SetDrainState(ctx, SendNone)
-		})
-		<-sync.WaitDrainState(context.Background(), SendNone)
-		timer.Stop()
+		// give the peer up to WaitUntilNone to drain our 'B' and close
+		// first, but bound the wait with a timeout instead of forcing
+		// the drain state via a one-shot timer: a Drain racing with
+		// Close could move the drain state backwards after that timer
+		// had already fired, leaving this wait blocked forever
+		nctx, cancel := context.WithTimeout(ctx, wait)
+		<-sync.WaitDrainState(nctx, SendNone)
+		cancel()
 		err = io.EOF
 	}
 
@@ -329,6 +406,9 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 }
 
 func (sync *Syncer) FeedHandshake() (vv protocol.Records, err error) {
+	sync.snapLock.Lock()
+	defer sync.snapLock.Unlock()
+
 	sync.snap = sync.Host.Snapshot()
 
 	OpenedSnapshots.WithLabelValues(sync.Name, version).Set(1)
@@ -439,6 +519,9 @@ func (sync *Syncer) nextBlockDiff() (bool, rdx.VV, error) {
 }
 
 func (sync *Syncer) FeedBlockDiff(ctx context.Context) (diff protocol.Records, err error) {
+	sync.snapLock.Lock()
+	defer sync.snapLock.Unlock()
+
 	hasChanges, sendvv, cerr := sync.nextBlockDiff()
 	if cerr != nil {
 		return nil, cerr
@@ -488,6 +571,9 @@ func (sync *Syncer) FeedBlockDiff(ctx context.Context) (diff protocol.Records, e
 }
 
 func (sync *Syncer) FeedDiffVV(ctx context.Context) (vv protocol.Records, err error) {
+	sync.snapLock.Lock()
+	defer sync.snapLock.Unlock()
+
 	protocol.CloseHeader(sync.vpack, 5)
 	vv = append(vv, sync.vpack)
 	sync.vpack = nil
@@ -535,13 +621,23 @@ func (sync *Syncer) SetDrainState(ctx context.Context, state SyncState) {
 }
 
 func (sync *Syncer) WaitDrainState(ctx context.Context, state SyncState) chan SyncState {
-	res := make(chan SyncState)
+	// buffered so the waiter goroutine never blocks (and leaks) when the
+	// caller abandons the wait (e.g. on timeout)
+	res := make(chan SyncState, 1)
+	// derive a cancelable context so the watcher goroutine below always
+	// terminates, even for non-cancellable parent contexts
+	ctx, cancel := context.WithCancel(ctx)
 	go func() {
 		<-ctx.Done()
+		// take the lock so the wakeup cannot slip between the waiter's
+		// ctx check and its cond.Wait()
+		sync.lock.Lock()
 		sync.cond.Broadcast()
+		sync.lock.Unlock()
 	}()
 	go func() {
 		defer close(res)
+		defer cancel()
 		sync.lock.Lock()
 		defer sync.lock.Unlock()
 		if sync.cond.L == nil {
@@ -585,25 +681,48 @@ func (sync *Syncer) resetPingTimer() {
 }
 
 func (sync *Syncer) processPings(recs protocol.Records) protocol.Records {
-	for i, rec := range recs {
-		if protocol.Lit(rec) == 'P' {
-			body, _ := protocol.Take('P', rec)
-			if len(recs) > i+1 {
-				recs = append(recs[:i], recs[i+1:]...)
-			} else {
-				recs = recs[:i]
-			}
-			switch rdx.Snative(body) {
-			case PingVal:
-				sync.Log.InfoCtx(sync.LogCtx(context.Background()), "ping received")
-				// go to pong state next time
-				sync.pingStage.Store(int32(Pong))
-			case PongVal:
-				sync.Log.InfoCtx(sync.LogCtx(context.Background()), "pong received")
-			}
+	// filter the 'P' records out in place: they are session-scoped and
+	// must neither reach the DB nor be relayed to other sessions
+	// (the previous remove-while-ranging loop skipped the record that
+	// followed a removed one)
+	filtered := recs[:0]
+	for _, rec := range recs {
+		if protocol.Lit(rec) != 'P' {
+			filtered = append(filtered, rec)
+			continue
+		}
+		body, _ := protocol.Take('P', rec)
+		switch rdx.Snative(body) {
+		case PingVal:
+			sync.Log.InfoCtx(sync.LogCtx(context.Background()), "ping received")
+			// go to pong state next time
+			sync.pingStage.Store(int32(Pong))
+		case PongVal:
+			sync.Log.InfoCtx(sync.LogCtx(context.Background()), "pong received")
 		}
 	}
-	return recs
+	return filtered
+}
+
+// relayApplied rebroadcasts the prefix of recs that was actually applied
+// to the local DB, except a trailing 'B' (bye) record: a bye is scoped to
+// this session and must not leak into (and close) downstream sessions.
+//
+// Relaying exactly the applied prefix matters: records this replica has
+// applied but not relayed would never reach downstream replicas at all —
+// live records are not re-sent, and any future diff sync would skip them
+// as already known to us — leaving downstream permanently diverged. This
+// covers both a batch that ends with a bye (the sender's records got
+// coalesced with its 'B' by network read batching) and a batch that
+// failed mid-way (the applied head must still be relayed).
+func (sync *Syncer) relayApplied(ctx context.Context, recs protocol.Records, applied int) {
+	relay := recs[:applied]
+	if len(relay) > 0 && protocol.Lit(relay[len(relay)-1]) == 'B' {
+		relay = relay[:len(relay)-1]
+	}
+	if len(relay) > 0 {
+		sync.Host.Broadcast(sync.LogCtx(ctx), relay, sync.Name)
+	}
 }
 
 func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error) {
@@ -613,15 +732,24 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 	SessionsStates.WithLabelValues(sync.Name, "drain", version).Set(float64(sync.GetDrainState()))
 
 	recs = sync.processPings(recs)
+	if len(recs) == 0 {
+		// the batch contained pings only; there is nothing to drain,
+		// relay or change state upon
+		if sync.Mode&SyncLive != 0 {
+			sync.resetPingTimer()
+		}
+		return nil
+	}
+
+	// mark the records with this session's id so the sync points they
+	// create die together with the session (AbortSyncsVia in Close)
+	hctx := WithSessionId(sync.LogCtx(ctx), sync.SessionId())
 
 	switch sync.GetDrainState() {
 	case SendHandshake:
-		if len(recs) == 0 {
-			return chotki_errors.ErrBadHPacket
-		}
 		err = sync.DrainHandshake(recs[0:1])
 		if err == nil {
-			err = sync.Host.Drain(sync.LogCtx(ctx), recs[0:1])
+			err = sync.Host.Drain(hctx, recs[0:1])
 		}
 		if err != nil {
 			return
@@ -635,11 +763,9 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		fallthrough
 
 	case SendDiff:
-		broadcast := true
 		lit := LastLit(recs)
 		if lit != 'D' && lit != 'V' {
 			if lit == 'B' {
-				broadcast = false
 				sync.SetDrainState(ctx, SendNone)
 			} else {
 				sync.SetDrainState(ctx, SendLive)
@@ -648,10 +774,9 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		if sync.Mode&SyncLive != 0 {
 			sync.resetPingTimer()
 		}
-		err = sync.Host.Drain(sync.LogCtx(ctx), recs)
-		if err == nil && broadcast {
-			sync.Host.Broadcast(sync.LogCtx(ctx), recs, sync.Name)
-		}
+		var applied int
+		applied, err = sync.Host.DrainApplied(hctx, recs)
+		sync.relayApplied(ctx, recs, applied)
 
 	case SendLive:
 		sync.resetPingTimer()
@@ -659,10 +784,9 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 		if lit == 'B' {
 			sync.SetDrainState(ctx, SendNone)
 		}
-		err = sync.Host.Drain(sync.LogCtx(ctx), recs)
-		if err == nil && lit != 'B' {
-			sync.Host.Broadcast(sync.LogCtx(ctx), recs, sync.Name)
-		}
+		var applied int
+		applied, err = sync.Host.DrainApplied(hctx, recs)
+		sync.relayApplied(ctx, recs, applied)
 
 	case SendPong, SendPing:
 		panic("chotki: unacceptable sync-state")
