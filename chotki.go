@@ -217,6 +217,15 @@ func (s *syncPoint) close() {
 
 // Main Chotki struct
 type Chotki struct {
+	// last is the cached local id allocator state: CommitPacket stamps
+	// the next local mutation from it. It is advanced both by local
+	// commits (under commitMutex) and by replication sessions draining
+	// records stamped with our own src (e.g. our own history synced back
+	// after a restore from an older snapshot) — those paths do not share
+	// a lock, so last has its own one (lastLock). An unsynchronized read
+	// here can reuse an already issued seq: two different mutations under
+	// one rdx.ID (see tla/README.md, bug 4).
+	lastLock  sync.Mutex
 	last      rdx.ID
 	src       uint64
 	clock     rdx.Clock
@@ -441,7 +450,9 @@ func (cho *Chotki) Close() error {
 	cho.types.Clear()
 
 	cho.src = 0
+	cho.lastLock.Lock()
 	cho.last = rdx.ID0
+	cho.lastLock.Unlock()
 
 	return nil
 }
@@ -464,6 +475,17 @@ func (cho *Chotki) Clock() rdx.Clock {
 
 // Returns the latest used rdx.ID of current replica
 func (cho *Chotki) Last() rdx.ID {
+	cho.lastLock.Lock()
+	defer cho.lastLock.Unlock()
+	return cho.last
+}
+
+// nextLast atomically allocates the next local id, advancing the cached
+// allocator state.
+func (cho *Chotki) nextLast() rdx.ID {
+	cho.lastLock.Lock()
+	defer cho.lastLock.Unlock()
+	cho.last = cho.last.IncPro(1).ZeroOff()
 	return cho.last
 }
 
@@ -605,8 +627,8 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 	if cho.db == nil {
 		return rdx.BadId, chotki_errors.ErrClosed
 	}
-	// create new last id
-	id = cho.last.IncPro(1).ZeroOff()
+	// allocate the next local id
+	id = cho.nextLast()
 	i := protocol.Record('I', id.ZipBytes())
 	// this is typically some higher order structure (like for object it will be class id, for field update it will be object id)
 	r := protocol.Record('R', ref.ZipBytes())
@@ -734,13 +756,22 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 			return applied, parseErr
 		}
 
-		// if this is a packet commited by our replica we need to update our last id
-		// as current commit holds the mutex, it is safe to update this id
-		if id.Src() == cho.src && cho.last.Less(id) {
-			if id.Off() != 0 {
-				return applied, rdx.ErrBadPacket
+		// A record stamped with our own src must advance the local id
+		// allocator, or future commits would reuse its seq. Such records
+		// come from two paths that do NOT share a lock: local commits
+		// (CommitPacket holds commitMutex around this drain) and
+		// replication sessions draining our own history back (e.g. after
+		// a restore from an older snapshot) — hence lastLock.
+		if id.Src() == cho.src {
+			cho.lastLock.Lock()
+			if cho.last.Less(id) {
+				if id.Off() != 0 {
+					cho.lastLock.Unlock()
+					return applied, rdx.ErrBadPacket
+				}
+				cho.last = id
 			}
-			cho.last = id
+			cho.lastLock.Unlock()
 		}
 
 		// noApply can be set to true if we don't want to apply the batch

@@ -259,6 +259,70 @@ func TestFeedFinishesDiffAfterPeerBye(t *testing.T) {
 	require.NoError(t, err, "peer must not be left without the promised diff data")
 }
 
+// cho.last (the cached local id allocator read by CommitPacket) is also
+// advanced by replication sessions draining records stamped with our own
+// src — e.g. our own history synced back after a restore from an older
+// snapshot. Those two paths do not share a lock and used to race on the
+// unsynchronized cho.last, letting a commit reuse an already issued seq:
+// two different mutations under one rdx.ID (tla/README.md, bug 4;
+// MCBuggyLast.cfg is the TLA+ witness).
+func TestCommitAllocatorSyncedWithOwnSourceDrain(t *testing.T) {
+	dirs, clear := testdirs(0x5a)
+	defer clear()
+
+	a, err := Open(dirs[0], Options{Src: 0x5a, Name: "replica A"})
+	require.NoError(t, err)
+	defer a.Close()
+
+	// capture a real 'C' packet to reuse its class body for the
+	// hand-crafted own-source records below
+	qa := utils.NewFDQueue[protocol.Records](1<<20, 50*time.Millisecond, 1)
+	a.outq.Store("capture", qa)
+	_, err = a.NewClass(context.Background(), rdx.ID0, Schema...)
+	require.NoError(t, err)
+	packets := drainQueue(t, qa, 1, 2*time.Second)
+	require.Len(t, packets, 1)
+	a.outq.Delete("capture")
+	_, _, ref, body, err := replication.ParsePacket(packets[0])
+	require.NoError(t, err)
+
+	ownSrcPacket := func(seq uint64) protocol.Records {
+		id := rdx.IDFromSrcSeqOff(0x5a, seq, 0)
+		return protocol.Records{protocol.Record('C',
+			protocol.Record('I', id.ZipBytes()),
+			protocol.Record('R', ref.ZipBytes()),
+			body)}
+	}
+
+	// a replication session feeding our own records back, racing local
+	// commits (run the test with -race to catch the unsynchronized
+	// cho.last accesses)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := uint64(0); i < 50; i++ {
+			_ = a.Drain(context.Background(), ownSrcPacket(1000+i*100))
+		}
+	}()
+
+	seen := make(map[rdx.ID]bool)
+	for i := 0; i < 50; i++ {
+		cid, err := a.NewClass(context.Background(), rdx.ID0, Schema...)
+		require.NoError(t, err)
+		require.False(t, seen[cid], "commit reused an already issued id %s", cid)
+		seen[cid] = true
+	}
+	<-done
+
+	// the allocator must have caught up with the drained history: the
+	// next commit must not reuse any of those seqs either
+	maxDrained := rdx.IDFromSrcSeqOff(0x5a, 1000+49*100, 0)
+	require.False(t, a.Last().Less(maxDrained))
+	cid, err := a.NewClass(context.Background(), rdx.ID0, Schema...)
+	require.NoError(t, err)
+	require.True(t, maxDrained.Less(cid))
+}
+
 // ApplyD/ApplyV used to loop forever on truncated inner TLV records
 // (protocol.Take makes no progress on incomplete input) and ApplyV could
 // overwrite an earlier ErrBadVPacket with a later successful merge.

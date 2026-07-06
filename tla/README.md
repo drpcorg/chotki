@@ -131,9 +131,16 @@ witness:
    cache, the next commit can observe stale `cho.last` and reuse an already
    issued seq.  The `MCBuggyLast.cfg` trace is deliberately tiny: an
    own-source drain applies seq 1 but leaves `last = 0`, then `CommitPacket`
-   also emits seq 1, violating `FreshLocalIds`.  The corresponding code fix
-   is to protect `cho.last` reads/writes, including `Last()`, local commit
-   allocation, own-source drain updates and `Close()`.
+   also emits seq 1, violating `FreshLocalIds`.  In the Go code the two
+   paths that advance `cho.last` really do not share a lock: local commits
+   hold `commitMutex`, while replication sessions drain own-source records
+   (our own history synced back after a restore from an older snapshot)
+   under `cho.lock.RLock` only — and `rdx.ID` is two uint64s, so a torn
+   read is possible on top of the lost update.  Fixed by giving the
+   allocator cache its own mutex (`lastLock`) around the commit allocation
+   (`nextLast`), the own-source advance in `drain`, `Last()` and the
+   `Close()` reset; `TestCommitAllocatorSyncedWithOwnSourceDrain` races the
+   two paths under `-race` and fails against the pre-fix code.
 
 Bugs found in the same code while studying it for the model (also fixed, not
 modelled at the byte/timer level):
