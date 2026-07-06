@@ -16,6 +16,8 @@ MCBudgetA3   == [r \in MCReplicas |-> IF r = "a" THEN 1 ELSE 0]
 MCReplicas2  == {"a", "b"}
 MCEdges2     == {{"a", "b"}}
 MCBudgetA2   == [r \in MCReplicas2 |-> IF r = "a" THEN 1 ELSE 0]
+\* A tiny local allocator model: one own-source drain plus one commit.
+MCBudgetA2Last == [r \in MCReplicas2 |-> IF r = "a" THEN 2 ELSE 0]
 
 MCObjects    == {"o1"}
 

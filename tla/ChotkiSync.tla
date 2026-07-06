@@ -45,9 +45,11 @@
 (*                                                                         *)
 (* ------------------------------ BUGS ---------------------------------- *)
 (*                                                                         *)
-(* Three switchable constants model defects found in the Go code while    *)
+(* Switchable defect flags model defects found in the Go code while       *)
 (* writing this spec (see tla/README.md for TLC configs demonstrating     *)
-(* them, plus the non-modelled fixes that came out of the same work):     *)
+(* them, plus the non-modelled fixes that came out of the same work).     *)
+(* The cho.last flag is a local allocator witness added on top of the     *)
+(* original sync-protocol model.                                           *)
 (*                                                                         *)
 (*   BuggyRelay = TRUE models replication/sync.go Drain() before the fix: *)
 (*     a drained batch whose last record is 'B' (bye) is NOT broadcast    *)
@@ -77,6 +79,14 @@
 (*   DropSyncsOnClose = TRUE models the fix: sync points are bound to     *)
 (*     the session that created them (Syncer.SessionId / AbortSyncsVia)   *)
 (*     and are aborted when it ends.                                       *)
+(*                                                                         *)
+(*   ProtectLast = FALSE, together with EnableOwnSourceDrain = TRUE,       *)
+(*     models cho.last as an unsynchronized allocator cache.  If a local  *)
+(*     drain applies a record stamped with this replica's own src but the *)
+(*     cho.last update is not visible to the next CommitPacket, that      *)
+(*     commit can reuse an already issued seq (violates FreshLocalIds).   *)
+(*   ProtectLast = TRUE models the intended fix: own-source drains and    *)
+(*     local commits update/read cho.last under a synchronization edge.    *)
 (***************************************************************************)
 
 EXTENDS Naturals, Sequences, FiniteSets
@@ -91,6 +101,8 @@ CONSTANTS
     BuggyRelay,       \* TRUE: model the pre-fix broadcast-relay behaviour
     DisplaceBySrc,    \* TRUE: model the fixed sync-point displacement
     DropSyncsOnClose, \* TRUE: sync points die with the session (fixed)
+    ProtectLast,      \* TRUE: cho.last is synchronized with own-source drains
+    EnableOwnSourceDrain, \* include the local cho.last race witness action
     EnablePing        \* include the ping/pong keep-alive machinery
 
 ASSUME
@@ -101,6 +113,8 @@ ASSUME
     /\ BuggyRelay \in BOOLEAN
     /\ DisplaceBySrc \in BOOLEAN
     /\ DropSyncsOnClose \in BOOLEAN
+    /\ ProtectLast \in BOOLEAN
+    /\ EnableOwnSourceDrain \in BOOLEAN
     /\ EnablePing \in BOOLEAN
 
 (***************************************************************************)
@@ -142,6 +156,9 @@ VARIABLES
     store,   \* [Replicas -> SUBSET Op]              applied operations
     gvv,     \* [Replicas -> VV]                     global VV (VKey0)
     bvv,     \* [Replicas -> [Objects -> VV]]        per-block VVs
+    last,    \* [Replicas -> Nat]                    cached cho.last seq
+    issued,  \* [Replicas -> SUBSET Nat]             seqs stamped by this src
+    commitcnt, \* [Replicas -> Nat]                  local own-source events
     syncs,   \* [Replicas -> SUBSET SyncPoint]       cho.syncs: pending
              \*   diff batches; sp = [k, hvv, ops]; sp.hvv is the origin's
              \*   handshake VV staged in the batch (ApplyH), applied
@@ -159,8 +176,8 @@ VARIABLES
     pingcnt, \* [Endpoints -> Nat] pings initiated (bounding only)
     gen      \* [Edges -> Nat] sessions started on this edge so far
 
-vars == <<store, gvv, bvv, syncs, feed, drain, outq, chan, peervv,
-          snap, ping, pingcnt, gen>>
+vars == <<store, gvv, bvv, last, issued, commitcnt, syncs, feed, drain,
+          outq, chan, peervv, snap, ping, pingcnt, gen>>
 
 NoSnap(x) == [key  |-> <<x, 0>>,
               bvv  |-> [o \in Objects |-> ZeroVV],
@@ -197,6 +214,9 @@ TypeOK ==
          /\ \A op \in store[r] : IsOp(op)
          /\ IsVV(gvv[r])
          /\ \A o \in Objects : IsVV(bvv[r][o])
+         /\ last[r] \in Nat
+         /\ issued[r] \subseteq (Nat \ {0})
+         /\ commitcnt[r] \in Nat
          /\ \A sp \in syncs[r] : IsSyncPoint(sp)
     /\ \A e \in Endpoints :
          /\ feed[e] \in {"hs", "diff", "live", "eof", "none"}
@@ -272,7 +292,10 @@ ApplyOne(st, m) ==
            \* both the global VV and the object's block VV.
            [st EXCEPT !.sto = @ \cup {m.op},
                       !.gv  = [@ EXCEPT ![m.op.src] = Max(@, m.op.seq)],
-                      !.bv  = [@ EXCEPT ![m.op.obj][m.op.src] = Max(@, m.op.seq)]]
+                      !.bv  = [@ EXCEPT ![m.op.obj][m.op.src] = Max(@, m.op.seq)],
+                      !.lst = IF ProtectLast /\ m.op.src = st.self
+                               THEN Max(@, m.op.seq)
+                               ELSE @]
 
 RECURSIVE ApplyBatch(_, _)
 ApplyBatch(st, recs) ==
@@ -337,6 +360,9 @@ Init ==
     /\ store   = [r \in Replicas |-> {}]
     /\ gvv     = [r \in Replicas |-> ZeroVV]
     /\ bvv     = [r \in Replicas |-> [o \in Objects |-> ZeroVV]]
+    /\ last    = [r \in Replicas |-> 0]
+    /\ issued  = [r \in Replicas |-> {}]
+    /\ commitcnt = [r \in Replicas |-> 0]
     /\ syncs   = [r \in Replicas |-> {}]
     /\ feed    = [e \in Endpoints |-> "none"]
     /\ drain   = [e \in Endpoints |-> "none"]
@@ -376,24 +402,47 @@ Connect(p) ==
     /\ snap'   = [e \in Endpoints |-> IF EdgeOf(e) = p THEN NoSnap(e[1]) ELSE snap[e]]
     /\ ping'   = [e \in Endpoints |-> IF EdgeOf(e) = p THEN "idle" ELSE ping[e]]
     /\ pingcnt' = [e \in Endpoints |-> IF EdgeOf(e) = p THEN 0 ELSE pingcnt[e]]
-    /\ UNCHANGED <<store, gvv, bvv>>
+    /\ UNCHANGED <<store, gvv, bvv, last, issued, commitcnt>>
 
 (***************************************************************************)
 (* CommitPacket (chotki.go): a replica commits a local op, applies it to  *)
 (* its own DB and broadcasts it to every live session (except "").        *)
 (***************************************************************************)
 Commit(r, o) ==
-    /\ gvv[r][r] < CommitBudget[r]
-    /\ LET q  == gvv[r][r] + 1
+    /\ commitcnt[r] < CommitBudget[r]
+    /\ LET q  == last[r] + 1
            op == [src |-> r, seq |-> q, obj |-> o]
        IN /\ store' = [store EXCEPT ![r] = @ \cup {op}]
-          /\ gvv'   = [gvv EXCEPT ![r][r] = q]
-          /\ bvv'   = [bvv EXCEPT ![r][o][r] = q]
+          /\ gvv'   = [gvv EXCEPT ![r][r] = Max(@, q)]
+          /\ bvv'   = [bvv EXCEPT ![r][o][r] = Max(@, q)]
+          /\ last'  = [last EXCEPT ![r] = q]
+          /\ issued' = [issued EXCEPT ![r] = @ \cup {q}]
+          /\ commitcnt' = [commitcnt EXCEPT ![r] = @ + 1]
           /\ outq'  = [d \in Endpoints |->
                          IF d \in BcastTargets(r, <<r, r>>)
                          THEN SeqToApp(outq[d], <<ERec(op)>>)
                          ELSE outq[d]]
     /\ UNCHANGED <<syncs, feed, drain, chan, peervv, snap, ping, pingcnt, gen>>
+
+\* chotki.drain can also consume records stamped with this replica's own
+\* src (for example replay/import or an old process using the same source).
+\* The Go code tried to advance cho.last on that path, but without a
+\* separate synchronization edge the next CommitPacket may observe stale
+\* cho.last and reuse a seq.  ProtectLast=FALSE models the lost visibility.
+OwnSourceDrain(r, o) ==
+    /\ EnableOwnSourceDrain
+    /\ commitcnt[r] < CommitBudget[r]
+    /\ LET q  == gvv[r][r] + 1
+           op == [src |-> r, seq |-> q, obj |-> o]
+       IN /\ store' = [store EXCEPT ![r] = @ \cup {op}]
+          /\ gvv'   = [gvv EXCEPT ![r][r] = q]
+          /\ bvv'   = [bvv EXCEPT ![r][o][r] = q]
+          /\ last'  = IF ProtectLast
+                      THEN [last EXCEPT ![r] = Max(@, q)]
+                      ELSE last
+          /\ issued' = [issued EXCEPT ![r] = @ \cup {q}]
+          /\ commitcnt' = [commitcnt EXCEPT ![r] = @ + 1]
+    /\ UNCHANGED <<syncs, feed, drain, outq, chan, peervv, snap, ping, pingcnt, gen>>
 
 (***************************************************************************)
 (* Feed side (replication/sync.go Feed()).                                 *)
@@ -412,7 +461,7 @@ FeedHandshake(e) ==
                                           pend |-> Objects,
                                           vset |-> {}]]
           /\ feed' = [feed EXCEPT ![e] = "diff"]
-    /\ UNCHANGED <<store, gvv, bvv, syncs, drain, outq, peervv, ping, pingcnt, gen>>
+    /\ UNCHANGED <<store, gvv, bvv, last, issued, commitcnt, syncs, drain, outq, peervv, ping, pingcnt, gen>>
 
 \* FeedBlockDiff: examine the next block of the snapshot.  Gated on the
 \* peer's handshake having been drained (WaitDrainState(SendDiff)).  A
@@ -432,7 +481,7 @@ FeedBlockDiff(e) ==
                                          ![e].vset = @ \cup {o}]
             ELSE /\ chan' = chan
                  /\ snap' = [snap EXCEPT ![e].pend = @ \ {o}]
-    /\ UNCHANGED <<store, gvv, bvv, syncs, feed, drain, outq, peervv, ping, pingcnt, gen>>
+    /\ UNCHANGED <<store, gvv, bvv, last, issued, commitcnt, syncs, feed, drain, outq, peervv, ping, pingcnt, gen>>
 
 \* FeedDiffVV: all blocks examined; send the 'V' packet carrying the
 \* snapshot block VVs of every changed block, then go live (SyncLive is
@@ -445,7 +494,7 @@ FeedDiffVV(e) ==
                   Append(@, VRec(snap[e].key,
                                  [o \in snap[e].vset |-> snap[e].bvv[o]]))]
     /\ feed' = [feed EXCEPT ![e] = "live"]
-    /\ UNCHANGED <<store, gvv, bvv, syncs, drain, outq, peervv, snap, ping, pingcnt, gen>>
+    /\ UNCHANGED <<store, gvv, bvv, last, issued, commitcnt, syncs, drain, outq, peervv, snap, ping, pingcnt, gen>>
 
 \* FeedLive: ship the accumulated broadcast queue (Oqueue.Feed).
 FeedLive(e) ==
@@ -454,7 +503,7 @@ FeedLive(e) ==
     /\ outq[e] # <<>>
     /\ chan' = [chan EXCEPT ![e] = @ \o outq[e]]
     /\ outq' = [outq EXCEPT ![e] = <<>>]
-    /\ UNCHANGED <<store, gvv, bvv, syncs, feed, drain, peervv, snap, ping, pingcnt, gen>>
+    /\ UNCHANGED <<store, gvv, bvv, last, issued, commitcnt, syncs, feed, drain, peervv, snap, ping, pingcnt, gen>>
 
 \* The session's outbound queue is closed (displacement by a new
 \* connection, queue overflow, shutdown) or the ping timeout fired:
@@ -465,7 +514,7 @@ FeedClose(e) ==
     /\ outq[e] = <<>>
     /\ gen[EdgeOf(e)] < GenBudget
     /\ feed' = [feed EXCEPT ![e] = "eof"]
-    /\ UNCHANGED <<store, gvv, bvv, syncs, drain, outq, chan, peervv, snap, ping, pingcnt, gen>>
+    /\ UNCHANGED <<store, gvv, bvv, last, issued, commitcnt, syncs, drain, outq, chan, peervv, snap, ping, pingcnt, gen>>
 
 \* SendEOF: emit B(snaplast, reason) and stop feeding.
 FeedEOF(e) ==
@@ -473,7 +522,7 @@ FeedEOF(e) ==
     /\ drain[e] # "none"
     /\ chan' = [chan EXCEPT ![e] = Append(@, BRec(snap[e].key))]
     /\ feed' = [feed EXCEPT ![e] = "none"]
-    /\ UNCHANGED <<store, gvv, bvv, syncs, drain, outq, peervv, snap, ping, pingcnt, gen>>
+    /\ UNCHANGED <<store, gvv, bvv, last, issued, commitcnt, syncs, drain, outq, peervv, snap, ping, pingcnt, gen>>
 
 \* Feed() checks GetDrainState() == SendNone on every call and winds the
 \* feed down -- but only once its own handshake/diff phase is complete: a
@@ -485,7 +534,7 @@ FeedDrainNone(e) ==
     /\ drain[e] = "none"
     /\ feed[e] \in {"live", "eof"}
     /\ feed' = [feed EXCEPT ![e] = "none"]
-    /\ UNCHANGED <<store, gvv, bvv, syncs, drain, outq, chan, peervv, snap, ping, pingcnt, gen>>
+    /\ UNCHANGED <<store, gvv, bvv, last, issued, commitcnt, syncs, drain, outq, chan, peervv, snap, ping, pingcnt, gen>>
 
 (***************************************************************************)
 (* Ping/pong (replication/sync.go pingTransition / processPings).          *)
@@ -496,14 +545,14 @@ FeedPing(e) ==
     /\ chan'    = [chan EXCEPT ![e] = Append(@, PingRec)]
     /\ ping'    = [ping EXCEPT ![e] = "wait_pong"]
     /\ pingcnt' = [pingcnt EXCEPT ![e] = @ + 1]
-    /\ UNCHANGED <<store, gvv, bvv, syncs, feed, drain, outq, peervv, snap, gen>>
+    /\ UNCHANGED <<store, gvv, bvv, last, issued, commitcnt, syncs, feed, drain, outq, peervv, snap, gen>>
 
 FeedPong(e) ==
     /\ EnablePing
     /\ feed[e] = "live" /\ ping[e] = "want_pong"
     /\ chan' = [chan EXCEPT ![e] = Append(@, PongRec)]
     /\ ping' = [ping EXCEPT ![e] = "idle"]
-    /\ UNCHANGED <<store, gvv, bvv, syncs, feed, drain, outq, peervv, snap, pingcnt, gen>>
+    /\ UNCHANGED <<store, gvv, bvv, last, issued, commitcnt, syncs, feed, drain, outq, peervv, snap, pingcnt, gen>>
 
 \* The PingWait timer fires with no pong (PingBroken): the session ends.
 PingBroken(e) ==
@@ -511,7 +560,7 @@ PingBroken(e) ==
     /\ feed[e] = "live" /\ ping[e] = "wait_pong"
     /\ gen[EdgeOf(e)] < GenBudget
     /\ feed' = [feed EXCEPT ![e] = "eof"]
-    /\ UNCHANGED <<store, gvv, bvv, syncs, drain, outq, chan, peervv, snap, ping, pingcnt, gen>>
+    /\ UNCHANGED <<store, gvv, bvv, last, issued, commitcnt, syncs, drain, outq, chan, peervv, snap, ping, pingcnt, gen>>
 
 (***************************************************************************)
 (* Drain side (replication/sync.go Drain + chotki.go drain).               *)
@@ -551,15 +600,16 @@ Drain(e) ==
          THEN \* ErrBadHPacket: session dies.
               /\ KillEdge(e, syncs)
               /\ ping' = [ping EXCEPT ![e] = ping1]
-              /\ UNCHANGED <<store, gvv, bvv, outq, peervv, snap, pingcnt, gen>>
+              /\ UNCHANGED <<store, gvv, bvv, last, issued, commitcnt, outq, peervv, snap, pingcnt, gen>>
          ELSE IF batch = <<>>
          THEN \* batch was pings only: nothing reaches Chotki.drain.
               /\ chan' = [chan EXCEPT ![Rev(e)] = rest]
               /\ ping' = [ping EXCEPT ![e] = ping1]
-              /\ UNCHANGED <<store, gvv, bvv, syncs, feed, drain, outq, peervv, snap, pingcnt, gen>>
+              /\ UNCHANGED <<store, gvv, bvv, last, issued, commitcnt, syncs, feed, drain, outq, peervv, snap, pingcnt, gen>>
          ELSE
            LET st0 == [sto |-> store[x], gv |-> gvv[x], bv |-> bvv[x],
-                       syn |-> syncs[x], via |-> e, err |-> FALSE, n |-> 0]
+                       syn |-> syncs[x], via |-> e, self |-> x,
+                       lst |-> last[x], err |-> FALSE, n |-> 0]
                stF == ApplyBatch(st0, batch)
                rly == RelayOf(batch, stF, drain[e] = "hs")
                tgt == BcastTargets(x, e)
@@ -567,6 +617,7 @@ Drain(e) ==
            IN /\ store' = [store EXCEPT ![x] = stF.sto]
               /\ gvv'   = [gvv EXCEPT ![x] = stF.gv]
               /\ bvv'   = [bvv EXCEPT ![x] = stF.bv]
+              /\ last'  = [last EXCEPT ![x] = stF.lst]
               /\ outq'  = [d \in Endpoints |->
                              IF d \in tgt /\ rly # <<>>
                              THEN SeqToApp(outq[d], rly)
@@ -582,13 +633,14 @@ Drain(e) ==
                       /\ drain' = [drain EXCEPT ![e] = nds]
                       /\ chan'  = [chan EXCEPT ![Rev(e)] = rest]
                       /\ feed'  = feed
-              /\ UNCHANGED <<snap, pingcnt, gen>>
+              /\ UNCHANGED <<issued, commitcnt, snap, pingcnt, gen>>
 
 --------------------------------------------------------------------------
 
 Next ==
     \/ \E p \in Edges : Connect(p)
     \/ \E r \in Replicas, o \in Objects : Commit(r, o)
+    \/ \E r \in Replicas, o \in Objects : OwnSourceDrain(r, o)
     \/ \E e \in Endpoints :
          \/ FeedHandshake(e) \/ FeedBlockDiff(e) \/ FeedDiffVV(e)
          \/ FeedLive(e) \/ FeedClose(e) \/ FeedEOF(e) \/ FeedDrainNone(e)
@@ -621,6 +673,16 @@ NoGaps ==
 \* A replica never claims to have seen more from s than s ever committed.
 VVBounded ==
     \A r \in Replicas, s \in Replicas : gvv[r][s] <= gvv[s][s]
+
+\* cho.last is the cached allocator state used by CommitPacket to stamp
+\* the next local id.  It must never lag behind the replica's own VV entry.
+LastCoversOwnVV ==
+    \A r \in Replicas : last[r] >= gvv[r][r]
+
+\* Every local own-source event must have received a fresh seq.  issued is
+\* a set, while commitcnt counts events; a repeated seq shrinks the set.
+FreshLocalIds ==
+    \A r \in Replicas : Cardinality(issued[r]) = commitcnt[r]
 
 \* Block VVs are exact: a non-zero bvv entry names a stored op stamp...
 BvvExact ==

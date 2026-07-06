@@ -11,6 +11,9 @@ precise abstraction choices.
 - **Replica state**: the pebble DB is reduced to a set of applied ops,
   the global version vector (`VKey0`) and per-block version vectors
   (`VKey(block)`; one object == one sync block).
+- **Local id allocation**: `cho.last` is modelled as the cached allocator
+  state used by `CommitPacket`, with a small witness action for own-source
+  records drained outside the local commit lock.
 - **Session FSM**: the `Syncer` feed states (`SendHandshake → SendDiff →
   SendLive → SendEOF → SendNone`, plus ping/pong) and drain states, exactly
   as driven by `Feed()`/`Drain()` including the `LastLit` batch-tail logic.
@@ -41,6 +44,8 @@ session-death nondeterminism), byte-level TLV encoding, and queue overflow
 | `TypeOK` | domains of all state variables |
 | `NoGaps` | **data safety**: a replica's global VV never claims an op that is not in its store. Because diff sync uses the peer's global VV as the resend floor, a violation is *permanent, silent data loss* — nobody will ever resend that op. |
 | `VVBounded` | a VV never runs ahead of what the source actually committed |
+| `LastCoversOwnVV` | the cached local allocator `cho.last` never lags behind the replica's own VV entry |
+| `FreshLocalIds` | each local own-source event receives a fresh seq; repeated seqs violate this |
 | `BvvExact`, `BvvCovers` | block VVs are exact and complete w.r.t. the store; the sender-side `hasChanges` check depends on this |
 | `SyncPointPerSrc` | at most one pending diff batch per origin replica (`"allow only 1 diff sync per src"`) |
 | `QuiescentConverged` | when nothing is in flight or queued and all sessions are live, all replicas hold the same data (eventual consistency over a tree topology) |
@@ -58,18 +63,21 @@ java -cp tla2tools.jar tlc2.TLC -config MCFixed.cfg -workers auto -deadlock MCCh
 |---|---|
 | `MCFixed.cfg` | fixed protocol, chain `a–b–c`, both ends commit: **no violations** |
 | `MCFixedChurn.cfg` | fixed protocol + session closes/reconnects: **no violations** |
+| `MCFixedLast.cfg` | intended fixed `cho.last` allocator witness: **no violations** |
 | `MCWitness.cfg` | `NotConverged` "violated": a full convergence trace |
 | `MCPing.cfg` | ping/pong machinery enabled: no violations |
 | `MCBuggyRelay.cfg` | pre-fix relay logic: **`NoGaps` violated** (bug 1 below) |
 | `MCBuggyDisplace.cfg` | pre-fix displacement: **`SyncPointPerSrc` violated** (bug 2) |
 | `MCBuggyStaleSync.cfg` | pre-fix sync-point lifetime: **`NoGaps` violated** (bug 3) |
+| `MCBuggyLast.cfg` | pre-fix unsynchronized `cho.last`: **`FreshLocalIds` violated** (bug 4) |
 
 (`-deadlock` disables deadlock reporting: behaviours legitimately terminate
 once the commit/reconnect budgets are exhausted.)
 
 ## Bugs found while writing this spec
 
-The three model-switchable ones (fixed in the same commit that adds the spec):
+The original model-switchable sync bugs plus the added local allocator
+witness:
 
 1. **Lost rebroadcast of applied records** (`replication/sync.go Drain`,
    modelled by `BuggyRelay = TRUE`). When network batching coalesced records
@@ -114,6 +122,18 @@ The three model-switchable ones (fixed in the same commit that adds the spec):
    context) and `Syncer.Close` aborts its sessions' sync points
    (`Chotki.AbortSyncsVia`) — a late `V` on a newer connection then gets
    `ErrSyncUnknown`, and the session restarts with a clean re-handshake.
+
+4. **`cho.last` could lag behind own-source records** (modelled by
+   `ProtectLast = FALSE` and `EnableOwnSourceDrain = TRUE`). `CommitPacket`
+   stamps a new local mutation from the cached `cho.last` value, while
+   `drain` can also apply records whose id source is the local replica and
+   advance the replica's own VV.  Without a synchronization edge around that
+   cache, the next commit can observe stale `cho.last` and reuse an already
+   issued seq.  The `MCBuggyLast.cfg` trace is deliberately tiny: an
+   own-source drain applies seq 1 but leaves `last = 0`, then `CommitPacket`
+   also emits seq 1, violating `FreshLocalIds`.  The corresponding code fix
+   is to protect `cho.last` reads/writes, including `Last()`, local commit
+   allocation, own-source drain updates and `Close()`.
 
 Bugs found in the same code while studying it for the model (also fixed, not
 modelled at the byte/timer level):

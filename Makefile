@@ -19,7 +19,7 @@ lint:
 TLA2TOOLS ?= tla2tools.jar
 .PHONY: tla
 tla:
-	cd tla && for cfg in MCFixed MCFixedChurn MCWitness MCPing; do \
+	cd tla && for cfg in MCFixed MCFixedChurn MCFixedLast MCWitness MCPing; do \
 		echo "=== $$cfg ==="; \
 		java -XX:+UseParallelGC -cp $(TLA2TOOLS) tlc2.TLC -config $$cfg.cfg -workers auto -deadlock MCChotkiSync || true; \
 	done
