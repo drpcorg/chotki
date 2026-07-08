@@ -145,6 +145,70 @@ func TestBatchedZCounterTwoWay(t *testing.T) {
 	assert.EqualValues(t, 7, got)
 }
 
+// A flush must apply the manager's accumulated increments as a DELTA on top of the current
+// DB value of its own src slot, stamped above any revision already there -- so a second
+// writer to the same (src, field) slot (as the keymanager ORM Zdelta "set" path does) is
+// preserved additively and the manager's own increment is never silently dropped by merge.
+func TestZCounterFlushAppliesDeltaOverExternalWrite(t *testing.T) {
+	ctx := context.Background()
+	a := openReplica(t, 0x1a, time.Hour)
+	rid := newCounterObject(t, a)
+
+	c := a.Counter(rid, 2) // Z field
+	_, err := c.Increment(ctx, 10)
+	assert.NoError(t, err)
+	a.SyncCounters(ctx) // DB slot = 10 at rev 1
+	assert.EqualValues(t, 10, persistedZ(t, a, rid, 2))
+
+	// Second writer to the SAME src slot, bypassing the manager: raise the slot to 100 with
+	// a fresh revision (exactly what rdx.Zdelta from an ORM object save produces).
+	_, oldTlv, err := a.ObjectFieldTLV(rid.ToOff(2))
+	assert.NoError(t, err)
+	_, err = a.EditFieldTLV(ctx, rid.ToOff(2),
+		protocol.Record(rdx.ZCounter, rdx.Zdelta(oldTlv, 100, a.Clock())))
+	assert.NoError(t, err)
+	assert.EqualValues(t, 100, persistedZ(t, a, rid, 2))
+
+	// Manager accumulates +5 more, then flushes. The external 100 must survive and the +5
+	// must be added on top -> 105. Buggy code writes absolute mine (15) at a stale rev, so
+	// the merge either drops the increment or clobbers the external write.
+	_, err = c.Increment(ctx, 5)
+	assert.NoError(t, err)
+	a.SyncCounters(ctx)
+
+	assert.EqualValues(t, 105, persistedZ(t, a, rid, 2))
+	got, err := c.Get(ctx)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 105, got)
+}
+
+// After a second writer changes the slot, a reload with nothing to flush must still adopt the
+// external value so Get() reflects it -- not only after the next local increment rebases mine.
+func TestZCounterReloadAdoptsExternalWrite(t *testing.T) {
+	ctx := context.Background()
+	a := openReplica(t, 0x1a, time.Hour)
+	rid := newCounterObject(t, a)
+
+	c := a.Counter(rid, 2)
+	_, err := c.Increment(ctx, 10)
+	assert.NoError(t, err)
+	a.SyncCounters(ctx)
+	assert.EqualValues(t, 10, persistedZ(t, a, rid, 2))
+
+	// External writer raises the slot to 100; the manager makes no local increment.
+	_, oldTlv, err := a.ObjectFieldTLV(rid.ToOff(2))
+	assert.NoError(t, err)
+	_, err = a.EditFieldTLV(ctx, rid.ToOff(2),
+		protocol.Record(rdx.ZCounter, rdx.Zdelta(oldTlv, 100, a.Clock())))
+	assert.NoError(t, err)
+
+	a.SyncCounters(ctx) // reload only; there is nothing local to flush
+
+	got, err := c.Get(ctx)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 100, got)
+}
+
 func TestNaturalRejectsDecrement(t *testing.T) {
 	ctx := context.Background()
 	a := openReplica(t, 0x1a, time.Hour)

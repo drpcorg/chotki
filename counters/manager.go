@@ -85,11 +85,6 @@ func (m *AtomicCounterManager) cycle(ctx context.Context, force bool) {
 	})
 }
 
-type pendingMark struct {
-	c        *AtomicCounter
-	syncedTo int64
-}
-
 // maxFlushBatch caps edits per CommitBatch; a var so tests can shrink it.
 var maxFlushBatch = 1024
 
@@ -97,10 +92,10 @@ var maxFlushBatch = 1024
 // cycle. Caller holds m.mu.
 func (m *AtomicCounterManager) flushAllLocked(ctx context.Context) {
 	var edits []host.Edit
-	var marks []pendingMark
+	var commits []func()
 	m.states.Range(func(_, v any) bool {
 		c := v.(*AtomicCounter)
-		changed, rdt, op, syncedTo := c.pendingFlush()
+		changed, rdt, op, onCommit := c.pendingFlush()
 		if !changed {
 			return true
 		}
@@ -111,7 +106,7 @@ func (m *AtomicCounterManager) flushAllLocked(ctx context.Context) {
 				protocol.Record(rdt, op),
 			},
 		})
-		marks = append(marks, pendingMark{c, syncedTo})
+		commits = append(commits, onCommit)
 		return true
 	})
 	// Each chunk is all-or-nothing; a failed chunk is retried next cycle.
@@ -126,8 +121,8 @@ func (m *AtomicCounterManager) flushAllLocked(ctx context.Context) {
 			}
 			continue // this chunk is retried next cycle
 		}
-		for _, mk := range marks[start:end] {
-			mk.c.markSynced(mk.syncedTo)
+		for _, onCommit := range commits[start:end] {
+			onCommit()
 		}
 	}
 }

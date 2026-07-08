@@ -68,12 +68,22 @@ func (a *AtomicCounter) load() error {
 			c.lastSynced = int64(mine)
 		}
 	case *zState:
-		sum, mine, rev := rdx.Znative3(tlv, a.db.Source())
-		c.theirs.Store(sum - mine)
+		sum, mineDB, rev := rdx.Znative3(tlv, a.db.Source())
+		c.theirs.Store(sum - mineDB)
 		if first {
-			c.mine.Store(mine)
-			c.lastSynced = mine
+			c.mine.Store(mineDB)
+			c.lastSynced = mineDB
 			c.rev = rev
+		} else {
+			// Adopt any external change to our own slot so value() stays fresh even without a
+			// local increment, and never let our revision fall behind the DB. Unflushed local
+			// increments (mine-lastSynced) are preserved: we shift mine by the external delta
+			// and re-baseline lastSynced to the observed slot.
+			if extDelta := mineDB - c.lastSynced; extDelta != 0 {
+				c.mine.Add(extDelta)
+			}
+			c.lastSynced = mineDB
+			c.rev = max(c.rev, rev)
 		}
 	default:
 		return ErrNotCounter
@@ -82,35 +92,49 @@ func (a *AtomicCounter) load() error {
 	return nil
 }
 
-// pendingFlush returns the field-edit op if mine changed since last flush (bumps Z rev); changed=false means nothing to do.
-// Does NOT commit — manager batches via CommitBatch and calls markSynced on success. Mutex-free: caller holds manager mutex.
-func (a *AtomicCounter) pendingFlush() (changed bool, rdt byte, op []byte, syncedTo int64) {
+// pendingFlush returns the field-edit op for a counter with unflushed local increments, plus
+// an onCommit callback the manager runs iff the batch commits. changed=false means nothing to
+// flush. Mutex-free: caller holds the manager mutex, so only lock-free Increment runs alongside.
+//
+// A Z flush is a read-modify-write: it reads the current DB value of its own src slot, adds the
+// delta accumulated since the last flush, and stamps a revision above any already present. This
+// keeps a second writer to the same (src, field) slot (e.g. an ORM Zdelta "set") from being
+// clobbered and stops the manager's own write from being silently dropped by the merge. Because
+// the write is a delta over the observed slot rather than the cached absolute mine, onCommit also
+// folds the observed external change into mine so value() stays correct.
+func (a *AtomicCounter) pendingFlush() (changed bool, rdt byte, op []byte, onCommit func()) {
 	switch c := a.data.(type) {
 	case *nState:
 		m := c.mine.Load()
 		if m == c.lastSynced {
-			return false, 0, nil, 0
+			return false, 0, nil, nil
 		}
-		return true, rdx.Natural, rdx.Ntlvt(uint64(m), a.db.Source()), m
+		return true, rdx.Natural, rdx.Ntlvt(uint64(m), a.db.Source()), func() {
+			c.lastSynced = m
+		}
 	case *zState:
 		m := c.mine.Load()
-		if m == c.lastSynced {
-			return false, 0, nil, 0
+		delta := m - c.lastSynced
+		if delta == 0 {
+			return false, 0, nil, nil
 		}
-		c.rev++
-		return true, rdx.ZCounter, rdx.Ztlvt(m, a.db.Source(), c.rev), m
+		_, tlv, err := a.db.ObjectFieldTLV(a.rid.ToOff(a.offset))
+		if err != nil {
+			return false, 0, nil, nil // can't read the slot; retry next cycle
+		}
+		_, mineDB, dbRev := rdx.Znative3(tlv, a.db.Source())
+		newRev := max(c.rev, dbRev) + 1
+		newSlot := mineDB + delta
+		extDelta := mineDB - c.lastSynced // net effect of any other writer to our slot
+		return true, rdx.ZCounter, rdx.Ztlvt(newSlot, a.db.Source(), newRev), func() {
+			c.rev = newRev
+			if extDelta != 0 {
+				c.mine.Add(extDelta) // fold the external change into our running total
+			}
+			c.lastSynced = newSlot
+		}
 	}
-	return false, 0, nil, 0
-}
-
-// markSynced records that contributions up to syncedTo are persisted. Mutex-free: caller holds manager mutex.
-func (a *AtomicCounter) markSynced(syncedTo int64) {
-	switch c := a.data.(type) {
-	case *nState:
-		c.lastSynced = syncedTo
-	case *zState:
-		c.lastSynced = syncedTo
-	}
+	return false, 0, nil, nil
 }
 
 // value returns mine+theirs (lock-free). Assumes the counter is loaded.
