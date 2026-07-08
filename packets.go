@@ -63,7 +63,13 @@ func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch, crea
 			err = cho.IndexManager.AddFullScanIndex(cid, at, batch)
 		} else {
 			// check if we need add other types of indexes
-			err = cho.IndexManager.OnFieldUpdate(rdt, at, rdx.BadId, bare, batch)
+			var deferredIdx bool
+			deferredIdx, err = cho.IndexManager.OnFieldUpdate(rdt, at, rdx.BadId, bare, batch)
+			if err == nil && deferredIdx && created != nil {
+				// the object's 'O' rides this same (unapplied) sync batch, so the
+				// class was unresolvable; reindex from merged state after 'V'
+				*created = append(*created, at.ZeroOff())
+			}
 		}
 	}
 	return
@@ -200,7 +206,8 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 			cho.opts.PebbleWriteOptions)
 		rest = rest[rlen:]
 		if err == nil {
-			err = cho.IndexManager.OnFieldUpdate(lit, fid, ref, rebar, batch)
+			// cid (ref) is known here, so the update is never deferred
+			_, err = cho.IndexManager.OnFieldUpdate(lit, fid, ref, rebar, batch)
 		}
 	}
 	if err == nil {
@@ -218,7 +225,10 @@ var ErrOffsetOpId = errors.New("op id is offset")
 // Edits obkject fields. Unlike ApplyOY, it does not assume that we update whole object,
 // as we can update individual fields.
 // It also sets the current replica src id for FIRST/MEL types. Otherwise its just merges bytes into the batch.
-func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls *[]CallHook) (err error) {
+// When the edited object's class can't be resolved yet (its 'O' rides the same
+// unapplied batch or a concurrent drain), the object id is appended to created
+// so the caller reindexes it from the merged state after the batch commits.
+func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls *[]CallHook, created *[]rdx.ID) (err error) {
 	// we either supply id of the object (0 offset) or ref should be an id of the object
 	if id.Off() != 0 || r.Off() != 0 {
 		return ErrOffsetOpId
@@ -258,7 +268,12 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls 
 			cho.opts.PebbleWriteOptions)
 
 		if err == nil {
-			err = cho.IndexManager.OnFieldUpdate(lit, fid, rdx.BadId, rebar, batch)
+			var deferredIdx bool
+			deferredIdx, err = cho.IndexManager.OnFieldUpdate(lit, fid, rdx.BadId, rebar, batch)
+			if err == nil && deferredIdx && created != nil {
+				// object not visible yet: reindex from merged state post-commit
+				*created = append(*created, r)
+			}
 		}
 		// hooks are used for REPL sometimes (or where used), otherwise unused
 		hook, ok := cho.hooks.Load(fid)

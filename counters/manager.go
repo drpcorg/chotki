@@ -90,7 +90,17 @@ var maxFlushBatch = 1024
 
 // flushAllLocked commits changed counters in maxFlushBatch chunks; failed chunks are retried next
 // cycle. Caller holds m.mu.
+//
+// The whole read-then-commit sequence runs inside the host's sequential-write
+// bracket: a Z flush op is a read-modify-write of its own src slot (see
+// pendingFlush), and another bracketed writer of the same slot (e.g. a
+// counter "set" flow) landing between our read and our commit would collide
+// with it on the revision — the merge then silently drops one of the writes.
+// The bracket spans ALL chunks because every op is read below, before the
+// first chunk commits.
 func (m *AtomicCounterManager) flushAllLocked(ctx context.Context) {
+	m.db.StartSequentialWrite()
+	defer m.db.EndSequentialWrite()
 	var edits []host.Edit
 	var commits []func()
 	m.states.Range(func(_, v any) bool {

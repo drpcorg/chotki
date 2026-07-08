@@ -238,8 +238,13 @@ type Chotki struct {
 	cancelCtx context.CancelFunc
 	waitGroup *sync.WaitGroup
 
-	lock         sync.RWMutex
-	commitMutex  sync.Mutex
+	lock        sync.RWMutex
+	commitMutex sync.Mutex
+	// seqWriteMu backs Start/EndSequentialWrite (host.Host): the cooperative
+	// bracket read-modify-write writers hold across their read AND commit.
+	// Deliberately NOT commitMutex — commit methods lock that internally, so
+	// the bracket must nest around them (ordering: seqWriteMu → commitMutex).
+	seqWriteMu   sync.Mutex
 	db           *pebble.DB
 	net          *network.Net
 	dir          string
@@ -745,6 +750,20 @@ func (cho *Chotki) CommitBatch(ctx context.Context, edits []host.Edit) (err erro
 	return nil
 }
 
+// StartSequentialWrite acquires the cooperative read-modify-write bracket (see
+// host.Host): hold it across both the read and the commit of an op that
+// depends on current DB state (e.g. a Z-counter set), paired with
+// EndSequentialWrite. Commit methods do not take this lock, so they are safe
+// to call inside the bracket. Not reentrant.
+func (cho *Chotki) StartSequentialWrite() {
+	cho.seqWriteMu.Lock()
+}
+
+// EndSequentialWrite releases the bracket taken by StartSequentialWrite.
+func (cho *Chotki) EndSequentialWrite() {
+	cho.seqWriteMu.Unlock()
+}
+
 type NetCollector struct {
 	net               *network.Net
 	read_buffers_size *prometheus.Desc
@@ -945,7 +964,10 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 			if ref == rdx.ID0 {
 				return applied, ErrBadEPacket
 			}
-			err = cho.ApplyE(id, ref, body, &pb, &calls)
+			// created also collects edit targets whose class was unresolvable
+			// mid-batch (object's 'O' not yet visible); they are reindexed from
+			// the merged state post-commit like created objects.
+			err = cho.ApplyE(id, ref, body, &pb, &calls, &created)
 
 		case 'H': // handshake
 			d := cho.db.NewBatch()

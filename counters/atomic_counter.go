@@ -18,7 +18,7 @@ var ErrDecrementN error = fmt.Errorf("decrementing natural counter")
 
 // AtomicCounter is the in-memory state for one (rid, offset) counter field; Increment/Get are lock-free.
 type AtomicCounter struct {
-	data     any    // *nState | *zState; set once on first successful load
+	data     any // *nState | *zState; set once on first successful load
 	rid      rdx.ID
 	offset   uint64
 	db       host.Host

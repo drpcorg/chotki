@@ -30,6 +30,9 @@ func (h *mockHost) CommitBatch(ctx context.Context, edits []host.Edit) error {
 	return nil
 }
 
+func (h *mockHost) StartSequentialWrite() {}
+func (h *mockHost) EndSequentialWrite()   {}
+
 // Cycle splits >maxFlushBatch dirty counters into chunks of at most maxFlushBatch.
 func TestFlushChunking(t *testing.T) {
 	old := maxFlushBatch

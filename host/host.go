@@ -37,4 +37,17 @@ type Host interface {
 	// created by the given replication session.
 	AbortSyncsVia(ctx context.Context, sessionId string)
 	Snapshot() pebble.Reader
+	// StartSequentialWrite/EndSequentialWrite bracket a read-modify-write:
+	// writers whose op depends on the current DB state (a Z-counter flush or
+	// "set" reads the slot and writes value@rev+1) take the bracket around
+	// BOTH the read and the commit. Two bracketed writers of one slot then
+	// serialize instead of racing — without it, one lands between the other's
+	// read and commit, the two ops collide on the revision, and the merge
+	// silently drops one of them.
+	//
+	// The bracket is cooperative: commit methods do NOT take it, and writers
+	// that skip it are not serialized. Reads must happen INSIDE the bracket —
+	// wrapping a commit of a stale-computed op fixes nothing. Not reentrant.
+	StartSequentialWrite()
+	EndSequentialWrite()
 }
