@@ -87,6 +87,17 @@
 (*     commit can reuse an already issued seq (violates FreshLocalIds).   *)
 (*   ProtectLast = TRUE models the intended fix: own-source drains and    *)
 (*     local commits update/read cho.last under a synchronization edge.    *)
+(*                                                                         *)
+(*   BatchMode = TRUE models chotki.go drain() applying the Y/C/O/E        *)
+(*     records of a batch as one all-or-nothing pebble batch after the     *)
+(*     loop (one write per drain) instead of per-packet.  With             *)
+(*     BatchBuggy = TRUE it also models the pre-fix defect: a mid-batch    *)
+(*     error drops the staged records (their VV bumps with them) while     *)
+(*     cho.last was already advanced to their own-source ids, leaving      *)
+(*     cho.last ahead of the persisted VV (violates LastNotAhead).         *)
+(*   BatchBuggy = FALSE models the fix: the applied prefix is flushed even *)
+(*     on error and cho.last advances only after that durable write, so    *)
+(*     cho.last moves in lock-step with the version vector.                *)
 (***************************************************************************)
 
 EXTENDS Naturals, Sequences, FiniteSets
@@ -103,7 +114,19 @@ CONSTANTS
     DropSyncsOnClose, \* TRUE: sync points die with the session (fixed)
     ProtectLast,      \* TRUE: cho.last is synchronized with own-source drains
     EnableOwnSourceDrain, \* include the local cho.last race witness action
-    EnablePing        \* include the ping/pong keep-alive machinery
+    EnablePing,       \* include the ping/pong keep-alive machinery
+    BatchMode,        \* TRUE: model chotki.go drain() as one all-or-nothing
+                      \*   pebble batch for the Y/C/O/E (live) records, applied
+                      \*   after the loop, rather than per-packet.  cho.last is
+                      \*   advanced to the batch's own-source ids only once the
+                      \*   batch is durable.
+    BatchBuggy        \* only meaningful with BatchMode.  TRUE: model the
+                      \*   pre-fix batched drain — a mid-batch error drops the
+                      \*   staged Y/C/O/E records (their version-vector bumps
+                      \*   dropped with them) yet cho.last was already advanced
+                      \*   to their own-source ids.  FALSE: the fix — the applied
+                      \*   prefix is flushed even on error and cho.last advances
+                      \*   only after that durable write.
 
 ASSUME
     /\ \A p \in Edges : p \subseteq Replicas /\ Cardinality(p) = 2
@@ -116,6 +139,8 @@ ASSUME
     /\ ProtectLast \in BOOLEAN
     /\ EnableOwnSourceDrain \in BOOLEAN
     /\ EnablePing \in BOOLEAN
+    /\ BatchMode \in BOOLEAN
+    /\ BatchBuggy \in BOOLEAN
 
 (***************************************************************************)
 (* An endpoint <<x, y>> is the Syncer living at replica x serving the     *)
@@ -127,6 +152,9 @@ Rev(e)    == <<e[2], e[1]>>
 EdgeOf(e) == {e[1], e[2]}
 
 Max(a, b) == IF a >= b THEN a ELSE b
+
+\* Largest element of a finite set of naturals (0 for the empty set).
+SetMax(S) == IF S = {} THEN 0 ELSE CHOOSE m \in S : \A y \in S : y <= m
 
 ZeroVV        == [s \in Replicas |-> 0]
 VVMerge(u, w) == [s \in Replicas |-> Max(u[s], w[s])]
@@ -288,9 +316,15 @@ ApplyOne(st, m) ==
            \* chotki.go 'B': drop the origin's pending diff batch, if any.
            [st EXCEPT !.syn = {sp \in @ : sp.k # m.k}]
       [] m.t = "E" ->
-           \* chotki.go 'E'/'O'/...: apply immediately; UpdateVTree bumps
-           \* both the global VV and the object's block VV.
-           [st EXCEPT !.sto = @ \cup {m.op},
+           \* chotki.go 'E'/'O'/...: a live mutation.  In BatchMode it is only
+           \* staged into the pending batch (pe), applied all-or-nothing after
+           \* the loop; the global/block VV bumps and the cho.last advance
+           \* happen at that commit, not here (see the Drain action).  Without
+           \* BatchMode it is applied immediately (the old per-packet drain):
+           \* UpdateVTree bumps both the global VV and the object's block VV.
+           IF BatchMode
+           THEN [st EXCEPT !.pe = @ \cup {m.op}]
+           ELSE [st EXCEPT !.sto = @ \cup {m.op},
                       !.gv  = [@ EXCEPT ![m.op.src] = Max(@, m.op.seq)],
                       !.bv  = [@ EXCEPT ![m.op.obj][m.op.src] = Max(@, m.op.seq)],
                       !.lst = IF ProtectLast /\ m.op.src = st.self
@@ -429,14 +463,25 @@ Commit(r, o) ==
 \* The Go code tried to advance cho.last on that path, but without a
 \* separate synchronization edge the next CommitPacket may observe stale
 \* cho.last and reuse a seq.  ProtectLast=FALSE models the lost visibility.
+\*
+\* In BatchMode+BatchBuggy this record rides a batched drain that then errors
+\* and is dropped: its VV bump is lost (store/gvv/bvv unchanged) but cho.last
+\* was already advanced to its id (advanced before the durable write), leaving
+\* cho.last ahead of the persisted VV (LastNotAhead).  In the fix (BatchBuggy
+\* FALSE) the applied prefix is flushed, so the record is durable and cho.last
+\* moves with the VV.
 OwnSourceDrain(r, o) ==
     /\ EnableOwnSourceDrain
     /\ commitcnt[r] < CommitBudget[r]
-    /\ LET q  == gvv[r][r] + 1
-           op == [src |-> r, seq |-> q, obj |-> o]
-       IN /\ store' = [store EXCEPT ![r] = @ \cup {op}]
-          /\ gvv'   = [gvv EXCEPT ![r][r] = q]
-          /\ bvv'   = [bvv EXCEPT ![r][o][r] = q]
+    /\ LET q       == gvv[r][r] + 1
+           op      == [src |-> r, seq |-> q, obj |-> o]
+           dropped == BatchMode /\ BatchBuggy
+       IN /\ store' = IF dropped THEN store ELSE [store EXCEPT ![r] = @ \cup {op}]
+          /\ gvv'   = IF dropped THEN gvv   ELSE [gvv EXCEPT ![r][r] = q]
+          /\ bvv'   = IF dropped THEN bvv   ELSE [bvv EXCEPT ![r][o][r] = q]
+          \* the bug advances cho.last even when the batch was dropped; the fix
+          \* (and the per-packet model) advances it only alongside the durable
+          \* write, i.e. exactly when the record was not dropped.
           /\ last'  = IF ProtectLast
                       THEN [last EXCEPT ![r] = Max(@, q)]
                       ELSE last
@@ -609,15 +654,39 @@ Drain(e) ==
          ELSE
            LET st0 == [sto |-> store[x], gv |-> gvv[x], bv |-> bvv[x],
                        syn |-> syncs[x], via |-> e, self |-> x,
-                       lst |-> last[x], err |-> FALSE, n |-> 0]
+                       lst |-> last[x], err |-> FALSE, n |-> 0, pe |-> {}]
                stF == ApplyBatch(st0, batch)
                rly == RelayOf(batch, stF, drain[e] = "hs")
                tgt == BcastTargets(x, e)
                nds == NextDrainState(drain[e], batch)
-           IN /\ store' = [store EXCEPT ![x] = stF.sto]
-              /\ gvv'   = [gvv EXCEPT ![x] = stF.gv]
-              /\ bvv'   = [bvv EXCEPT ![x] = stF.bv]
-              /\ last'  = [last EXCEPT ![x] = stF.lst]
+               \* Commit the pending batch (pe) accumulated in BatchMode. The
+               \* fix flushes the applied prefix even on error (keepPE always
+               \* TRUE); the pre-fix bug drops it on error (keepPE FALSE) while
+               \* still having advanced cho.last to its own-source ids below —
+               \* leaving last ahead of the persisted VV (LastNotAhead).
+               \* Outside BatchMode pe is empty, so all of this is a no-op and
+               \* the per-packet fold result (stF) is committed unchanged.
+               keepPE == (~BatchBuggy) \/ (~stF.err)
+               peGv   == [s \in Replicas |->
+                            Max(stF.gv[s],
+                                SetMax({op.seq : op \in {o \in stF.pe : o.src = s}}))]
+               peBv   == [o \in Objects |-> [s \in Replicas |->
+                            Max(stF.bv[o][s],
+                                SetMax({op.seq : op \in {p \in stF.pe :
+                                                          p.obj = o /\ p.src = s}}))]]
+               ownMax == SetMax({op.seq : op \in {o \in stF.pe : o.src = x}})
+               finalSto == IF keepPE THEN stF.sto \cup stF.pe ELSE stF.sto
+               finalGv  == IF keepPE THEN peGv ELSE stF.gv
+               finalBv  == IF keepPE THEN peBv ELSE stF.bv
+               \* cho.last is advanced to the batch's own-source ids regardless
+               \* of keepPE: the fix does it after a durable write (keepPE TRUE,
+               \* so last stays == VV), the bug does it even when the batch was
+               \* dropped (keepPE FALSE, so last runs past the VV).
+               finalLst == IF ProtectLast THEN Max(stF.lst, ownMax) ELSE stF.lst
+           IN /\ store' = [store EXCEPT ![x] = finalSto]
+              /\ gvv'   = [gvv EXCEPT ![x] = finalGv]
+              /\ bvv'   = [bvv EXCEPT ![x] = finalBv]
+              /\ last'  = [last EXCEPT ![x] = finalLst]
               /\ outq'  = [d \in Endpoints |->
                              IF d \in tgt /\ rly # <<>>
                              THEN SeqToApp(outq[d], rly)
@@ -678,6 +747,17 @@ VVBounded ==
 \* the next local id.  It must never lag behind the replica's own VV entry.
 LastCoversOwnVV ==
     \A r \in Replicas : last[r] >= gvv[r][r]
+
+\* ...nor run AHEAD of the persisted own VV entry.  cho.last lives only in
+\* memory: a restart rebuilds it from the persisted version vector
+\* (cho.last = vv.GetID(cho.src) in Open).  If cho.last was advanced to an id
+\* whose op the batched drain then dropped (never persisted to the VV), a
+\* restart rebuilds cho.last behind that id and the next commit reissues it,
+\* though a peer that received the drained/relayed record already holds it.
+\* Together with LastCoversOwnVV this pins last[r] = gvv[r][r]: the allocator
+\* must move in lock-step with the durable version vector.
+LastNotAhead ==
+    \A r \in Replicas : last[r] <= gvv[r][r]
 
 \* Every local own-source event must have received a fresh seq.  issued is
 \* a set, while commitcnt counts events; a repeated seq shrinks the set.

@@ -537,6 +537,17 @@ func (cho *Chotki) nextLast() rdx.ID {
 	return cho.last
 }
 
+// advanceLast bumps the cached allocator to id if it is behind. Called by drain
+// only after the own-source ids up to id have been durably applied, so cho.last
+// never runs ahead of the persisted version vector.
+func (cho *Chotki) advanceLast(id rdx.ID) {
+	cho.lastLock.Lock()
+	defer cho.lastLock.Unlock()
+	if cho.last.Less(id) {
+		cho.last = id
+	}
+}
+
 // Returns the write options of the Chotki instance.
 func (cho *Chotki) WriteOptions() *pebble.WriteOptions {
 	return cho.opts.PebbleWriteOptions
@@ -684,6 +695,13 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 	recs := protocol.Records{packet}
 	_, err = cho.drain(ctx, recs)
 	DrainTime.WithLabelValues("commit").Observe(float64(time.Since(now)) / float64(time.Millisecond))
+	if err != nil {
+		// Do not publish an id we failed to persist: a peer would then hold a
+		// packet this replica has no durable record of, and a crash before the
+		// next successful commit could reissue the same id (CommitBatch already
+		// guards its broadcast the same way).
+		return
+	}
 	cho.Broadcast(ctx, recs, "")
 	return
 }
@@ -837,6 +855,40 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 	pb := pebble.Batch{}
 	classChanged := false
 	var created []rdx.ID // objects created here; reindexed from merged state post-commit
+	// Highest own-source id seen in this batch. cho.last is advanced to it only
+	// AFTER pb is durably applied (below), never inside the loop: pb is an
+	// all-or-nothing batch, so advancing the allocator before the write could
+	// leave cho.last ahead of the persisted version vector. A crash there would
+	// rebuild cho.last from the VV (behind) and hand the id out again though a
+	// peer already holds it.
+	var maxOwn rdx.ID
+	// flush persists the accumulated Y/C/O/E batch, then advances the local id
+	// allocator to the own-source ids it just made durable. It is deferred so it
+	// runs on EVERY exit path — including the mid-loop early returns below — so a
+	// batch that fails partway still persists the prefix it applied. That keeps
+	// the batched write's durability identical to the old per-packet apply and
+	// matches the relayApplied contract (replication rebroadcasts recs[:applied],
+	// which must be durable). cho.last is advanced only here, after the durable
+	// write, so it can never run ahead of the persisted version vector.
+	flushed := false
+	flush := func() {
+		if flushed {
+			return
+		}
+		flushed = true
+		if pb.Count() > 0 {
+			if ae := cho.db.Apply(&pb, cho.opts.PebbleWriteOptions); ae != nil {
+				if err == nil {
+					err = ae
+				}
+				return // batch not durable: do NOT advance the allocator
+			}
+		}
+		if maxOwn != rdx.ID0 {
+			cho.advanceLast(maxOwn)
+		}
+	}
+	defer flush()
 	for _, packet := range recs { // parse the packets
 		if err != nil {
 			break
@@ -850,21 +902,17 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 		}
 
 		// A record stamped with our own src must advance the local id
-		// allocator, or future commits would reuse its seq. Such records
-		// come from two paths that do NOT share a lock: local commits
-		// (CommitPacket holds commitMutex around this drain) and
-		// replication sessions draining our own history back (e.g. after
-		// a restore from an older snapshot) — hence lastLock.
-		if id.Src() == cho.src {
-			cho.lastLock.Lock()
-			if cho.last.Less(id) {
-				if id.Off() != 0 {
-					cho.lastLock.Unlock()
-					return applied, rdx.ErrBadPacket
-				}
-				cho.last = id
+		// allocator, or future commits would reuse its seq. Such records come
+		// from two paths: local commits (CommitPacket/CommitBatch, under
+		// commitMutex) and replication sessions draining our own history back
+		// (e.g. after a restore from an older snapshot). We only record the
+		// max here; cho.last is advanced under lastLock after the durable
+		// apply below.
+		if id.Src() == cho.src && maxOwn.Less(id) {
+			if id.Off() != 0 {
+				return applied, rdx.ErrBadPacket
 			}
-			cho.lastLock.Unlock()
+			maxOwn = id
 		}
 
 		cho.log.DebugCtx(ctx, "new packet", "type", string(lit), "packet", id.String())
@@ -1015,11 +1063,10 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 		}
 	}
 
-	// Apply the accumulated Y/C/O/E batch once; sync packets already committed theirs.
-	// Skip when empty (e.g. a drain call carrying only H/D/V sync packets).
-	if err == nil && pb.Count() > 0 {
-		err = cho.db.Apply(&pb, cho.opts.PebbleWriteOptions)
-	}
+	// Persist the accumulated Y/C/O/E batch (sync packets already committed
+	// theirs) and advance the allocator, before running hooks that read the
+	// merged state. flush is idempotent; the deferred call above is a no-op now.
+	flush()
 	if err != nil {
 		return
 	}

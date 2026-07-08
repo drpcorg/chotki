@@ -277,7 +277,7 @@ func (im *IndexManager) HandleClassUpdateParsed(id rdx.ID, cid rdx.ID, newFields
 	return tasks, nil
 }
 
-func (im *IndexManager) CheckReindexTasks(ctx context.Context) {
+func (im *IndexManager) CheckReindexTasks(ctx context.Context, period time.Duration) {
 	cycle := func() {
 		iter, err := im.c.Database().NewIter(&pebble.IterOptions{
 			LowerBound: []byte{'I', 'T'},
@@ -348,9 +348,17 @@ func (im *IndexManager) CheckReindexTasks(ctx context.Context) {
 			}
 		}
 	}
+	t := time.NewTicker(period)
+	defer t.Stop()
 	for ctx.Err() == nil {
 		cycle()
-		time.Sleep(1 * time.Second)
+		// wait a period, but return promptly on shutdown instead of sleeping
+		// through it (a long period would otherwise block Close's wg.Wait)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
 	}
 }
 
