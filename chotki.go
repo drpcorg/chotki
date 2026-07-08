@@ -202,7 +202,8 @@ type syncPoint struct {
 	// this sync point; the sync point is aborted when that session ends
 	// (AbortSyncsVia), as its remaining 'D'/'V' records die with the
 	// session's connection.
-	via string
+	via     string
+	created []rdx.ID // objects created in this sync; reindexed from merged state after 'V'
 }
 
 // closeLocked closes the batch if it's still open. Must be called with s.mu held.
@@ -295,6 +296,10 @@ func (cho *Chotki) cleanSyncs(ctx context.Context) {
 		}
 	}
 }
+
+// reindexPeriod is how often the background reindex worker scans for tasks.
+// A var so tests can set it long, isolating the apply path from the backstop.
+var reindexPeriod = time.Second
 
 // Opens a new Chotki instance.
 func Open(dirname string, opts Options) (*Chotki, error) {
@@ -393,9 +398,10 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 	cho.IndexManager = indexes.NewIndexManager(&cho)
 	wg.Add(1)
 	// reindex tasks are checked in a separate worker
+	reindexP := reindexPeriod
 	go func() {
 		defer wg.Done()
-		cho.IndexManager.CheckReindexTasks(ctx)
+		cho.IndexManager.CheckReindexTasks(ctx, reindexP)
 	}()
 
 	wg.Add(1)
@@ -830,6 +836,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 	// (H/D/V) keep their own per-sync batch and commit it on 'V'.
 	pb := pebble.Batch{}
 	classChanged := false
+	var created []rdx.ID // objects created here; reindexed from merged state post-commit
 	for _, packet := range recs { // parse the packets
 		if err != nil {
 			break
@@ -882,6 +889,9 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 				return applied, ErrBadOPacket
 			}
 			err = cho.ApplyOY('O', id, ref, body, &pb)
+			if err == nil {
+				created = append(created, id)
+			}
 
 		case 'E': // edits an object
 			if ref == rdx.ID0 {
@@ -942,7 +952,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 				s.mu.Unlock()
 				return applied, ErrSyncUnknown
 			}
-			err = cho.ApplyD(id, ref, body, s.batch)
+			err = cho.ApplyD(id, ref, body, s.batch, &s.created)
 			s.mu.Unlock()
 			// applied into the sync point's own batch, not pb
 
@@ -962,6 +972,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 			DiffSyncSize.Observe(float64(s.batch.Len()))
 			// update blocks version vectors
 			err = cho.ApplyV(id, ref, body, s.batch)
+			var syncCreated []rdx.ID
 			if err == nil {
 				// apply batch and delete sync point as diff sync is finished
 				err = cho.db.Apply(s.batch, cho.opts.PebbleWriteOptions)
@@ -969,10 +980,19 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 				// so close it explicitly to avoid leaking a pool slot.
 				_ = s.batch.Close()
 				s.batch = nil
+				syncCreated = s.created
 				cho.syncs.Delete(id)
 				cho.log.InfoCtx(ctx, "applied diff batch and deleted it", "id", id)
 			}
 			s.mu.Unlock()
+			// Reindex objects this sync created from their committed, merged values.
+			// Their class may have arrived in the same batch, which OnFieldUpdate
+			// couldn't resolve mid-sync; now it's applied.
+			for _, oid := range syncCreated {
+				if e := cho.IndexManager.IndexObject(oid); e != nil {
+					cho.log.WarnCtx(ctx, "post-sync index failed", "oid", oid.String(), "err", e)
+				}
+			}
 			// already applied the sync point's own batch above
 
 		case 'B': // session end
@@ -1005,6 +1025,15 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 	}
 	if classChanged {
 		cho.types.Clear()
+	}
+
+	// Reindex created objects from their committed, merged values so an edit that
+	// arrived before its create (out-of-order or same-batch) is reflected now,
+	// without depending on the reindex worker.
+	for _, oid := range created {
+		if e := cho.IndexManager.IndexObject(oid); e != nil {
+			cho.log.WarnCtx(ctx, "post-commit index failed", "oid", oid.String(), "err", e)
+		}
 	}
 
 	if len(calls) > 0 {

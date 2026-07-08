@@ -428,6 +428,37 @@ func (im *IndexManager) OnFieldUpdate(rdt byte, fid, cid rdx.ID, tlv []byte, bat
 	return nil
 }
 
+// IndexObject (re)builds hash-index entries for oid's indexed fields from their
+// CURRENT merged values. Callers invoke it after a batch commits, so an edit that
+// was processed before its object's create (out-of-order or same-batch) is picked
+// up from the converged state instead of waiting for the reindex worker.
+func (im *IndexManager) IndexObject(oid rdx.ID) error {
+	_, ctlv := im.c.GetFieldTLV(oid.ZeroOff())
+	cid := rdx.IDFromZipBytes(ctlv)
+	if cid == rdx.ID0 || cid == rdx.BadId {
+		return nil // object's create not applied yet; its own apply will index it
+	}
+	fields, err := im.c.ClassFields(cid)
+	if err != nil {
+		return err
+	}
+	for off := 1; off < len(fields); off++ {
+		if fields[off].Index != classes.HashIndex {
+			continue
+		}
+		fid := oid.ToOff(uint64(off))
+		rdt, tlv, err := im.c.ObjectFieldTLV(fid)
+		if err != nil || !rdx.IsFirst(rdt) {
+			continue
+		}
+		_, _, val := rdx.ParseFIRST(tlv)
+		if err := im.addHashIndex(cid, fid, val, im.c.Database()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (im *IndexManager) runReindexTask(ctx context.Context, task *ReindexTask) {
 	start := time.Now()
 	ReindexCount.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field)).Inc()

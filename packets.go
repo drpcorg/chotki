@@ -29,7 +29,7 @@ func (cho *Chotki) UpdateVTree(id, ref rdx.ID, pb *pebble.Batch) (err error) {
 // During the diff sync it handles the 'D' packets which most of the time contains a single block (look at the replication protocol description).
 // It does not immediately apply the changes to DB, instead using a batch.
 // The batch will be applied when we finish the diffsync, when we receive the 'V' packet.
-func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
+func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch, created *[]rdx.ID) (err error) {
 	rest := body
 	var rdt byte
 	for len(rest) > 0 && err == nil {
@@ -57,6 +57,9 @@ func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 		// adding full scan index if the object was created
 		if err == nil && rdt == 'O' {
 			cid := rdx.IDFromZipBytes(bare)
+			if created != nil {
+				*created = append(*created, at) // reindexed from merged state after 'V'
+			}
 			err = cho.IndexManager.AddFullScanIndex(cid, at, batch)
 		} else {
 			// check if we need add other types of indexes
