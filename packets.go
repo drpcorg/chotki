@@ -29,7 +29,7 @@ func (cho *Chotki) UpdateVTree(id, ref rdx.ID, pb *pebble.Batch) (err error) {
 // During the diff sync it handles the 'D' packets which most of the time contains a single block (look at the replication protocol description).
 // It does not immediately apply the changes to DB, instead using a batch.
 // The batch will be applied when we finish the diffsync, when we receive the 'V' packet.
-func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch, created *[]rdx.ID) (err error) {
+func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch pebble.Writer, created *[]rdx.ID, claims map[string]rdx.ID) (err error) {
 	rest := body
 	var rdt byte
 	for len(rest) > 0 && err == nil {
@@ -49,13 +49,17 @@ func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch, crea
 		if rdt == 0 || bare == nil {
 			return rdx.ErrBadPacket
 		}
-		// we updated some classes, so dropping cache
-		if rdt == 'C' {
-			cho.types.Clear()
-		}
+		// Don't clear cho.types for a 'C' parcel here: the batch isn't durable
+		// until 'V', so clearing now would let a concurrent ClassFields re-cache
+		// the stale schema. The 'V' handler clears it after the batch applies.
 		err = batch.Merge(host.OKey(at, rdt), bare, cho.opts.PebbleWriteOptions)
+		if err != nil {
+			// return now so the OnFieldUpdate branch below (nil for non-FIRST
+			// types) can't swallow the Merge error; this aborts the sync.
+			return err
+		}
 		// adding full scan index if the object was created
-		if err == nil && rdt == 'O' {
+		if rdt == 'O' {
 			cid := rdx.IDFromZipBytes(bare)
 			if created != nil {
 				*created = append(*created, at) // reindexed from merged state after 'V'
@@ -64,7 +68,7 @@ func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch, crea
 		} else {
 			// check if we need add other types of indexes
 			var deferredIdx bool
-			deferredIdx, err = cho.IndexManager.OnFieldUpdate(rdt, at, rdx.BadId, bare, batch)
+			deferredIdx, err = cho.IndexManager.OnFieldUpdate(rdt, at, rdx.BadId, bare, batch, claims)
 			if err == nil && deferredIdx && created != nil {
 				// the object's 'O' rides this same (unapplied) sync batch, so the
 				// class was unresolvable; reindex from merged state after 'V'
@@ -81,9 +85,10 @@ func (cho *Chotki) ApplyH(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 	_, rest := protocol.Take('M', body)
 	var vbody []byte
 	vbody, _ = protocol.Take('V', rest)
-	// relayed handshakes are not pre-validated by DrainHandshake, so the
-	// version vector may be missing here
-	if vbody == nil {
+	// Relayed handshakes skip ParseHandshake, so the VV may be missing or
+	// malformed. Reject rather than merge: Vmerge keeps only the parseable
+	// prefix of a garbled VV, so the sync would record partial coverage.
+	if vbody == nil || !rdx.VValid(vbody) {
 		return chotki_errors.ErrBadHPacket
 	}
 	err = batch.Merge(host.VKey0, vbody, cho.opts.PebbleWriteOptions)
@@ -165,7 +170,7 @@ func (cho *Chotki) ApplyC(id, ref rdx.ID, body []byte, batch *pebble.Batch, call
 // Then it goes through the rest of the fields encoded as TLV. The only transformation it does:
 // it sets the current replica src id for FIRST/MEL types, because historically they are not set
 // when creating those fields (for convinience?)
-func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.Batch) (err error) {
+func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.Batch, claims map[string]rdx.ID) (err error) {
 	// creating 'O' field, ref is class rdx.ID
 	err = batch.Merge(
 		host.OKey(id, lot),
@@ -207,7 +212,7 @@ func (cho *Chotki) ApplyOY(lot byte, id, ref rdx.ID, body []byte, batch *pebble.
 		rest = rest[rlen:]
 		if err == nil {
 			// cid (ref) is known here, so the update is never deferred
-			_, err = cho.IndexManager.OnFieldUpdate(lit, fid, ref, rebar, batch)
+			_, err = cho.IndexManager.OnFieldUpdate(lit, fid, ref, rebar, batch, claims)
 		}
 	}
 	if err == nil {
@@ -225,10 +230,9 @@ var ErrOffsetOpId = errors.New("op id is offset")
 // Edits obkject fields. Unlike ApplyOY, it does not assume that we update whole object,
 // as we can update individual fields.
 // It also sets the current replica src id for FIRST/MEL types. Otherwise its just merges bytes into the batch.
-// When the edited object's class can't be resolved yet (its 'O' rides the same
-// unapplied batch or a concurrent drain), the object id is appended to created
-// so the caller reindexes it from the merged state after the batch commits.
-func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls *[]CallHook, created *[]rdx.ID) (err error) {
+// If the object's class isn't resolvable yet, the id is appended to created for
+// the caller to reindex after the batch commits.
+func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls *[]CallHook, created *[]rdx.ID, claims map[string]rdx.ID) (err error) {
 	// we either supply id of the object (0 offset) or ref should be an id of the object
 	if id.Off() != 0 || r.Off() != 0 {
 		return ErrOffsetOpId
@@ -247,6 +251,10 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls 
 			return ErrBadEPacket
 		}
 		lit, bare, rest = protocol.TakeAny(rest)
+		// a truncated value makes no progress; fail now (as ApplyD/ApplyV do)
+		if lit == 0 || bare == nil {
+			return ErrBadEPacket
+		}
 		// setting current replica src id for FIRST/MEL types
 		switch lit {
 		case 'F', 'I', 'R', 'S', 'T':
@@ -269,7 +277,7 @@ func (cho *Chotki) ApplyE(id, r rdx.ID, body []byte, batch *pebble.Batch, calls 
 
 		if err == nil {
 			var deferredIdx bool
-			deferredIdx, err = cho.IndexManager.OnFieldUpdate(lit, fid, rdx.BadId, rebar, batch)
+			deferredIdx, err = cho.IndexManager.OnFieldUpdate(lit, fid, rdx.BadId, rebar, batch, claims)
 			if err == nil && deferredIdx && created != nil {
 				// object not visible yet: reindex from merged state post-commit
 				*created = append(*created, r)

@@ -65,11 +65,12 @@ type IndexManager struct {
 	c            host.Host
 	tasksCancels map[string]context.CancelFunc
 	taskEntries  sync.Map
-	// taskWg tracks spawned runReindexTask goroutines; CheckReindexTasks waits
-	// for them before returning, so Close never yanks the DB from under a
-	// running reindex (they write via Database().Merge/DeleteRange).
-	taskWg         sync.WaitGroup
-	mutexMap       sync.Map
+	// taskWg tracks runReindexTask goroutines; CheckReindexTasks waits on it so
+	// Close never closes the DB under a running reindex.
+	taskWg sync.WaitGroup
+	// hashLocks serializes addHashIndex's read-check-merge, striped by fid. (A
+	// per-fid map that deletes on unlock let a third writer race a blocked one.)
+	hashLocks      [64]sync.Mutex
 	classCache     *lru.Cache[rdx.ID, rdx.ID]
 	hashIndexCache *lru.Cache[string, rdx.ID]
 }
@@ -158,7 +159,7 @@ func parseReindexTasks(key, value []byte) ([]ReindexTask, error) {
 	return tasks, nil
 }
 
-func (im *IndexManager) AddFullScanIndex(cid rdx.ID, oid rdx.ID, batch *pebble.Batch) error {
+func (im *IndexManager) AddFullScanIndex(cid rdx.ID, oid rdx.ID, batch pebble.Writer) error {
 	im.classCache.Add(oid, cid)
 	return batch.Merge(
 		fullScanKey(cid, oid),
@@ -378,14 +379,13 @@ func (im *IndexManager) CheckReindexTasks(ctx context.Context, period time.Durat
 	}
 }
 
-func (im *IndexManager) addHashIndex(cid rdx.ID, fid rdx.ID, tlv []byte, batch pebble.Writer) error {
-	lock, _ := im.mutexMap.LoadOrStore(fid, &sync.Mutex{})
-	mt := lock.(*sync.Mutex)
+// addHashIndex writes fid's hash-index entry into batch. GetByHash sees only
+// committed state, so claims (when non-nil) tracks in-batch values to reject a
+// second object claiming one another already did. Pass nil to skip that.
+func (im *IndexManager) addHashIndex(cid rdx.ID, fid rdx.ID, tlv []byte, batch pebble.Writer, claims map[string]rdx.ID) error {
+	mt := &im.hashLocks[(fid.Src()^fid.Pro())%uint64(len(im.hashLocks))]
 	mt.Lock()
-	defer func() {
-		mt.Unlock()
-		im.mutexMap.Delete(fid)
-	}()
+	defer mt.Unlock()
 	id, err := im.GetByHash(cid, uint32(fid.Off()), tlv, im.c.Database())
 	switch err {
 	case nil:
@@ -394,10 +394,17 @@ func (im *IndexManager) addHashIndex(cid rdx.ID, fid rdx.ID, tlv []byte, batch p
 		}
 		fallthrough
 	case chotki_errors.ErrObjectUnknown:
-		cacheKey := append(binary.BigEndian.AppendUint32(cid.Bytes(), uint32(fid.Off())), tlv...)
-		im.hashIndexCache.Remove(string(cacheKey))
 		hash := xxhash.Sum64(tlv)
 		key := hashKey(cid, uint32(fid.Off()), hash)
+		if claims != nil {
+			ck := string(key)
+			if prior, ok := claims[ck]; ok && prior != fid.ZeroOff() {
+				return errors.Join(chotki_errors.ErrHashIndexUinqueConstraintViolation, fmt.Errorf("intra-batch key %s, prior id %s, new id %s", string(tlv), prior.String(), fid.ZeroOff().String()))
+			}
+			claims[ck] = fid.ZeroOff()
+		}
+		cacheKey := append(binary.BigEndian.AppendUint32(cid.Bytes(), uint32(fid.Off())), tlv...)
+		im.hashIndexCache.Remove(string(cacheKey))
 		set := rdx.NewStampedSet[rdx.RdxRid]()
 		set.Add(rdx.RdxRid(fid.ZeroOff()))
 		return batch.Merge(
@@ -410,15 +417,10 @@ func (im *IndexManager) addHashIndex(cid rdx.ID, fid rdx.ID, tlv []byte, batch p
 	}
 }
 
-// OnFieldUpdate maintains hash indexes for a field write. cid may be rdx.BadId
-// when the caller doesn't know the object's class (edits, diff parcels): it is
-// then resolved from the object's 'O' key in the DB. deferred=true means the
-// object was not visible yet (its 'O' rides the same — not yet applied — batch,
-// or a concurrent drain), so no index was written; the caller must reindex the
-// object AFTER its batch commits (drain does this via IndexObject over the
-// created/deferred list) — otherwise the index would go stale until the next
-// edit of the same field.
-func (im *IndexManager) OnFieldUpdate(rdt byte, fid, cid rdx.ID, tlv []byte, batch pebble.Writer) (deferred bool, err error) {
+// OnFieldUpdate maintains hash indexes for a field write. cid=rdx.BadId is
+// resolved from the object's 'O' key. deferred=true means 'O' isn't visible yet,
+// so nothing was indexed and the caller must reindex after commit (via IndexObject).
+func (im *IndexManager) OnFieldUpdate(rdt byte, fid, cid rdx.ID, tlv []byte, batch pebble.Writer, claims map[string]rdx.ID) (deferred bool, err error) {
 	if !rdx.IsFirst(rdt) {
 		return false, nil
 	}
@@ -459,15 +461,14 @@ func (im *IndexManager) OnFieldUpdate(rdt byte, fid, cid rdx.ID, tlv []byte, bat
 	field := fields[fid.Off()]
 	if field.Index == classes.HashIndex {
 		_, _, tlv := rdx.ParseFIRST(tlv)
-		return false, im.addHashIndex(cid, fid, tlv, batch)
+		return false, im.addHashIndex(cid, fid, tlv, batch, claims)
 	}
 	return false, nil
 }
 
-// IndexObject (re)builds hash-index entries for oid's indexed fields from their
-// CURRENT merged values. Callers invoke it after a batch commits, so an edit that
-// was processed before its object's create (out-of-order or same-batch) is picked
-// up from the converged state instead of waiting for the reindex worker.
+// IndexObject rebuilds hash-index entries for oid's indexed fields from their
+// current merged values. Called after a batch commits, so an edit processed
+// before its object's create is picked up without waiting for the reindex worker.
 func (im *IndexManager) IndexObject(oid rdx.ID) error {
 	_, ctlv := im.c.GetFieldTLV(oid.ZeroOff())
 	cid := rdx.IDFromZipBytes(ctlv)
@@ -488,7 +489,7 @@ func (im *IndexManager) IndexObject(oid rdx.ID) error {
 			continue
 		}
 		_, _, val := rdx.ParseFIRST(tlv)
-		if err := im.addHashIndex(cid, fid, val, im.c.Database()); err != nil {
+		if err := im.addHashIndex(cid, fid, val, im.c.Database(), nil); err != nil {
 			return err
 		}
 	}
@@ -575,7 +576,7 @@ func (im *IndexManager) runReindexTask(ctx context.Context, task *ReindexTask) {
 		_, _, tlv = rdx.ParseFIRST(tlv)
 		_, err = im.GetByHash(task.Cid, uint32(fid.Off()), tlv, im.c.Database())
 		if err == chotki_errors.ErrObjectUnknown {
-			err = im.addHashIndex(task.Cid, fid, tlv, im.c.Database())
+			err = im.addHashIndex(task.Cid, fid, tlv, im.c.Database(), nil)
 			if err != nil {
 				ReindexResults.WithLabelValues(task.Cid.String(), fmt.Sprintf("%d", task.Field), "error", "fail_to_add_hash_index").Inc()
 				im.c.Logger().ErrorCtx(ctx, "failed to add hash index: %s, will restart", err)

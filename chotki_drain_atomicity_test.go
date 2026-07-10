@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/drpcorg/chotki/host"
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/drpcorg/chotki/replication"
@@ -12,15 +13,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The batched drain accumulates Y/C/O/E records into one all-or-nothing pebble
-// batch applied after the loop. An own-source record used to advance cho.last
-// (the local id allocator) inside the loop, BEFORE that durable write. If a
-// later record in the same batch errored, the batch — and its version-vector
-// bumps — was dropped, but cho.last stayed advanced. After a crash cho.last is
-// rebuilt from the persisted VV (which never saw the dropped op), so the next
-// commit could reissue an id a peer already holds (divergence). The fix
-// advances cho.last only after the batch is durably applied, so a dropped batch
-// leaves the allocator exactly where the persisted VV left it.
+// The batched drain accumulates Y/C/O/E records into one pebble batch applied
+// after the loop. On ANY mid-drain error the whole top-level batch is now
+// dropped — no partial prefix is ever applied (drop-on-error). So a batch that
+// errors partway persists nothing and leaves the allocator exactly where the
+// persisted version vector left it: cho.last can never lead the VV, and a
+// crash/restart rebuilds cho.last from that same VV. (This reverses the earlier
+// flush-on-error behavior, which persisted the applied prefix; see the
+// review-fix design doc for the rationale — cluster ①.)
 func TestDrainErrorDoesNotOverrunAllocator(t *testing.T) {
 	dirs, clear := testdirs(0x5c)
 	defer clear()
@@ -63,17 +63,64 @@ func TestDrainErrorDoesNotOverrunAllocator(t *testing.T) {
 	vv, err := a.VersionVector()
 	require.NoError(t, err)
 
-	// The core invariant of the fix: cho.last must never sit ahead of the
-	// persisted version vector. A crash rebuilds cho.last from the VV, so an id
-	// beyond the VV would be reissued though a peer may already hold it. The
-	// pre-fix code advanced cho.last inside the loop (before the durable write),
-	// so a dropped batch left it ahead of the VV — this assertion fails there.
+	// New semantics: on ANY mid-drain error the top-level batch is dropped
+	// wholesale — no partial prefix is ever applied. So the staged own-source
+	// record is NOT durable, and the allocator did not move.
+	require.True(t, vv.GetID(0x5c).Less(ownID),
+		"a dropped batch must not persist the staged own-source record")
+	require.Equal(t, before, a.Last(),
+		"the allocator must not advance when the batch is dropped")
+
+	// The core invariant still holds (now trivially): cho.last never sits ahead
+	// of the persisted version vector.
 	require.False(t, vv.GetID(0x5c).Less(a.Last()),
 		"cho.last must not run ahead of the persisted version vector")
+}
 
-	// And flush-on-error persisted the applied prefix, so the staged own-source
-	// record is durable — its bump is reflected in the version vector rather
-	// than silently dropped while still being rebroadcast to peers.
-	require.False(t, vv.GetID(0x5c).Less(ownID),
-		"the applied own-source prefix must be durable after a mid-batch error")
+// A CommitBatch whose drain errors midway must persist NOTHING (all-or-nothing),
+// so a caller that retries the whole batch cannot double-apply a durable prefix
+// (the Z-counter read-modify-write doubling).
+func TestCommitBatchIsAllOrNothingOnError(t *testing.T) {
+	dirs, clear := testdirs(0x5d)
+	defer clear()
+	a, err := Open(dirs[0], Options{Src: 0x5d, Name: "replica A"})
+	require.NoError(t, err)
+	defer a.Close()
+
+	cid, err := a.NewClass(context.Background(), rdx.ID0, Schema...)
+	require.NoError(t, err)
+	oid, err := a.NewObjectTLV(context.Background(), cid, protocol.Records{
+		protocol.Record(rdx.String, rdx.Stlv("v0")),
+	})
+	require.NoError(t, err)
+
+	// Persisted VV[src] is the reliable "durable?" signal. We do NOT assert on
+	// a.Last(): CommitBatch pre-allocates ids via nextLast() BEFORE draining, so
+	// the in-memory allocator advances even when the batch is dropped (an
+	// accepted local-commit gap — the ids were never broadcast).
+	vvBefore, err := a.VersionVector()
+	require.NoError(t, err)
+
+	// A good edit followed by an edit whose field offset is out of range, which
+	// makes ApplyE return ErrBadEPacket AFTER the good edit merged into pb.
+	// ErrBadEPacket is deterministic (packets.go: field > rdx.OffMask).
+	good := host.Edit{Ref: oid, Body: protocol.Records{
+		protocol.Record('F', rdx.ZipUint64(1)),
+		protocol.Record(rdx.String, rdx.Stlv("v1")),
+	}}
+	bad := host.Edit{Ref: oid, Body: protocol.Records{
+		protocol.Record('F', rdx.ZipUint64(uint64(rdx.OffMask)+1)),
+		protocol.Record(rdx.String, rdx.Stlv("v2")),
+	}}
+
+	err = a.CommitBatch(context.Background(), []host.Edit{good, bad})
+	require.Error(t, err)
+
+	// Nothing durable: the batch was dropped wholesale, so the persisted version
+	// vector did not advance to cover the good edit. (The good edit's ApplyE
+	// merged a VKey bump into pb, which drop-on-error discards.)
+	vvAfter, err := a.VersionVector()
+	require.NoError(t, err)
+	require.Equal(t, vvBefore.GetID(0x5d), vvAfter.GetID(0x5d),
+		"a failed CommitBatch must not persist its applied prefix")
 }

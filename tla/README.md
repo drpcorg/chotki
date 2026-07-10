@@ -160,14 +160,20 @@ witness:
    resync regresses it, and the next `CommitPacket` reissues an id a peer that
    received the drained/relayed record already holds — divergence. The
    `MCBatchBuggy.cfg` trace is one step: a dropped own-source drain advances
-   `last` to 1 while `gvv` stays 0, violating `LastNotAhead`. Fixed by (a)
-   flushing the applied prefix even on error, so a drained own-source record
-   is always durable before it is relayed and `cho.last` never leads the VV
-   for long, and (b) advancing `cho.last` (under `lastLock`) only *after* that
-   durable write. `TestDrainErrorDoesNotOverrunAllocator` drives a mixed
-   `[own-source C, unknown-sync V]` batch and fails against the pre-fix code.
-   `MCBatchFixed`/`MCBatchFixedLast` re-check the whole property set with
-   `BatchMode = TRUE`.
+   `last` to 1 while `gvv` stays 0, violating `LastNotAhead`. Fixed by keeping
+   the **drop-on-error** semantics — a mid-batch error drops the whole `pb`, so
+   no partial prefix is ever persisted, `applied` is 0 and nothing non-durable
+   is relayed — while advancing `cho.last` (under `lastLock`) only *lazily*,
+   after the durable write, so a dropped batch consumes no id and `cho.last`
+   can never lead the VV. (The earlier draft instead *flushed* the applied
+   prefix on error; that was reverted because it made `CommitBatch` no longer
+   all-or-nothing, doubling a Z-counter's read-modify-write delta on chunk retry.)
+   `TestDrainErrorDoesNotOverrunAllocator` drives a mixed
+   `[own-source C, unknown-sync V]` batch and asserts the dropped batch persists
+   nothing; it fails against both the eager-`cho.last` bug and the old flush
+   behaviour. `MCBatchFixed`/`MCBatchFixedLast` re-check the whole property set
+   with `BatchMode = TRUE` (drop-on-error + lazy `cho.last`); `MCBatchBuggy`
+   keeps the eager-`cho.last` variant as the negative witness.
 
 Bugs found in the same code while studying it for the model (also fixed, not
 modelled at the byte/timer level):

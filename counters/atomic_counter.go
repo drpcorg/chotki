@@ -61,11 +61,19 @@ func (a *AtomicCounter) load() error {
 	}
 	switch c := a.data.(type) {
 	case *nState:
-		sum, mine := rdx.Nnative2(tlv, a.db.Source())
-		c.theirs.Store(int64(sum) - int64(mine))
+		sum, mineDB := rdx.Nnative2(tlv, a.db.Source())
+		c.theirs.Store(int64(sum) - int64(mineDB))
 		if first {
-			c.mine.Store(int64(mine))
-			c.lastSynced = int64(mine)
+			c.mine.Store(int64(mineDB))
+			c.lastSynced = int64(mineDB)
+		} else {
+			// adopt an external change to our slot (e.g. ORM AddToNField):
+			// shift mine by the delta and re-baseline, preserving unflushed
+			// increments so value() stays fresh and nothing is lost to the merge.
+			if extDelta := int64(mineDB) - c.lastSynced; extDelta != 0 {
+				c.mine.Add(extDelta)
+			}
+			c.lastSynced = int64(mineDB)
 		}
 	case *zState:
 		sum, mineDB, rev := rdx.Znative3(tlv, a.db.Source())
@@ -75,10 +83,7 @@ func (a *AtomicCounter) load() error {
 			c.lastSynced = mineDB
 			c.rev = rev
 		} else {
-			// Adopt any external change to our own slot so value() stays fresh even without a
-			// local increment, and never let our revision fall behind the DB. Unflushed local
-			// increments (mine-lastSynced) are preserved: we shift mine by the external delta
-			// and re-baseline lastSynced to the observed slot.
+			// as nState above; also never let our revision fall behind the DB.
 			if extDelta := mineDB - c.lastSynced; extDelta != 0 {
 				c.mine.Add(extDelta)
 			}
@@ -92,25 +97,38 @@ func (a *AtomicCounter) load() error {
 	return nil
 }
 
-// pendingFlush returns the field-edit op for a counter with unflushed local increments, plus
-// an onCommit callback the manager runs iff the batch commits. changed=false means nothing to
-// flush. Mutex-free: caller holds the manager mutex, so only lock-free Increment runs alongside.
+// pendingFlush returns the edit op for a counter with unflushed increments plus
+// an onCommit run iff the batch commits (changed=false: nothing to flush).
+// Caller holds the manager mutex.
 //
-// A Z flush is a read-modify-write: it reads the current DB value of its own src slot, adds the
-// delta accumulated since the last flush, and stamps a revision above any already present. This
-// keeps a second writer to the same (src, field) slot (e.g. an ORM Zdelta "set") from being
-// clobbered and stops the manager's own write from being silently dropped by the merge. Because
-// the write is a delta over the observed slot rather than the cached absolute mine, onCommit also
-// folds the observed external change into mine so value() stays correct.
+// The flush is a read-modify-write: it commits slot + delta (not the cached
+// mine), for Z stamps a revision above any present, and onCommit folds the
+// observed external change into mine — so a concurrent writer isn't clobbered.
 func (a *AtomicCounter) pendingFlush() (changed bool, rdt byte, op []byte, onCommit func()) {
 	switch c := a.data.(type) {
 	case *nState:
 		m := c.mine.Load()
-		if m == c.lastSynced {
+		delta := m - c.lastSynced
+		if delta == 0 {
 			return false, 0, nil, nil
 		}
-		return true, rdx.Natural, rdx.Ntlvt(uint64(m), a.db.Source()), func() {
-			c.lastSynced = m
+		// N is grow-only, so newSlot >= mineDB and the merge always accepts it;
+		// no revision needed (unlike Z).
+		_, tlv, err := a.db.ObjectFieldTLV(a.rid.ToOff(a.offset))
+		if err != nil {
+			// log so the skip isn't mistaken for a flush; delta is kept
+			a.db.Logger().Warn("counter flush: cannot read slot, retrying next cycle",
+				"rid", a.rid.String(), "offset", a.offset, "err", err)
+			return false, 0, nil, nil
+		}
+		_, mineDB := rdx.Nnative2(tlv, a.db.Source())
+		newSlot := int64(mineDB) + delta
+		extDelta := int64(mineDB) - c.lastSynced // net effect of any other writer to our slot
+		return true, rdx.Natural, rdx.Ntlvt(uint64(newSlot), a.db.Source()), func() {
+			if extDelta != 0 {
+				c.mine.Add(extDelta) // fold the external change into our running total
+			}
+			c.lastSynced = newSlot
 		}
 	case *zState:
 		m := c.mine.Load()
@@ -120,7 +138,10 @@ func (a *AtomicCounter) pendingFlush() (changed bool, rdt byte, op []byte, onCom
 		}
 		_, tlv, err := a.db.ObjectFieldTLV(a.rid.ToOff(a.offset))
 		if err != nil {
-			return false, 0, nil, nil // can't read the slot; retry next cycle
+			// log so the skip isn't mistaken for a flush; delta is kept
+			a.db.Logger().Warn("counter flush: cannot read slot, retrying next cycle",
+				"rid", a.rid.String(), "offset", a.offset, "err", err)
+			return false, 0, nil, nil
 		}
 		_, mineDB, dbRev := rdx.Znative3(tlv, a.db.Source())
 		newRev := max(c.rev, dbRev) + 1

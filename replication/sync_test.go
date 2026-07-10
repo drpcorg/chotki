@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/drpcorg/chotki/chotki_errors"
 	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 	"github.com/drpcorg/chotki/utils"
@@ -40,6 +41,19 @@ func TestProcessPingsFiltersAllPingsAndKeepsTheRest(t *testing.T) {
 	sync = testSyncer()
 	out = sync.processPings(protocol.Records{ping, pong})
 	require.Empty(t, out, "consecutive pings must all be filtered")
+}
+
+// A peer that sends only pings before completing the handshake must not keep the
+// session alive: a ping-only batch in the SendHandshake state is a protocol
+// error.
+func TestPingOnlyBeforeHandshakeIsError(t *testing.T) {
+	sync := testSyncer()
+	sync.SetDrainState(context.Background(), SendHandshake)
+
+	ping := protocol.Record('P', rdx.Stlv(PingVal))
+	err := sync.Drain(context.Background(), protocol.Records{ping})
+	require.ErrorIs(t, err, chotki_errors.ErrBadHPacket,
+		"a ping-only batch before the handshake must be rejected")
 }
 
 // WaitDrainState used to leak its watcher goroutine forever when given a

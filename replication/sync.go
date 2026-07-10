@@ -29,8 +29,8 @@ var version string = fmt.Sprintf("%d", time.Now().Unix())
 
 type SyncHost interface {
 	protocol.Drainer
-	// DrainApplied works like Drain but also reports how many records of
-	// the batch were fully applied before an error stopped processing.
+	// DrainApplied is Drain plus the count of applied records (0 on error,
+	// len(recs) on success, since draining is all-or-nothing).
 	DrainApplied(ctx context.Context, recs protocol.Records) (int, error)
 	// AbortSyncsVia closes and removes the pending diff-sync points
 	// created by the given replication session (see Syncer.SessionId).
@@ -207,13 +207,9 @@ func (sync *Syncer) Close() error {
 		return utils.ErrClosed
 	}
 
-	// A sync point must not outlive the session that feeds it: the
-	// 'D'/'V' packets completing it travel through this session's
-	// connection, so once the session is gone the staged batch can never
-	// be completed legitimately, while a 'V' relayed through a newer
-	// connection could apply the staged handshake VV without the data
-	// records that died with this connection (permanent silent data
-	// loss, see tla/README.md). Abort whatever this session created.
+	// Abort sync points this session created: their 'D'/'V' travel through
+	// this connection, so once it's gone the batch can't complete, and a 'V'
+	// relayed later would apply the handshake VV without the data (see tla/).
 	sync.Host.AbortSyncsVia(sync.LogCtx(context.Background()), sync.SessionId())
 
 	sync.snapLock.Lock()
@@ -279,13 +275,10 @@ func (sync *Syncer) GetDrainState() SyncState {
 
 func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error) {
 	SessionsStates.WithLabelValues(sync.Name, "feed", version).Set(float64(sync.GetFeedState()))
-	// The other side said bye already. That only means it has nothing
-	// more to send: its drain side keeps applying our records until the
-	// connection actually closes. So finish our own handshake/diff phase
-	// first — cutting the diff short would leave the peer with a staged
-	// diff batch that never gets its 'V', i.e. the peer would silently
-	// miss the data we already promised in the handshake — and only then
-	// wind the feed down instead of going live.
+	// The peer's bye only means it has nothing more to send; it keeps
+	// applying our records until the connection closes. Finish our own
+	// handshake/diff phase first (cutting it short would leave the peer a
+	// staged batch with no 'V', silently missing promised data), then wind down.
 	if sync.GetDrainState() == SendNone {
 		if fs := sync.GetFeedState(); fs != SendHandshake && fs != SendDiff {
 			sync.SetFeedState(ctx, SendNone)
@@ -681,10 +674,8 @@ func (sync *Syncer) resetPingTimer() {
 }
 
 func (sync *Syncer) processPings(recs protocol.Records) protocol.Records {
-	// filter the 'P' records out in place: they are session-scoped and
-	// must neither reach the DB nor be relayed to other sessions
-	// (the previous remove-while-ranging loop skipped the record that
-	// followed a removed one)
+	// filter 'P' records out in place: they're session-scoped and must not
+	// reach the DB or be relayed.
 	filtered := recs[:0]
 	for _, rec := range recs {
 		if protocol.Lit(rec) != 'P' {
@@ -704,20 +695,13 @@ func (sync *Syncer) processPings(recs protocol.Records) protocol.Records {
 	return filtered
 }
 
-// relayApplied rebroadcasts the prefix of recs that was actually applied
-// to the local DB, except a trailing 'B' (bye) record: a bye is scoped to
-// this session and must not leak into (and close) downstream sessions.
-//
-// Relaying exactly the applied prefix matters: records this replica has
-// applied but not relayed would never reach downstream replicas at all —
-// live records are not re-sent, and any future diff sync would skip them
-// as already known to us — leaving downstream permanently diverged. This
-// covers both a batch that ends with a bye (the sender's records got
-// coalesced with its 'B' by network read batching) and a batch that
-// failed mid-way (the applied head must still be relayed).
+// relayApplied rebroadcasts the applied records, minus a trailing session-scoped
+// 'B' (bye). Draining is all-or-nothing, so applied is 0 (dropped — resync
+// re-delivers) or len(recs); a persisted batch MUST relay, or downstream never
+// gets it (live records aren't re-sent and diff syncs would skip them).
 func (sync *Syncer) relayApplied(ctx context.Context, recs protocol.Records, applied int) {
 	relay := recs[:applied]
-	if len(relay) > 0 && protocol.Lit(relay[len(relay)-1]) == 'B' {
+	if LastLit(relay) == 'B' {
 		relay = relay[:len(relay)-1]
 	}
 	if len(relay) > 0 {
@@ -733,6 +717,12 @@ func (sync *Syncer) Drain(ctx context.Context, recs protocol.Records) (err error
 
 	recs = sync.processPings(recs)
 	if len(recs) == 0 {
+		// A ping-only batch is normal once live, but before the handshake it's a
+		// protocol error: a ping-only peer would keep the session alive forever
+		// without ever handshaking.
+		if sync.GetDrainState() == SendHandshake {
+			return chotki_errors.ErrBadHPacket
+		}
 		// the batch contained pings only; there is nothing to drain,
 		// relay or change state upon
 		if sync.Mode&SyncLive != 0 {

@@ -12,9 +12,12 @@ replicas' contributions.
 - `Get()` returns `mine + theirs`.
 - `Increment(v)` adds to `mine` (Natural rejects `v < 0`).
 - The background goroutine, every `Options.CounterSyncPeriod`, **flushes** all changed fields
-  (writing each one's full `mine`) in **batched commits** — up to 1024 fields per Pebble batch
-  + broadcast — and **reloads** `theirs` for fields touched since the last tick (idle fields
-  cost nothing).
+  in **batched commits** — up to 1024 fields per Pebble batch + broadcast — and **reloads**
+  `theirs` for fields touched since the last tick (idle fields cost nothing). A flush is a
+  read-modify-write under the host's sequential-write bracket: it reads the current own-src
+  slot and commits slot + unflushed delta (never the absolute cached `mine`), so a concurrent
+  writer to the same slot (e.g. an ORM counter "set") is not clobbered and the merge cannot
+  silently drop either write.
 
 Local increments are visible immediately via `Get`. Other replicas' increments become
 visible after the next reload. Obtain a counter with `cho.Counter(rid, offset)`.
@@ -24,8 +27,8 @@ visible after the next reload. Obtain a counter with `cho.Counter(rid, offset)`.
 Increments live in memory between flushes. A **graceful** `Close()` flushes everything; a
 **hard crash** (panic / kill -9 / power loss) loses increments since the last flush. This is
 the deliberate tradeoff for a lock-free hot path. Absent a crash, **no event is missed**:
-each flush writes the full accumulated `mine`, so a skipped or coalesced flush is fully
-recovered by the next one.
+the unflushed delta (`mine - lastSynced`) survives a skipped, coalesced or failed flush and
+is carried into the next one.
 
 ## Forcing a cycle
 

@@ -150,14 +150,16 @@ The algorithm of diff sync is as follows:
 Important note that during diff sync we also broadcast all 'D' and 'H' packets to all other replicas.
 Imagine there are 3 replicas: A <-> B <-> C.
 
-The exact rebroadcast rule is: after draining a batch of records, a replica relays to all its other
-sessions exactly the prefix of the batch it has applied to its own DB, except the trailing 'B' (bye)
-record, which is scoped to this session. This rule is important for correctness: network read batching
-can coalesce data records with the peer's closing 'B' into a single batch, and a batch can also fail
-mid-way (e.g. ErrSyncUnknown on a stale sync point). If the applied records were not relayed, downstream
-replicas would never receive them at all — live records are not re-sent, and future diff syncs would skip
-them because the middle replica already has them — leaving the tree silently diverged. A formal model of
-this protocol (including a reproduction of that scenario) lives in the `tla/` directory.
+The exact rebroadcast rule is: draining a batch of records is all-or-nothing (drop-on-error), and a
+replica relays a batch to all its other sessions only when the batch fully persisted in its own DB —
+except the trailing 'B' (bye) record, which is scoped to this session (network read batching can
+coalesce data records with the peer's closing 'B' into one batch). On a mid-batch error (e.g.
+ErrSyncUnknown on a stale sync point) nothing is applied and nothing is relayed; the erroring session
+dies and the data is re-delivered by the diff sync after reconnect. The applied ⇒ relayed direction is
+the correctness-critical one: applied-but-not-relayed records would never reach downstream replicas at
+all — live records are not re-sent, and future diff syncs would skip them because the middle replica
+already has them — leaving the tree silently diverged. A formal model of this protocol (including a
+reproduction of that scenario) lives in the `tla/` directory.
 
 A related lifetime rule: a sync point (the pebble batch accumulating a diff) is bound to the replication
 session whose 'H' record created it, and is aborted when that session closes (Syncer.SessionId /
@@ -179,3 +181,19 @@ But it simplified protocol a lot.
 After diff sync, we now can process all updates that were accumulated in the queue and continue process them as we go.
 When we receive a bunch of records during live sync, we apply them to the DB immediately and also broadcast then to all other replicas.
 Due to the fact that currently chotki only allows tree replication structures, we know that we can safely send events to all connected replicas without fear of loops.
+
+## Sync-point displacement assumes a tree topology
+
+A new handshake from an origin displaces that origin's older, still-unfinished
+diff sync ("allow only 1 diff sync per src", `chotki.go` `drain` 'H' case). This
+displacement is only safe under a **tree topology** (exactly one path per
+origin): a handshake and its diff always travel the same single session, so a
+"new handshake" genuinely supersedes the previous one. In a cyclic topology the
+same origin could be reached through two sessions at once, and a relayed
+handshake arriving on one could evict the live direct diff on the other,
+flapping the session with `ErrSyncUnknown`. To keep that from
+happening even if a stray relayed handshake appears, displacement is restricted
+to sync points that are either from the **same session** (a genuine restart) or
+a **strictly older snapshot** (`key.Less(incoming)`); an older/equal handshake
+from a different session leaves a live diff untouched. Cyclic topologies remain
+unsupported.

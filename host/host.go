@@ -30,24 +30,17 @@ type Host interface {
 	CommitBatch(ctx context.Context, edits []Edit) (err error)
 	Broadcast(ctx context.Context, records protocol.Records, except string)
 	Drain(ctx context.Context, recs protocol.Records) (err error)
-	// DrainApplied works like Drain but also reports how many records of
-	// the batch were fully applied before an error stopped processing.
+	// DrainApplied is Drain plus the count of applied records (0 on error,
+	// len(recs) on success, since draining is all-or-nothing).
 	DrainApplied(ctx context.Context, recs protocol.Records) (applied int, err error)
-	// AbortSyncsVia closes and removes the pending diff-sync points
-	// created by the given replication session.
+	// AbortSyncsVia closes the pending diff-sync points created by the session.
 	AbortSyncsVia(ctx context.Context, sessionId string)
 	Snapshot() pebble.Reader
-	// StartSequentialWrite/EndSequentialWrite bracket a read-modify-write:
-	// writers whose op depends on the current DB state (a Z-counter flush or
-	// "set" reads the slot and writes value@rev+1) take the bracket around
-	// BOTH the read and the commit. Two bracketed writers of one slot then
-	// serialize instead of racing — without it, one lands between the other's
-	// read and commit, the two ops collide on the revision, and the merge
-	// silently drops one of them.
-	//
-	// The bracket is cooperative: commit methods do NOT take it, and writers
-	// that skip it are not serialized. Reads must happen INSIDE the bracket —
-	// wrapping a commit of a stale-computed op fixes nothing. Not reentrant.
+	// StartSequentialWrite/EndSequentialWrite bracket a read-modify-write (a
+	// Z-counter flush/"set" reads a slot and writes value@rev+1): held across
+	// both read and commit, two writers of one slot serialize instead of
+	// colliding on the revision. Cooperative (commit methods don't take it; the
+	// read must be inside the bracket), not reentrant.
 	StartSequentialWrite()
 	EndSequentialWrite()
 }

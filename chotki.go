@@ -154,7 +154,8 @@ func (o *Options) SetDefaults() {
 		o.MaxSyncDuration = 10 * time.Minute
 	}
 
-	if o.CounterSyncPeriod == 0 {
+	// Run treats <= 0 as "no ticker", so normalize negatives too.
+	if o.CounterSyncPeriod <= 0 {
 		o.CounterSyncPeriod = time.Second
 	}
 
@@ -344,19 +345,12 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		waitGroup: &wg,
 	}
 
-	// Guard: if Open fails after workers start, clean up here since the caller has no Close to call.
+	// If Open fails after workers start, the caller has no *Chotki to Close;
+	// tear down via Close (nil-safe on a partial instance, single teardown path).
 	opened := false
 	defer func() {
-		if opened {
-			return
-		}
-		cancel()
-		wg.Wait()
-		if cho.net != nil {
-			_ = cho.net.Close()
-		}
-		if cho.db != nil {
-			_ = cho.db.Close()
+		if !opened {
+			_ = cho.Close()
 		}
 	}()
 
@@ -439,7 +433,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			protocol.Record('S', rdx.Stlv("")),
 		))
 
-		if _, err = cho.drain(context.Background(), init); err != nil {
+		if _, err = cho.drain(context.Background(), init, nil); err != nil {
 			return nil, errors.Join(err, fmt.Errorf("unable to drain initial data to chotki"))
 		}
 	}
@@ -473,6 +467,10 @@ func (cho *Chotki) Close() error {
 
 		cho.net = nil
 	}
+	// commitMutex lets an in-flight local commit (which holds it, not cho.lock)
+	// finish its drain + reindex reads on cho.db before we close and nil it.
+	// Network drains are guarded by cho.lock; the shutdown flush already ran.
+	cho.commitMutex.Lock()
 	if cho.db != nil {
 		if err := cho.db.Close(); err != nil {
 			cho.log.Error("couldn't close Pebble", "err", err)
@@ -480,6 +478,7 @@ func (cho *Chotki) Close() error {
 
 		cho.db = nil
 	}
+	cho.commitMutex.Unlock()
 
 	cho.outq.Clear()
 	cho.syncs.Range(func(id rdx.ID, s *syncPoint) bool {
@@ -698,13 +697,12 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 	r := protocol.Record('R', ref.ZipBytes())
 	packet := protocol.Record(lit, i, r, protocol.Join(body...))
 	recs := protocol.Records{packet}
-	_, err = cho.drain(ctx, recs)
+	// single packet = one object; no intra-batch cross-object uniqueness to check
+	_, err = cho.drain(ctx, recs, nil)
 	DrainTime.WithLabelValues("commit").Observe(float64(time.Since(now)) / float64(time.Millisecond))
 	if err != nil {
-		// Do not publish an id we failed to persist: a peer would then hold a
-		// packet this replica has no durable record of, and a crash before the
-		// next successful commit could reissue the same id (CommitBatch already
-		// guards its broadcast the same way).
+		// Don't publish an id we failed to persist: a crash before the next
+		// successful commit could reissue it while a peer already holds it.
 		return
 	}
 	cho.Broadcast(ctx, recs, "")
@@ -733,17 +731,17 @@ func (cho *Chotki) CommitBatch(ctx context.Context, edits []host.Edit) (err erro
 
 	recs := make(protocol.Records, 0, len(edits))
 	for _, e := range edits {
-		// stamp next id via nextLast (lastLock) — one id per edit; shares the
-		// allocator with CommitPacket and own-source drains.
-		id := cho.nextLast()
+		id := cho.nextLast() // one id per edit
 		recs = append(recs, protocol.Record('E',
 			protocol.Record('I', id.ZipBytes()),
 			protocol.Record('R', e.Ref.ZipBytes()),
 			protocol.Join(e.Body...)))
 	}
-	// drain parses + ApplyE's the records into a single batch, applies once, runs
-	// field hooks, and updates EventsMetric. It does not broadcast, so we do that here.
-	if _, err = cho.drain(ctx, recs); err != nil {
+	// drain applies the batch but doesn't broadcast; we do that below.
+	// claims rejects two edits setting the same unique value on different
+	// objects before the batch commits.
+	claims := map[string]rdx.ID{}
+	if _, err = cho.drain(ctx, recs, claims); err != nil {
 		return err
 	}
 	cho.Broadcast(ctx, recs, "")
@@ -751,10 +749,8 @@ func (cho *Chotki) CommitBatch(ctx context.Context, edits []host.Edit) (err erro
 }
 
 // StartSequentialWrite acquires the cooperative read-modify-write bracket (see
-// host.Host): hold it across both the read and the commit of an op that
-// depends on current DB state (e.g. a Z-counter set), paired with
-// EndSequentialWrite. Commit methods do not take this lock, so they are safe
-// to call inside the bracket. Not reentrant.
+// host.Host): hold it across both the read and commit of a state-dependent op
+// (e.g. a Z-counter set). Commit methods don't take it. Not reentrant.
 func (cho *Chotki) StartSequentialWrite() {
 	cho.seqWriteMu.Lock()
 }
@@ -859,48 +855,41 @@ func (cho *Chotki) Metrics() []prometheus.Collector {
 	}
 }
 
-// Handles all updates and actually writes the to storage.
-// the allowed types are 'C', 'O', 'E', 'H', 'D', 'V', 'B', 'P', 'Y'
-// do not confuse it with RDX types
-// Returns the number of records that were fully applied before an error
-// (if any) stopped processing; replication uses this to rebroadcast
-// exactly the applied prefix of a batch.
-func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied int, err error) {
+// Handles all updates and writes them to storage; types 'C','O','E','H','D',
+// 'V','B','P','Y' (not RDX types). Drop-on-error: the Y/C/O/E records apply as
+// one all-or-nothing batch, so applied is len(recs) on success, 0 on error, and
+// replication relays only a fully-persisted batch. claims (CommitBatch only)
+// rejects intra-batch duplicate unique values.
+func (cho *Chotki) drain(ctx context.Context, recs protocol.Records, claims map[string]rdx.ID) (applied int, err error) {
 	EventsMetric.Add(float64(len(recs)))
 	var calls []CallHook
-	// Single batch for the non-sync packets (Y/C/O/E), applied once after the loop
-	// rather than per-packet, so a multi-packet drain is one pebble write. Sync packets
-	// (H/D/V) keep their own per-sync batch and commit it on 'V'.
+	// One batch for the non-sync packets (Y/C/O/E), applied once after the loop.
+	// Sync packets (H/D/V) use their own per-sync batch, committed on 'V'.
 	pb := pebble.Batch{}
 	classChanged := false
-	var created []rdx.ID // objects created here; reindexed from merged state post-commit
-	// Highest own-source id seen in this batch. cho.last is advanced to it only
-	// AFTER pb is durably applied (below), never inside the loop: pb is an
-	// all-or-nothing batch, so advancing the allocator before the write could
-	// leave cho.last ahead of the persisted version vector. A crash there would
-	// rebuild cho.last from the VV (behind) and hand the id out again though a
-	// peer already holds it.
+	var created []rdx.ID     // objects created here; reindexed post-commit
+	var syncCreated []rdx.ID // objects created by diff-sync 'V's; reindexed post-flush
+	// Highest own-source id; cho.last advances to it only after pb is durable
+	// (in flush), never in the loop, or a crash could reissue an id.
 	var maxOwn rdx.ID
-	// flush persists the accumulated Y/C/O/E batch, then advances the local id
-	// allocator to the own-source ids it just made durable. It is deferred so it
-	// runs on EVERY exit path — including the mid-loop early returns below — so a
-	// batch that fails partway still persists the prefix it applied. That keeps
-	// the batched write's durability identical to the old per-packet apply and
-	// matches the relayApplied contract (replication rebroadcasts recs[:applied],
-	// which must be durable). cho.last is advanced only here, after the durable
-	// write, so it can never run ahead of the persisted version vector.
+	// flush persists pb, then advances the allocator. Deferred so it runs on
+	// every exit path. On error pb (an in-memory buffer) is dropped and applied
+	// zeroed: nothing relayed, allocator unchanged.
 	flushed := false
 	flush := func() {
 		if flushed {
 			return
 		}
 		flushed = true
+		if err != nil {
+			applied = 0
+			return
+		}
 		if pb.Count() > 0 {
 			if ae := cho.db.Apply(&pb, cho.opts.PebbleWriteOptions); ae != nil {
-				if err == nil {
-					err = ae
-				}
-				return // batch not durable: do NOT advance the allocator
+				err = ae
+				applied = 0
+				return
 			}
 		}
 		if maxOwn != rdx.ID0 {
@@ -908,25 +897,20 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 		}
 	}
 	defer flush()
-	for _, packet := range recs { // parse the packets
+	for _, packet := range recs {
 		if err != nil {
 			break
 		}
 
-		// parse the packet to understand what kind of packet is it
 		lit, id, ref, body, parseErr := replication.ParsePacket(packet)
 		if parseErr != nil {
 			cho.log.WarnCtx(ctx, "bad packet", "err", parseErr)
 			return applied, parseErr
 		}
 
-		// A record stamped with our own src must advance the local id
-		// allocator, or future commits would reuse its seq. Such records come
-		// from two paths: local commits (CommitPacket/CommitBatch, under
-		// commitMutex) and replication sessions draining our own history back
-		// (e.g. after a restore from an older snapshot). We only record the
-		// max here; cho.last is advanced under lastLock after the durable
-		// apply below.
+		// An own-src record must advance the allocator or future commits reuse
+		// its seq. Sources: local commits, or a session draining our own history
+		// back (e.g. after a restore). cho.last advances after the durable apply.
 		if id.Src() == cho.src && maxOwn.Less(id) {
 			if id.Off() != 0 {
 				return applied, rdx.ErrBadPacket
@@ -941,13 +925,13 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 			if ref != rdx.ID0 {
 				return applied, ErrBadYPacket
 			}
-			err = cho.ApplyOY('Y', id, ref, body, &pb)
+			err = cho.ApplyOY('Y', id, ref, body, &pb, claims)
 
 		case 'C': // creates a class
 			err = cho.ApplyC(id, ref, body, &pb, &calls)
 			if err == nil {
-				// defer the type-cache clear until after the batch is applied, so a
-				// concurrent rebuild can't repopulate it from the pre-class state.
+				// clear the type cache after the batch applies, so a concurrent
+				// rebuild can't repopulate it from the pre-class state.
 				classChanged = true
 			}
 
@@ -955,7 +939,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 			if ref == rdx.ID0 {
 				return applied, ErrBadOPacket
 			}
-			err = cho.ApplyOY('O', id, ref, body, &pb)
+			err = cho.ApplyOY('O', id, ref, body, &pb, claims)
 			if err == nil {
 				created = append(created, id)
 			}
@@ -965,22 +949,20 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 				return applied, ErrBadEPacket
 			}
 			// created also collects edit targets whose class was unresolvable
-			// mid-batch (object's 'O' not yet visible); they are reindexed from
-			// the merged state post-commit like created objects.
-			err = cho.ApplyE(id, ref, body, &pb, &calls, &created)
+			// mid-batch (object's 'O' not visible yet); reindexed post-commit.
+			err = cho.ApplyE(id, ref, body, &pb, &calls, &created, claims)
 
 		case 'H': // handshake
 			d := cho.db.NewBatch()
-			// "allow only 1 diff sync per src": a new handshake from a
-			// replica invalidates its previous, still unfinished diff sync
-			// (if any), so displace stale sync points of the same origin.
-			// Sync-point keys are the origins' snapshot ids, therefore the
-			// keys to drop are the ones sharing the source of the incoming
-			// handshake id (comparing against cho.src, as done previously,
-			// matched nothing: our own handshakes are never drained here).
+			// One diff sync per src: a new handshake displaces the origin's
+			// stale sync points (keyed by snapshot id, so match on id.Src()).
+			incomingVia := replication.SessionIdFromCtx(ctx)
 			activeSyncs := make([]rdx.ID, 0)
 			cho.syncs.Range(func(key rdx.ID, value *syncPoint) bool {
-				if key.Src() == id.Src() {
+				// Displace only on a genuine supersede: same session (restart) or
+				// strictly older snapshot. Evicting a live diff via another session
+				// would flap a cyclic topology; a tree is assumed (see README).
+				if key.Src() == id.Src() && (value.via == incomingVia || key.Less(id)) {
 					activeSyncs = append(activeSyncs, key)
 				}
 				return true
@@ -1022,7 +1004,7 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 				s.mu.Unlock()
 				return applied, ErrSyncUnknown
 			}
-			err = cho.ApplyD(id, ref, body, s.batch, &s.created)
+			err = cho.ApplyD(id, ref, body, s.batch, &s.created, claims)
 			s.mu.Unlock()
 			// applied into the sync point's own batch, not pb
 
@@ -1040,30 +1022,36 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 				return applied, ErrSyncUnknown
 			}
 			DiffSyncSize.Observe(float64(s.batch.Len()))
-			// update blocks version vectors
 			err = cho.ApplyV(id, ref, body, s.batch)
-			var syncCreated []rdx.ID
 			if err == nil {
-				// apply batch and delete sync point as diff sync is finished
+				// durability point for everything the diff sync delivered
 				err = cho.db.Apply(s.batch, cho.opts.PebbleWriteOptions)
-				// db.Apply doesn't return the batch to the pool on its own,
-				// so close it explicitly to avoid leaking a pool slot.
+				// db.Apply doesn't return the batch to the pool; close it.
 				_ = s.batch.Close()
 				s.batch = nil
-				syncCreated = s.created
+				// finished either way; a failed Apply restarts the diff sync.
 				cho.syncs.Delete(id)
+			}
+			if err == nil {
+				// gated on the Apply persisting — a rejected batch wrote nothing.
+				//
+				// A diff-sync can carry our own history back (e.g. after a
+				// restore), advancing the persisted VV but not the allocator;
+				// advance it from the merged VV so no id is reissued.
+				if vv, verr := cho.VersionVector(); verr == nil {
+					cho.advanceLast(vv.GetID(cho.src))
+				} else {
+					cho.log.WarnCtx(ctx, "could not read VV to advance allocator after sync", "err", verr)
+				}
+				// A diff-sync may carry now-durable class changes; drop the type
+				// cache unconditionally (infrequent, cheap to rebuild).
+				cho.types.Clear()
+				// A class in pb isn't durable until flush(), so reindex these
+				// post-flush alongside `created`.
+				syncCreated = append(syncCreated, s.created...)
 				cho.log.InfoCtx(ctx, "applied diff batch and deleted it", "id", id)
 			}
 			s.mu.Unlock()
-			// Reindex objects this sync created from their committed, merged values.
-			// Their class may have arrived in the same batch, which OnFieldUpdate
-			// couldn't resolve mid-sync; now it's applied.
-			for _, oid := range syncCreated {
-				if e := cho.IndexManager.IndexObject(oid); e != nil {
-					cho.log.WarnCtx(ctx, "post-sync index failed", "oid", oid.String(), "err", e)
-				}
-			}
-			// already applied the sync point's own batch above
 
 		case 'B': // session end
 			cho.log.InfoCtx(ctx, "received session end", "id", id.String(), "data", string(body))
@@ -1077,17 +1065,13 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 			return applied, fmt.Errorf("unsupported packet type %c", lit)
 		}
 
-		// Count records processed before any error. The accumulated Y/C/O/E
-		// batch (pb) is applied once after the loop; sync packets commit their
-		// own batch on 'V'. Replication rebroadcasts recs[:applied].
 		if err == nil {
 			applied++
 		}
 	}
 
-	// Persist the accumulated Y/C/O/E batch (sync packets already committed
-	// theirs) and advance the allocator, before running hooks that read the
-	// merged state. flush is idempotent; the deferred call above is a no-op now.
+	// Persist pb and advance the allocator before running hooks that read the
+	// merged state. flush is idempotent; the deferred call above is now a no-op.
 	flush()
 	if err != nil {
 		return
@@ -1096,12 +1080,21 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 		cho.types.Clear()
 	}
 
-	// Reindex created objects from their committed, merged values so an edit that
-	// arrived before its create (out-of-order or same-batch) is reflected now,
-	// without depending on the reindex worker.
-	for _, oid := range created {
-		if e := cho.IndexManager.IndexObject(oid); e != nil {
-			cho.log.WarnCtx(ctx, "post-commit index failed", "oid", oid.String(), "err", e)
+	// Reindex created objects from their committed values, so an edit that
+	// arrived before its create is picked up now. Dedup by id: ApplyD/ApplyE
+	// append one entry per object and per deferred field.
+	if len(created)+len(syncCreated) > 0 { // the common no-creates drain allocates nothing
+		syncCreated = append(syncCreated, created...)
+		seen := make(map[rdx.ID]struct{}, len(syncCreated))
+		for _, oid := range syncCreated {
+			key := oid.ZeroOff()
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			if e := cho.IndexManager.IndexObject(key); e != nil {
+				cho.log.WarnCtx(ctx, "post-commit index failed", "oid", key.String(), "err", e)
+			}
 		}
 	}
 
@@ -1120,14 +1113,10 @@ func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error)
 	return
 }
 
-// AbortSyncsVia closes and removes all pending diff-sync points created by
-// the given replication session. A sync point must not outlive its session:
-// the 'D'/'V' packets completing it travel through that session's
-// connection, so once the connection is gone the staged batch can never be
-// completed legitimately, while a 'V' relayed through a newer connection
-// could apply the staged handshake version vector without the data records
-// that died with the old connection — permanent, silent data loss
-// (see tla/README.md).
+// AbortSyncsVia closes pending diff-sync points created by the given session.
+// Its 'D'/'V' packets travel through that connection, so once it's gone the
+// batch can't complete; a 'V' relayed later would apply the handshake VV
+// without the data that died with it — silent data loss (see tla/).
 func (cho *Chotki) AbortSyncsVia(ctx context.Context, sessionId string) {
 	if sessionId == "" {
 		return
@@ -1142,10 +1131,8 @@ func (cho *Chotki) AbortSyncsVia(ctx context.Context, sessionId string) {
 	})
 }
 
-// DrainApplied works like Drain but also reports how many records of the
-// batch were fully applied before an error (if any) stopped processing.
-// Replication sessions use the count to rebroadcast exactly the applied
-// prefix of a batch to the other sessions.
+// DrainApplied is Drain plus the applied-record count. Draining is
+// all-or-nothing, so the count is len(recs) on success and 0 on error.
 func (cho *Chotki) DrainApplied(ctx context.Context, recs protocol.Records) (applied int, err error) {
 	now := time.Now()
 	defer func() {
@@ -1157,7 +1144,7 @@ func (cho *Chotki) DrainApplied(ctx context.Context, recs protocol.Records) (app
 		return 0, chotki_errors.ErrClosed
 	}
 	EventsBatchSize.Observe(float64(len(recs)))
-	return cho.drain(ctx, recs)
+	return cho.drain(ctx, recs, nil)
 }
 
 func dumpKVString(key, value []byte) (str string) {
