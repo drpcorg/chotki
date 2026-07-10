@@ -162,9 +162,13 @@ type Syncer struct {
 
 	// guards snap, vvit and ffit: the feed loop and Close may touch the
 	// snapshot and its iterators concurrently
-	snapLock    sync.Mutex
-	sessionOnce sync.Once
-	sessionUid  string
+	snapLock sync.Mutex
+	// set under snapLock when a snapshot/iterator close failed mid-session, so
+	// Close keeps that gauge series alive as the leak signal instead of deleting it
+	snapCloseFailed bool
+	iterCloseFailed bool
+	sessionOnce     sync.Once
+	sessionUid      string
 }
 
 // SessionId returns a unique identifier of this replication session; the
@@ -203,6 +207,14 @@ func (sync *Syncer) LogCtx(ctx context.Context) context.Context {
 func (sync *Syncer) Close() error {
 	sync.SetFeedState(context.Background(), SendNone)
 
+	// The id label is unique per connection, so a series left behind after the
+	// session ends leaks until process restart. Drop the state series
+	// unconditionally (even on the nil-Host early return below); the
+	// snapshot/iterator series are dropped further down only when their close
+	// succeeded, so a real resource leak stays visible.
+	defer SessionsStates.DeleteLabelValues(sync.Name, "feed", version)
+	defer SessionsStates.DeleteLabelValues(sync.Name, "drain", version)
+
 	if sync.Host == nil {
 		return utils.ErrClosed
 	}
@@ -215,16 +227,19 @@ func (sync *Syncer) Close() error {
 	sync.snapLock.Lock()
 	defer sync.snapLock.Unlock()
 
+	closesnapshot := !sync.snapCloseFailed
 	if sync.snap != nil {
 		if err := sync.snap.Close(); err != nil {
+			closesnapshot = false
 			sync.Log.ErrorCtx(sync.LogCtx(context.Background()), "failed closing snapshot", "err", err.Error())
-		} else {
-			OpenedSnapshots.WithLabelValues(sync.Name, version).Set(0)
 		}
 		sync.snap = nil
 	}
+	if closesnapshot {
+		OpenedSnapshots.DeleteLabelValues(sync.Name, version)
+	}
 
-	closediterators := true
+	closediterators := !sync.iterCloseFailed
 
 	if sync.ffit != nil {
 		if err := sync.ffit.Close(); err != nil {
@@ -242,7 +257,7 @@ func (sync *Syncer) Close() error {
 		sync.vvit = nil
 	}
 	if closediterators {
-		OpenedIterators.WithLabelValues(sync.Name, version).Set(0)
+		OpenedIterators.DeleteLabelValues(sync.Name, version)
 	}
 
 	sync.Log.InfoCtx(sync.LogCtx(context.Background()), fmt.Sprintf("sync: connection %s closed: %v\n", sync.Name, sync.reason))
@@ -316,6 +331,7 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 			if sync.snap != nil {
 				err = sync.snap.Close()
 				if err != nil {
+					sync.snapCloseFailed = true
 					sync.Log.ErrorCtx(sync.LogCtx(ctx), "sync: failed closing snapshot", "err", err)
 				} else {
 					OpenedSnapshots.WithLabelValues(sync.Name, version).Set(0)
@@ -370,6 +386,7 @@ func (sync *Syncer) Feed(ctx context.Context) (recs protocol.Records, err error)
 		if sync.snap != nil {
 			err = sync.snap.Close()
 			if err != nil {
+				sync.snapCloseFailed = true
 				sync.Log.ErrorCtx(sync.LogCtx(ctx), "sync: failed closing snapshot", "error", err.Error())
 			} else {
 				OpenedSnapshots.WithLabelValues(sync.Name, version).Set(0)
@@ -589,6 +606,8 @@ func (sync *Syncer) FeedDiffVV(ctx context.Context) (vv protocol.Records, err er
 	}
 	if closediterators {
 		OpenedIterators.WithLabelValues(sync.Name, version).Set(0)
+	} else {
+		sync.iterCloseFailed = true
 	}
 	return
 }
