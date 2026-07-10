@@ -13,41 +13,47 @@ import (
 	testutils "github.com/drpcorg/chotki/test_utils"
 	"github.com/drpcorg/chotki/utils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var SchemaIndex = []classes.Field{
 	{Name: "test", RdxType: rdx.String, Index: classes.HashIndex},
 }
 
-// waitGetByHash polls GetByHash until it finds the object or the timeout
-// expires. Hash indexes on the receiving replica can be populated
-// asynchronously by the reindex worker (see IndexManager.CheckReindexTasks),
-// so a fresh read right after SyncData may legitimately miss the index on
-// slower machines. orm.Clear() is called on every attempt to refresh the
-// snapshot the ORM reads through.
+// waitGetByHash waits (require.Eventually) until GetByHash finds the object.
+// Hash indexes on the receiving replica can be populated asynchronously by the
+// reindex worker (see IndexManager.CheckReindexTasks), so a fresh read right
+// after SyncData may legitimately miss the index on slower machines.
+// orm.Clear() is called on every attempt to refresh the snapshot the ORM reads
+// through. Fails the test on timeout or on any error other than
+// ErrObjectUnknown.
 func waitGetByHash[T NativeObject](t *testing.T, orm *ORM, cid rdx.ID, fid uint32, tlv []byte, timeout time.Duration) (T, error) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
 	var (
 		obj T
 		err error
 	)
-	for {
+	require.Eventually(t, func() bool {
 		if cerr := orm.Clear(); cerr != nil {
-			return obj, cerr
+			err = cerr
+			return true // non-retriable: bail out and let the caller assert
 		}
 		obj, err = GetByHash[T](orm, cid, fid, tlv)
 		if err == nil {
-			return obj, nil
+			return true
 		}
-		if !errors.Is(err, chotki_errors.ErrObjectUnknown) {
-			return obj, err
-		}
-		if time.Now().After(deadline) {
-			return obj, err
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
+		return !errors.Is(err, chotki_errors.ErrObjectUnknown) // retry only unknown-object misses
+	}, timeout, 25*time.Millisecond, "hash index for %q not populated in %v", string(tlv), timeout)
+	return obj, err
+}
+
+// waitLiveSession waits until the replica has at least one live replication
+// session (its broadcast queue is registered in outq). Replaces fixed sleeps
+// after net.Listen/Connect.
+func waitLiveSession(t *testing.T, cho *Chotki) {
+	t.Helper()
+	require.Eventually(t, func() bool { return cho.outq.Size() > 0 },
+		10*time.Second, 10*time.Millisecond, "live sync session did not establish")
 }
 
 func TestFullScanIndexSync(t *testing.T) {
@@ -104,19 +110,20 @@ func TestFullScanIndexSync(t *testing.T) {
 	err = b.net.Connect("tcp://127.0.0.1:34934")
 	assert.NoError(t, err)
 
-	time.Sleep(time.Second * 1)
+	waitLiveSession(t, b)
 
 	ob2 := Test{Test: "test2"}
 	err = borm.New(context.Background(), cid, &ob2)
 	assert.NoError(t, err)
 	borm.UpdateAll()
 
-	time.Sleep(time.Millisecond * 100)
-
-	data = make([]Test, 0)
-	for item := range SeekClass[*Test](borm, cid) {
-		data = append(data, *item)
-	}
+	require.Eventually(t, func() bool {
+		data = make([]Test, 0)
+		for item := range SeekClass[*Test](borm, cid) {
+			data = append(data, *item)
+		}
+		return len(data) == 2
+	}, 10*time.Second, 25*time.Millisecond, "full-scan index did not converge after live sync")
 	assert.Equal(t, []Test{{Test: "test1"}, {Test: "test2"}}, data, "index in sync check after live sync")
 }
 
@@ -177,7 +184,7 @@ func TestHashIndexSyncCreateObject(t *testing.T) {
 	err = b.net.Connect("tcp://127.0.0.1:34934")
 	assert.NoError(t, err)
 
-	time.Sleep(time.Second * 1)
+	waitLiveSession(t, b)
 
 	ob2 := Test{Test: "test2"}
 	err = borm.New(context.Background(), cid, &ob2)
@@ -257,7 +264,7 @@ func TestHashIndexSyncEditObject(t *testing.T) {
 	err = b.net.Connect("tcp://127.0.0.1:34934")
 	assert.NoError(t, err)
 
-	time.Sleep(time.Second * 1)
+	waitLiveSession(t, b)
 
 	test1data.Test = "test11"
 	borm.Save(context.Background(), test1data)

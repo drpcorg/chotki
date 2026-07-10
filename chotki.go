@@ -113,6 +113,7 @@ type Options struct {
 	WriteTimeout               time.Duration
 	TlsConfig                  *tls.Config
 	MaxSyncDuration            time.Duration
+	CounterSyncPeriod          time.Duration // flush+reload cadence for the counter manager
 }
 
 func (o *Options) SetDefaults() {
@@ -151,6 +152,11 @@ func (o *Options) SetDefaults() {
 
 	if o.MaxSyncDuration == 0 {
 		o.MaxSyncDuration = 10 * time.Minute
+	}
+
+	// Run treats <= 0 as "no ticker", so normalize negatives too.
+	if o.CounterSyncPeriod <= 0 {
+		o.CounterSyncPeriod = time.Second
 	}
 
 	o.Merger = &pebble.Merger{
@@ -197,7 +203,8 @@ type syncPoint struct {
 	// this sync point; the sync point is aborted when that session ends
 	// (AbortSyncsVia), as its remaining 'D'/'V' records die with the
 	// session's connection.
-	via string
+	via     string
+	created []rdx.ID // objects created in this sync; reindexed from merged state after 'V'
 }
 
 // closeLocked closes the batch if it's still open. Must be called with s.mu held.
@@ -232,14 +239,19 @@ type Chotki struct {
 	cancelCtx context.CancelFunc
 	waitGroup *sync.WaitGroup
 
-	lock         sync.RWMutex
-	commitMutex  sync.Mutex
+	lock        sync.RWMutex
+	commitMutex sync.Mutex
+	// seqWriteMu backs Start/EndSequentialWrite (host.Host): the cooperative
+	// bracket read-modify-write writers hold across their read AND commit.
+	// Deliberately NOT commitMutex — commit methods lock that internally, so
+	// the bracket must nest around them (ordering: seqWriteMu → commitMutex).
+	seqWriteMu   sync.Mutex
 	db           *pebble.DB
 	net          *network.Net
 	dir          string
 	opts         Options
 	log          utils.Logger
-	counterCache sync.Map
+	counters     *counters.AtomicCounterManager
 	IndexManager *indexes.IndexManager
 
 	outq  *xsync.MapOf[string, protocol.DrainCloser] // queues to broadcast all new packets
@@ -291,6 +303,10 @@ func (cho *Chotki) cleanSyncs(ctx context.Context) {
 	}
 }
 
+// reindexPeriod is how often the background reindex worker scans for tasks.
+// A var so tests can set it long, isolating the apply path from the backstop.
+var reindexPeriod = time.Second
+
 // Opens a new Chotki instance.
 func Open(dirname string, opts Options) (*Chotki, error) {
 	exists, err := Exists(dirname)
@@ -328,6 +344,15 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		cancelCtx: cancel,
 		waitGroup: &wg,
 	}
+
+	// If Open fails after workers start, the caller has no *Chotki to Close;
+	// tear down via Close (nil-safe on a partial instance, single teardown path).
+	opened := false
+	defer func() {
+		if !opened {
+			_ = cho.Close()
+		}
+	}()
 
 	cho.net = network.NewNet(cho.log,
 		func(name string) protocol.FeedDrainCloserTraced { // new connection
@@ -372,9 +397,10 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 	cho.IndexManager = indexes.NewIndexManager(&cho)
 	wg.Add(1)
 	// reindex tasks are checked in a separate worker
+	reindexP := reindexPeriod
 	go func() {
 		defer wg.Done()
-		cho.IndexManager.CheckReindexTasks(ctx)
+		cho.IndexManager.CheckReindexTasks(ctx, reindexP)
 	}()
 
 	wg.Add(1)
@@ -382,6 +408,14 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 	go func() {
 		defer wg.Done()
 		cho.cleanSyncs(ctx)
+	}()
+
+	cho.counters = counters.NewAtomicCounterManager(&cho, opts.CounterSyncPeriod, cho.log)
+	wg.Add(1)
+	// counters are periodically flushed and reloaded in a separate worker
+	go func() {
+		defer wg.Done()
+		cho.counters.Run(ctx)
 	}()
 
 	if !exists {
@@ -399,7 +433,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 			protocol.Record('S', rdx.Stlv("")),
 		))
 
-		if _, err = cho.drain(context.Background(), init); err != nil {
+		if _, err = cho.drain(context.Background(), init, nil); err != nil {
 			return nil, errors.Join(err, fmt.Errorf("unable to drain initial data to chotki"))
 		}
 	}
@@ -411,6 +445,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 
 	cho.last = vv.GetID(cho.src)
 
+	opened = true
 	return &cho, nil
 }
 
@@ -432,6 +467,10 @@ func (cho *Chotki) Close() error {
 
 		cho.net = nil
 	}
+	// commitMutex lets an in-flight local commit (which holds it, not cho.lock)
+	// finish its drain + reindex reads on cho.db before we close and nil it.
+	// Network drains are guarded by cho.lock; the shutdown flush already ran.
+	cho.commitMutex.Lock()
 	if cho.db != nil {
 		if err := cho.db.Close(); err != nil {
 			cho.log.Error("couldn't close Pebble", "err", err)
@@ -439,6 +478,7 @@ func (cho *Chotki) Close() error {
 
 		cho.db = nil
 	}
+	cho.commitMutex.Unlock()
 
 	cho.outq.Clear()
 	cho.syncs.Range(func(id rdx.ID, s *syncPoint) bool {
@@ -457,10 +497,22 @@ func (cho *Chotki) Close() error {
 	return nil
 }
 
-// Returns an atomic counter object that can be used to increment/decrement a counter.
-func (cho *Chotki) Counter(rid rdx.ID, offset uint64, updatePeriod time.Duration) *counters.AtomicCounter {
-	counter, _ := cho.counterCache.LoadOrStore(rid.ToOff(offset), counters.NewAtomicCounter(cho, rid, offset, updatePeriod))
-	return counter.(*counters.AtomicCounter)
+// Counter returns a lock-free handle for the field; increments are flushed periodically and on Close (hard crash loses them).
+func (cho *Chotki) Counter(rid rdx.ID, offset uint64) *counters.AtomicCounter {
+	return cho.counters.Counter(rid, offset)
+}
+
+// SyncCounters forces an immediate flush+reload cycle of all counters.
+func (cho *Chotki) SyncCounters(ctx context.Context) {
+	cho.counters.Cycle(ctx)
+}
+
+// ObjectIDByHash resolves an object's id from a hash-indexed first-field value (e.g. a
+// UUID) without allocating a snapshot: it serves from the IndexManager's hash cache
+// (invalidated as objects change) and reads the live DB only on a miss. For hot paths
+// that need just the id, not a consistent object read.
+func (cho *Chotki) ObjectIDByHash(cid rdx.ID, fid uint32, fieldValue []byte) (rdx.ID, error) {
+	return cho.IndexManager.GetByHash(cid, fid, fieldValue, cho.db)
 }
 
 // Returns the source id of the Chotki instance.
@@ -487,6 +539,17 @@ func (cho *Chotki) nextLast() rdx.ID {
 	defer cho.lastLock.Unlock()
 	cho.last = cho.last.IncPro(1).ZeroOff()
 	return cho.last
+}
+
+// advanceLast bumps the cached allocator to id if it is behind. Called by drain
+// only after the own-source ids up to id have been durably applied, so cho.last
+// never runs ahead of the persisted version vector.
+func (cho *Chotki) advanceLast(id rdx.ID) {
+	cho.lastLock.Lock()
+	defer cho.lastLock.Unlock()
+	if cho.last.Less(id) {
+		cho.last = id
+	}
 }
 
 // Returns the write options of the Chotki instance.
@@ -634,10 +697,67 @@ func (cho *Chotki) CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body 
 	r := protocol.Record('R', ref.ZipBytes())
 	packet := protocol.Record(lit, i, r, protocol.Join(body...))
 	recs := protocol.Records{packet}
-	_, err = cho.drain(ctx, recs)
+	// single packet = one object; no intra-batch cross-object uniqueness to check
+	_, err = cho.drain(ctx, recs, nil)
 	DrainTime.WithLabelValues("commit").Observe(float64(time.Since(now)) / float64(time.Millisecond))
+	if err != nil {
+		// Don't publish an id we failed to persist: a crash before the next
+		// successful commit could reissue it while a peer already holds it.
+		return
+	}
 	cho.Broadcast(ctx, recs, "")
 	return
+}
+
+// CommitBatch applies edits as one all-or-nothing Pebble batch + broadcast. Each edit is stamped in
+// slice order; correctness relies on 'E' ops being commutative Merge calls (no read-back).
+func (cho *Chotki) CommitBatch(ctx context.Context, edits []host.Edit) (err error) {
+	if len(edits) == 0 {
+		return nil
+	}
+	// prevent cancellation as it can make this function non atomic
+	ctx = context.WithoutCancel(ctx)
+
+	now := time.Now()
+	defer func() {
+		DrainTime.WithLabelValues("commitbatch").Observe(float64(time.Since(now)) / float64(time.Millisecond))
+	}()
+	cho.commitMutex.Lock()
+	defer cho.commitMutex.Unlock()
+
+	if cho.db == nil {
+		return chotki_errors.ErrClosed
+	}
+
+	recs := make(protocol.Records, 0, len(edits))
+	for _, e := range edits {
+		id := cho.nextLast() // one id per edit
+		recs = append(recs, protocol.Record('E',
+			protocol.Record('I', id.ZipBytes()),
+			protocol.Record('R', e.Ref.ZipBytes()),
+			protocol.Join(e.Body...)))
+	}
+	// drain applies the batch but doesn't broadcast; we do that below.
+	// claims rejects two edits setting the same unique value on different
+	// objects before the batch commits.
+	claims := map[string]rdx.ID{}
+	if _, err = cho.drain(ctx, recs, claims); err != nil {
+		return err
+	}
+	cho.Broadcast(ctx, recs, "")
+	return nil
+}
+
+// StartSequentialWrite acquires the cooperative read-modify-write bracket (see
+// host.Host): hold it across both the read and commit of a state-dependent op
+// (e.g. a Z-counter set). Commit methods don't take it. Not reentrant.
+func (cho *Chotki) StartSequentialWrite() {
+	cho.seqWriteMu.Lock()
+}
+
+// EndSequentialWrite releases the bracket taken by StartSequentialWrite.
+func (cho *Chotki) EndSequentialWrite() {
+	cho.seqWriteMu.Unlock()
 }
 
 type NetCollector struct {
@@ -735,47 +855,68 @@ func (cho *Chotki) Metrics() []prometheus.Collector {
 	}
 }
 
-// Handles all updates and actually writes the to storage.
-// the allowed types are 'C', 'O', 'E', 'H', 'D', 'V', 'B', 'P', 'Y'
-// do not confuse it with RDX types
-// Returns the number of records that were fully applied before an error
-// (if any) stopped processing; replication uses this to rebroadcast
-// exactly the applied prefix of a batch.
-func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied int, err error) {
+// Handles all updates and writes them to storage; types 'C','O','E','H','D',
+// 'V','B','P','Y' (not RDX types). Drop-on-error: the Y/C/O/E records apply as
+// one all-or-nothing batch, so applied is len(recs) on success, 0 on error, and
+// replication relays only a fully-persisted batch. claims (CommitBatch only)
+// rejects intra-batch duplicate unique values.
+func (cho *Chotki) drain(ctx context.Context, recs protocol.Records, claims map[string]rdx.ID) (applied int, err error) {
 	EventsMetric.Add(float64(len(recs)))
 	var calls []CallHook
-	for _, packet := range recs { // parse the packets
+	// One batch for the non-sync packets (Y/C/O/E), applied once after the loop.
+	// Sync packets (H/D/V) use their own per-sync batch, committed on 'V'.
+	pb := pebble.Batch{}
+	classChanged := false
+	var created []rdx.ID     // objects created here; reindexed post-commit
+	var syncCreated []rdx.ID // objects created by diff-sync 'V's; reindexed post-flush
+	// Highest own-source id; cho.last advances to it only after pb is durable
+	// (in flush), never in the loop, or a crash could reissue an id.
+	var maxOwn rdx.ID
+	// flush persists pb, then advances the allocator. Deferred so it runs on
+	// every exit path. On error pb (an in-memory buffer) is dropped and applied
+	// zeroed: nothing relayed, allocator unchanged.
+	flushed := false
+	flush := func() {
+		if flushed {
+			return
+		}
+		flushed = true
+		if err != nil {
+			applied = 0
+			return
+		}
+		if pb.Count() > 0 {
+			if ae := cho.db.Apply(&pb, cho.opts.PebbleWriteOptions); ae != nil {
+				err = ae
+				applied = 0
+				return
+			}
+		}
+		if maxOwn != rdx.ID0 {
+			cho.advanceLast(maxOwn)
+		}
+	}
+	defer flush()
+	for _, packet := range recs {
 		if err != nil {
 			break
 		}
 
-		// parse the packet to understand what kind of packet is it
 		lit, id, ref, body, parseErr := replication.ParsePacket(packet)
 		if parseErr != nil {
 			cho.log.WarnCtx(ctx, "bad packet", "err", parseErr)
 			return applied, parseErr
 		}
 
-		// A record stamped with our own src must advance the local id
-		// allocator, or future commits would reuse its seq. Such records
-		// come from two paths that do NOT share a lock: local commits
-		// (CommitPacket holds commitMutex around this drain) and
-		// replication sessions draining our own history back (e.g. after
-		// a restore from an older snapshot) — hence lastLock.
-		if id.Src() == cho.src {
-			cho.lastLock.Lock()
-			if cho.last.Less(id) {
-				if id.Off() != 0 {
-					cho.lastLock.Unlock()
-					return applied, rdx.ErrBadPacket
-				}
-				cho.last = id
+		// An own-src record must advance the allocator or future commits reuse
+		// its seq. Sources: local commits, or a session draining our own history
+		// back (e.g. after a restore). cho.last advances after the durable apply.
+		if id.Src() == cho.src && maxOwn.Less(id) {
+			if id.Off() != 0 {
+				return applied, rdx.ErrBadPacket
 			}
-			cho.lastLock.Unlock()
+			maxOwn = id
 		}
-
-		// noApply can be set to true if we don't want to apply the batch
-		pb, noApply := pebble.Batch{}, false
 
 		cho.log.DebugCtx(ctx, "new packet", "type", string(lit), "packet", id.String())
 
@@ -784,39 +925,44 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 			if ref != rdx.ID0 {
 				return applied, ErrBadYPacket
 			}
-			err = cho.ApplyOY('Y', id, ref, body, &pb)
+			err = cho.ApplyOY('Y', id, ref, body, &pb, claims)
 
 		case 'C': // creates a class
 			err = cho.ApplyC(id, ref, body, &pb, &calls)
 			if err == nil {
-				// clear cache for classes if class changed
-				cho.types.Clear()
+				// clear the type cache after the batch applies, so a concurrent
+				// rebuild can't repopulate it from the pre-class state.
+				classChanged = true
 			}
 
 		case 'O': // creates an object
 			if ref == rdx.ID0 {
 				return applied, ErrBadOPacket
 			}
-			err = cho.ApplyOY('O', id, ref, body, &pb)
+			err = cho.ApplyOY('O', id, ref, body, &pb, claims)
+			if err == nil {
+				created = append(created, id)
+			}
 
 		case 'E': // edits an object
 			if ref == rdx.ID0 {
 				return applied, ErrBadEPacket
 			}
-			err = cho.ApplyE(id, ref, body, &pb, &calls)
+			// created also collects edit targets whose class was unresolvable
+			// mid-batch (object's 'O' not visible yet); reindexed post-commit.
+			err = cho.ApplyE(id, ref, body, &pb, &calls, &created, claims)
 
 		case 'H': // handshake
 			d := cho.db.NewBatch()
-			// "allow only 1 diff sync per src": a new handshake from a
-			// replica invalidates its previous, still unfinished diff sync
-			// (if any), so displace stale sync points of the same origin.
-			// Sync-point keys are the origins' snapshot ids, therefore the
-			// keys to drop are the ones sharing the source of the incoming
-			// handshake id (comparing against cho.src, as done previously,
-			// matched nothing: our own handshakes are never drained here).
+			// One diff sync per src: a new handshake displaces the origin's
+			// stale sync points (keyed by snapshot id, so match on id.Src()).
+			incomingVia := replication.SessionIdFromCtx(ctx)
 			activeSyncs := make([]rdx.ID, 0)
 			cho.syncs.Range(func(key rdx.ID, value *syncPoint) bool {
-				if key.Src() == id.Src() {
+				// Displace only on a genuine supersede: same session (restart) or
+				// strictly older snapshot. Evicting a live diff via another session
+				// would flap a cyclic topology; a tree is assumed (see README).
+				if key.Src() == id.Src() && (value.via == incomingVia || key.Less(id)) {
 					activeSyncs = append(activeSyncs, key)
 				}
 				return true
@@ -858,10 +1004,9 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 				s.mu.Unlock()
 				return applied, ErrSyncUnknown
 			}
-			err = cho.ApplyD(id, ref, body, s.batch)
+			err = cho.ApplyD(id, ref, body, s.batch, &s.created, claims)
 			s.mu.Unlock()
-			// we use separate batch, so noApply is true
-			noApply = true
+			// applied into the sync point's own batch, not pb
 
 		case 'V': // version vector sent in the end of diff sync
 			// load sync point if exists
@@ -877,21 +1022,36 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 				return applied, ErrSyncUnknown
 			}
 			DiffSyncSize.Observe(float64(s.batch.Len()))
-			// update blocks version vectors
 			err = cho.ApplyV(id, ref, body, s.batch)
 			if err == nil {
-				// apply batch and delete sync point as diff sync is finished
+				// durability point for everything the diff sync delivered
 				err = cho.db.Apply(s.batch, cho.opts.PebbleWriteOptions)
-				// db.Apply doesn't return the batch to the pool on its own,
-				// so close it explicitly to avoid leaking a pool slot.
+				// db.Apply doesn't return the batch to the pool; close it.
 				_ = s.batch.Close()
 				s.batch = nil
+				// finished either way; a failed Apply restarts the diff sync.
 				cho.syncs.Delete(id)
+			}
+			if err == nil {
+				// gated on the Apply persisting — a rejected batch wrote nothing.
+				//
+				// A diff-sync can carry our own history back (e.g. after a
+				// restore), advancing the persisted VV but not the allocator;
+				// advance it from the merged VV so no id is reissued.
+				if vv, verr := cho.VersionVector(); verr == nil {
+					cho.advanceLast(vv.GetID(cho.src))
+				} else {
+					cho.log.WarnCtx(ctx, "could not read VV to advance allocator after sync", "err", verr)
+				}
+				// A diff-sync may carry now-durable class changes; drop the type
+				// cache unconditionally (infrequent, cheap to rebuild).
+				cho.types.Clear()
+				// A class in pb isn't durable until flush(), so reindex these
+				// post-flush alongside `created`.
+				syncCreated = append(syncCreated, s.created...)
 				cho.log.InfoCtx(ctx, "applied diff batch and deleted it", "id", id)
 			}
 			s.mu.Unlock()
-			// we don't want to apply the batch as we already applied it
-			noApply = true
 
 		case 'B': // session end
 			cho.log.InfoCtx(ctx, "received session end", "id", id.String(), "data", string(body))
@@ -905,18 +1065,37 @@ func (cho *Chotki) drain(ctx context.Context, recs protocol.Records) (applied in
 			return applied, fmt.Errorf("unsupported packet type %c", lit)
 		}
 
-		if !noApply && err == nil {
-			if err := cho.db.Apply(&pb, cho.opts.PebbleWriteOptions); err != nil {
-				return applied, err
-			}
-		}
 		if err == nil {
 			applied++
 		}
 	}
 
+	// Persist pb and advance the allocator before running hooks that read the
+	// merged state. flush is idempotent; the deferred call above is now a no-op.
+	flush()
 	if err != nil {
 		return
+	}
+	if classChanged {
+		cho.types.Clear()
+	}
+
+	// Reindex created objects from their committed values, so an edit that
+	// arrived before its create is picked up now. Dedup by id: ApplyD/ApplyE
+	// append one entry per object and per deferred field.
+	if len(created)+len(syncCreated) > 0 { // the common no-creates drain allocates nothing
+		syncCreated = append(syncCreated, created...)
+		seen := make(map[rdx.ID]struct{}, len(syncCreated))
+		for _, oid := range syncCreated {
+			key := oid.ZeroOff()
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			if e := cho.IndexManager.IndexObject(key); e != nil {
+				cho.log.WarnCtx(ctx, "post-commit index failed", "oid", key.String(), "err", e)
+			}
+		}
 	}
 
 	if len(calls) > 0 {
@@ -934,14 +1113,10 @@ func (cho *Chotki) Drain(ctx context.Context, recs protocol.Records) (err error)
 	return
 }
 
-// AbortSyncsVia closes and removes all pending diff-sync points created by
-// the given replication session. A sync point must not outlive its session:
-// the 'D'/'V' packets completing it travel through that session's
-// connection, so once the connection is gone the staged batch can never be
-// completed legitimately, while a 'V' relayed through a newer connection
-// could apply the staged handshake version vector without the data records
-// that died with the old connection — permanent, silent data loss
-// (see tla/README.md).
+// AbortSyncsVia closes pending diff-sync points created by the given session.
+// Its 'D'/'V' packets travel through that connection, so once it's gone the
+// batch can't complete; a 'V' relayed later would apply the handshake VV
+// without the data that died with it — silent data loss (see tla/).
 func (cho *Chotki) AbortSyncsVia(ctx context.Context, sessionId string) {
 	if sessionId == "" {
 		return
@@ -956,10 +1131,8 @@ func (cho *Chotki) AbortSyncsVia(ctx context.Context, sessionId string) {
 	})
 }
 
-// DrainApplied works like Drain but also reports how many records of the
-// batch were fully applied before an error (if any) stopped processing.
-// Replication sessions use the count to rebroadcast exactly the applied
-// prefix of a batch to the other sessions.
+// DrainApplied is Drain plus the applied-record count. Draining is
+// all-or-nothing, so the count is len(recs) on success and 0 on error.
 func (cho *Chotki) DrainApplied(ctx context.Context, recs protocol.Records) (applied int, err error) {
 	now := time.Now()
 	defer func() {
@@ -971,7 +1144,7 @@ func (cho *Chotki) DrainApplied(ctx context.Context, recs protocol.Records) (app
 		return 0, chotki_errors.ErrClosed
 	}
 	EventsBatchSize.Observe(float64(len(recs)))
-	return cho.drain(ctx, recs)
+	return cho.drain(ctx, recs, nil)
 }
 
 func dumpKVString(key, value []byte) (str string) {

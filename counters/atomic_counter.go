@@ -1,17 +1,14 @@
-// Provides AtomicCounter - a high-performance atomic counter implementation
-// for distributed systems with CRDT semantics.
-
+// Package counters provides AtomicCounter, a lock-free CRDT counter (N or Z).
+// Get/Increment are lock-free; the manager periodically flushes mine and reloads theirs.
+// Increments since last flush are lost on hard crash — deliberate tradeoff for a lock-free hot path.
 package counters
 
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/drpcorg/chotki/host"
-	"github.com/drpcorg/chotki/protocol"
 	"github.com/drpcorg/chotki/rdx"
 )
 
@@ -19,166 +16,182 @@ var ErrNotCounter error = fmt.Errorf("not a counter")
 var ErrCounterNotLoaded error = fmt.Errorf("counter not loaded")
 var ErrDecrementN error = fmt.Errorf("decrementing natural counter")
 
+// AtomicCounter is the in-memory state for one (rid, offset) counter field; Increment/Get are lock-free.
 type AtomicCounter struct {
-	data         atomic.Value
-	db           host.Host
-	rid          rdx.ID
-	offset       uint64
-	lock         sync.RWMutex
-	expiration   time.Time
-	updatePeriod time.Duration
+	data     any // *nState | *zState; set once on first successful load
+	rid      rdx.ID
+	offset   uint64
+	db       host.Host
+	loaded   atomic.Bool
+	accessed atomic.Bool // set by Get/Increment to request a reload on the next background tick
 }
 
-type atomicNcounter struct {
-	theirs uint64
-	total  atomic.Uint64
+type nState struct {
+	mine, theirs atomic.Int64
+	lastSynced   int64
 }
 
-type zpart struct {
-	total    int64
-	revision int64
+type zState struct {
+	mine, theirs atomic.Int64
+	lastSynced   int64
+	rev          int64
 }
 
-type atomicZCounter struct {
-	theirs int64
-	part   atomic.Pointer[zpart]
+func newAtomicCounter(db host.Host, rid rdx.ID, offset uint64) *AtomicCounter {
+	return &AtomicCounter{db: db, rid: rid, offset: offset}
 }
 
-// NewAtomicCounter creates a new atomic counter instance.
-//
-// The counter uses lazy loading with time-based caching. When updatePeriod > 0,
-// data is cached to avoid expensive database reads, but may return stale values.
-// When updatePeriod = 0, fresh data is always read from the database.
-func NewAtomicCounter(db host.Host, rid rdx.ID, offset uint64, updatePeriod time.Duration) *AtomicCounter {
-	return &AtomicCounter{
-		db:           db,
-		rid:          rid,
-		offset:       offset,
-		updatePeriod: updatePeriod,
-	}
-}
-
-// load retrieves and caches counter data from the database.
-//
-// Uses double-checked locking: first checks cache without lock, then acquires
-// write lock only if cache is expired. Loads TLV data from database and parses
-// into internal structures (atomicNcounter for Natural, atomicZCounter for ZCounter).
-// This method only affects how frequently we read synchronized data from other replicas.
-// Local writes are always immediately visible regardless of cache state.
-func (a *AtomicCounter) load() (any, error) {
-	now := time.Now()
-	if a.data.Load() != nil && now.Sub(a.expiration) < 0 {
-		return a.data.Load(), nil
-	}
-
-	a.lock.RUnlock()
-	a.lock.Lock()
-	defer func() {
-		a.lock.Unlock()
-		a.lock.RLock()
-	}()
-
-	if a.data.Load() != nil && now.Sub(a.expiration) < 0 {
-		return a.data.Load(), nil
-	}
-
+// load refreshes theirs from DB; on first call sets counter kind and mine/lastSynced baseline.
+// Mutex-free: caller holds the manager mutex.
+func (a *AtomicCounter) load() error {
 	rdt, tlv, err := a.db.ObjectFieldTLV(a.rid.ToOff(a.offset))
 	if err != nil {
-		return nil, err
+		return err
 	}
-	var data any
-	switch rdt {
-	case rdx.ZCounter:
-		total, mine, rev := rdx.Znative3(tlv, a.db.Source())
-		part := zpart{total: total, revision: rev}
-		c := atomicZCounter{
-			theirs: total - mine,
-			part:   atomic.Pointer[zpart]{},
+	first := !a.loaded.Load()
+	if first {
+		switch rdt {
+		case rdx.Natural:
+			a.data = &nState{}
+		case rdx.ZCounter:
+			a.data = &zState{}
+		default:
+			return ErrNotCounter
 		}
-		c.part.Store(&part)
-		data = &c
-	case rdx.Natural:
-		total, mine := rdx.Nnative2(tlv, a.db.Source())
-		c := atomicNcounter{
-			theirs: total - mine,
-			total:  atomic.Uint64{},
+	}
+	switch c := a.data.(type) {
+	case *nState:
+		sum, mineDB := rdx.Nnative2(tlv, a.db.Source())
+		c.theirs.Store(int64(sum) - int64(mineDB))
+		if first {
+			c.mine.Store(int64(mineDB))
+			c.lastSynced = int64(mineDB)
+		} else {
+			// adopt an external change to our slot (e.g. ORM AddToNField):
+			// shift mine by the delta and re-baseline, preserving unflushed
+			// increments so value() stays fresh and nothing is lost to the merge.
+			if extDelta := int64(mineDB) - c.lastSynced; extDelta != 0 {
+				c.mine.Add(extDelta)
+			}
+			c.lastSynced = int64(mineDB)
 		}
-		c.total.Add(total)
-		data = &c
+	case *zState:
+		sum, mineDB, rev := rdx.Znative3(tlv, a.db.Source())
+		c.theirs.Store(sum - mineDB)
+		if first {
+			c.mine.Store(mineDB)
+			c.lastSynced = mineDB
+			c.rev = rev
+		} else {
+			// as nState above; also never let our revision fall behind the DB.
+			if extDelta := mineDB - c.lastSynced; extDelta != 0 {
+				c.mine.Add(extDelta)
+			}
+			c.lastSynced = mineDB
+			c.rev = max(c.rev, rev)
+		}
 	default:
-		return nil, ErrNotCounter
+		return ErrNotCounter
 	}
-	a.data.Store(data)
-	a.expiration = now.Add(a.updatePeriod)
-	return data, nil
+	a.loaded.Store(true) // publish baseline before any lock-free op
+	return nil
 }
 
-// Get retrieves the current value of the counter.
+// pendingFlush returns the edit op for a counter with unflushed increments plus
+// an onCommit run iff the batch commits (changed=false: nothing to flush).
+// Caller holds the manager mutex.
 //
-// Acquires read lock, loads data (cached or from DB), and returns the total value.
-// For Natural counters returns sum of all replica contributions, for ZCounter returns current total.
-func (a *AtomicCounter) Get(ctx context.Context) (int64, error) {
-	a.lock.RLock()
-	defer a.lock.RUnlock()
-	data, err := a.load()
-	if err != nil {
-		return 0, err
+// The flush is a read-modify-write: it commits slot + delta (not the cached
+// mine), for Z stamps a revision above any present, and onCommit folds the
+// observed external change into mine — so a concurrent writer isn't clobbered.
+func (a *AtomicCounter) pendingFlush() (changed bool, rdt byte, op []byte, onCommit func()) {
+	switch c := a.data.(type) {
+	case *nState:
+		m := c.mine.Load()
+		delta := m - c.lastSynced
+		if delta == 0 {
+			return false, 0, nil, nil
+		}
+		// N is grow-only, so newSlot >= mineDB and the merge always accepts it;
+		// no revision needed (unlike Z).
+		_, tlv, err := a.db.ObjectFieldTLV(a.rid.ToOff(a.offset))
+		if err != nil {
+			// log so the skip isn't mistaken for a flush; delta is kept
+			a.db.Logger().Warn("counter flush: cannot read slot, retrying next cycle",
+				"rid", a.rid.String(), "offset", a.offset, "err", err)
+			return false, 0, nil, nil
+		}
+		_, mineDB := rdx.Nnative2(tlv, a.db.Source())
+		newSlot := int64(mineDB) + delta
+		extDelta := int64(mineDB) - c.lastSynced // net effect of any other writer to our slot
+		return true, rdx.Natural, rdx.Ntlvt(uint64(newSlot), a.db.Source()), func() {
+			if extDelta != 0 {
+				c.mine.Add(extDelta) // fold the external change into our running total
+			}
+			c.lastSynced = newSlot
+		}
+	case *zState:
+		m := c.mine.Load()
+		delta := m - c.lastSynced
+		if delta == 0 {
+			return false, 0, nil, nil
+		}
+		_, tlv, err := a.db.ObjectFieldTLV(a.rid.ToOff(a.offset))
+		if err != nil {
+			// log so the skip isn't mistaken for a flush; delta is kept
+			a.db.Logger().Warn("counter flush: cannot read slot, retrying next cycle",
+				"rid", a.rid.String(), "offset", a.offset, "err", err)
+			return false, 0, nil, nil
+		}
+		_, mineDB, dbRev := rdx.Znative3(tlv, a.db.Source())
+		newRev := max(c.rev, dbRev) + 1
+		newSlot := mineDB + delta
+		extDelta := mineDB - c.lastSynced // net effect of any other writer to our slot
+		return true, rdx.ZCounter, rdx.Ztlvt(newSlot, a.db.Source(), newRev), func() {
+			c.rev = newRev
+			if extDelta != 0 {
+				c.mine.Add(extDelta) // fold the external change into our running total
+			}
+			c.lastSynced = newSlot
+		}
 	}
-	switch c := data.(type) {
-	case *atomicNcounter:
-		return int64(c.total.Load()), nil
-	case *atomicZCounter:
-		return c.part.Load().total, nil
-	default:
+	return false, 0, nil, nil
+}
+
+// value returns mine+theirs (lock-free). Assumes the counter is loaded.
+func (a *AtomicCounter) value() int64 {
+	switch c := a.data.(type) {
+	case *nState:
+		return c.mine.Load() + c.theirs.Load()
+	case *zState:
+		return c.mine.Load() + c.theirs.Load()
+	}
+	return 0
+}
+
+// Get returns mine + last-known others'. Lock-free and DB-free.
+func (a *AtomicCounter) Get(ctx context.Context) (int64, error) {
+	a.accessed.Store(true)
+	if !a.loaded.Load() {
 		return 0, ErrCounterNotLoaded
 	}
+	return a.value(), nil
 }
 
-// Increment atomically increments the counter by the specified value.
-//
-// Loads current data, performs atomic update using Go primitives (atomic.Uint64 for Natural,
-// CompareAndSwap for ZCounter), generates TLV data, and commits to database with CRDT semantics.
-// Natural counters only allow positive increments, ZCounter supports both positive and negative.
+// Increment adds val to mine (Natural rejects val < 0); flushed by the manager on the next cycle. Lock-free and DB-free.
 func (a *AtomicCounter) Increment(ctx context.Context, val int64) (int64, error) {
-	a.lock.RLock()
-	defer a.lock.RUnlock()
-	data, err := a.load()
-	if err != nil {
-		return 0, err
+	a.accessed.Store(true)
+	if !a.loaded.Load() {
+		return 0, ErrCounterNotLoaded
 	}
-	var dtlv []byte
-	var result int64
-	var rdt byte
-	switch c := data.(type) {
-	case *atomicNcounter:
+	switch c := a.data.(type) {
+	case *nState:
 		if val < 0 {
 			return 0, ErrDecrementN
 		}
-		nw := c.total.Add(uint64(val))
-		dtlv = rdx.Ntlvt(nw-c.theirs, a.db.Source())
-		result = int64(nw)
-		rdt = rdx.Natural
-	case *atomicZCounter:
-		for {
-			current := c.part.Load()
-			nw := zpart{
-				total:    current.total + val,
-				revision: current.revision + 1,
-			}
-			ok := c.part.CompareAndSwap(current, &nw)
-			if ok {
-				dtlv = rdx.Ztlvt(nw.total-c.theirs, a.db.Source(), nw.revision)
-				result = nw.total
-				rdt = rdx.ZCounter
-				break
-			}
-		}
-	default:
-		return 0, ErrCounterNotLoaded
+		return c.mine.Add(val) + c.theirs.Load(), nil
+	case *zState:
+		return c.mine.Add(val) + c.theirs.Load(), nil
 	}
-	changes := make(protocol.Records, 0)
-	changes = append(changes, protocol.Record('F', rdx.ZipUint64(uint64(a.offset))))
-	changes = append(changes, protocol.Record(rdt, dtlv))
-	a.db.CommitPacket(ctx, 'E', a.rid.ZeroOff(), changes)
-	return result, nil
+	return 0, ErrCounterNotLoaded
 }

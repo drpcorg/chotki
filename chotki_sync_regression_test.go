@@ -340,6 +340,6 @@ func TestApplyDVMalformedInputFailsFast(t *testing.T) {
 	// short-form headers claiming 200-byte bodies that are not there
 	err = a.ApplyV(rdx.ID0, rdx.ID0, []byte{'v', 200}, batch)
 	require.ErrorIs(t, err, ErrBadVPacket)
-	err = a.ApplyD(rdx.ID0, rdx.ID0, []byte{'f', 200}, batch)
+	err = a.ApplyD(rdx.ID0, rdx.ID0, []byte{'f', 200}, batch, nil, nil)
 	require.ErrorIs(t, err, rdx.ErrBadPacket)
 }

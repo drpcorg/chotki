@@ -87,6 +87,20 @@
 (*     commit can reuse an already issued seq (violates FreshLocalIds).   *)
 (*   ProtectLast = TRUE models the intended fix: own-source drains and    *)
 (*     local commits update/read cho.last under a synchronization edge.    *)
+(*                                                                         *)
+(*   BatchMode = TRUE models chotki.go drain() applying the Y/C/O/E        *)
+(*     records of a batch as one all-or-nothing pebble batch after the     *)
+(*     loop (one write per drain) instead of per-packet.  With             *)
+(*     Both settings DROP the whole batch on a mid-batch error (current     *)
+(*     drop-on-error drain: no partial prefix is ever persisted; the VV     *)
+(*     bumps are dropped with the records).  They differ only in the        *)
+(*     cho.last advance.  BatchBuggy = TRUE models the defect: cho.last is  *)
+(*     advanced EAGERLY to the batch's own-source ids even when the batch   *)
+(*     was dropped, leaving cho.last ahead of the persisted VV (violates    *)
+(*     LastNotAhead).                                                       *)
+(*   BatchBuggy = FALSE models the fix: cho.last advances LAZILY, only      *)
+(*     after the durable write, so a dropped batch consumes no id and       *)
+(*     cho.last moves in lock-step with the version vector.                 *)
 (***************************************************************************)
 
 EXTENDS Naturals, Sequences, FiniteSets
@@ -103,7 +117,19 @@ CONSTANTS
     DropSyncsOnClose, \* TRUE: sync points die with the session (fixed)
     ProtectLast,      \* TRUE: cho.last is synchronized with own-source drains
     EnableOwnSourceDrain, \* include the local cho.last race witness action
-    EnablePing        \* include the ping/pong keep-alive machinery
+    EnablePing,       \* include the ping/pong keep-alive machinery
+    BatchMode,        \* TRUE: model chotki.go drain() as one all-or-nothing
+                      \*   pebble batch for the Y/C/O/E (live) records, applied
+                      \*   after the loop, rather than per-packet.  cho.last is
+                      \*   advanced to the batch's own-source ids only once the
+                      \*   batch is durable.
+    BatchBuggy        \* only meaningful with BatchMode.  Both drop the whole
+                      \*   batch on a mid-batch error (drop-on-error); this
+                      \*   toggles the cho.last advance.  TRUE: EAGER — cho.last
+                      \*   advances to the batch's own-source ids even when the
+                      \*   batch was dropped (last runs past the VV).  FALSE: the
+                      \*   fix — LAZY, cho.last advances only after the durable
+                      \*   write, so a dropped batch consumes no id.
 
 ASSUME
     /\ \A p \in Edges : p \subseteq Replicas /\ Cardinality(p) = 2
@@ -116,6 +142,8 @@ ASSUME
     /\ ProtectLast \in BOOLEAN
     /\ EnableOwnSourceDrain \in BOOLEAN
     /\ EnablePing \in BOOLEAN
+    /\ BatchMode \in BOOLEAN
+    /\ BatchBuggy \in BOOLEAN
 
 (***************************************************************************)
 (* An endpoint <<x, y>> is the Syncer living at replica x serving the     *)
@@ -127,6 +155,9 @@ Rev(e)    == <<e[2], e[1]>>
 EdgeOf(e) == {e[1], e[2]}
 
 Max(a, b) == IF a >= b THEN a ELSE b
+
+\* Largest element of a finite set of naturals (0 for the empty set).
+SetMax(S) == IF S = {} THEN 0 ELSE CHOOSE m \in S : \A y \in S : y <= m
 
 ZeroVV        == [s \in Replicas |-> 0]
 VVMerge(u, w) == [s \in Replicas |-> Max(u[s], w[s])]
@@ -288,9 +319,15 @@ ApplyOne(st, m) ==
            \* chotki.go 'B': drop the origin's pending diff batch, if any.
            [st EXCEPT !.syn = {sp \in @ : sp.k # m.k}]
       [] m.t = "E" ->
-           \* chotki.go 'E'/'O'/...: apply immediately; UpdateVTree bumps
-           \* both the global VV and the object's block VV.
-           [st EXCEPT !.sto = @ \cup {m.op},
+           \* chotki.go 'E'/'O'/...: a live mutation.  In BatchMode it is only
+           \* staged into the pending batch (pe), applied all-or-nothing after
+           \* the loop; the global/block VV bumps and the cho.last advance
+           \* happen at that commit, not here (see the Drain action).  Without
+           \* BatchMode it is applied immediately (the old per-packet drain):
+           \* UpdateVTree bumps both the global VV and the object's block VV.
+           IF BatchMode
+           THEN [st EXCEPT !.pe = @ \cup {m.op}]
+           ELSE [st EXCEPT !.sto = @ \cup {m.op},
                       !.gv  = [@ EXCEPT ![m.op.src] = Max(@, m.op.seq)],
                       !.bv  = [@ EXCEPT ![m.op.obj][m.op.src] = Max(@, m.op.seq)],
                       !.lst = IF ProtectLast /\ m.op.src = st.self
@@ -333,10 +370,15 @@ RelayOf(batch, st, wasHs) ==
              headRelay == IF wasHs /\ st.n >= 1 THEN <<Head(batch)>> ELSE <<>>
              tailB     == rest # <<>> /\ rest[Len(rest)].t = "B"
          IN  IF st.err \/ tailB THEN headRelay ELSE headRelay \o rest
-    ELSE LET pre == SubSeq(batch, 1, st.n)
-         IN  IF pre # <<>> /\ pre[Len(pre)].t = "B"
-             THEN SubSeq(pre, 1, Len(pre) - 1)
-             ELSE pre
+    ELSE IF st.err /\ BatchMode
+         \* Drop-on-error: the batch was dropped, so drain returns applied=0 and
+         \* relayApplied broadcasts NOTHING. Relaying the applied prefix here
+         \* would advertise records this replica did not persist.
+         THEN <<>>
+         ELSE LET pre == SubSeq(batch, 1, st.n)
+              IN  IF pre # <<>> /\ pre[Len(pre)].t = "B"
+                  THEN SubSeq(pre, 1, Len(pre) - 1)
+                  ELSE pre
 
 (***************************************************************************)
 (* Syncer.Drain state transition, driven by the last record of the batch  *)
@@ -429,19 +471,34 @@ Commit(r, o) ==
 \* The Go code tried to advance cho.last on that path, but without a
 \* separate synchronization edge the next CommitPacket may observe stale
 \* cho.last and reuse a seq.  ProtectLast=FALSE models the lost visibility.
+\*
+\* In BatchMode this record rides a batched drain that then errors. Drop-on-error
+\* (current chotki.go): the whole batch is dropped, so its VV bump is lost
+\* (store/gvv/bvv unchanged). BatchBuggy TRUE models the defect where cho.last was
+\* advanced EAGERLY to its id even though the batch was dropped, leaving cho.last
+\* ahead of the persisted VV (LastNotAhead) and reissuing the seq. BatchBuggy
+\* FALSE is the fix: cho.last advances only alongside the durable write, so a
+\* dropped batch consumes no id and last moves in lock-step with the VV.
 OwnSourceDrain(r, o) ==
     /\ EnableOwnSourceDrain
     /\ commitcnt[r] < CommitBudget[r]
-    /\ LET q  == gvv[r][r] + 1
-           op == [src |-> r, seq |-> q, obj |-> o]
-       IN /\ store' = [store EXCEPT ![r] = @ \cup {op}]
-          /\ gvv'   = [gvv EXCEPT ![r][r] = q]
-          /\ bvv'   = [bvv EXCEPT ![r][o][r] = q]
-          /\ last'  = IF ProtectLast
+    /\ LET q       == gvv[r][r] + 1
+           op      == [src |-> r, seq |-> q, obj |-> o]
+           \* drop-on-error: a batched drain that errors persists nothing
+           dropped == BatchMode
+           \* the fix advances cho.last only with the durable write (a dropped
+           \* batch consumes no id); the bug advances it eagerly even on a drop
+           advanceLast == ~dropped \/ BatchBuggy
+       IN /\ store' = IF dropped THEN store ELSE [store EXCEPT ![r] = @ \cup {op}]
+          /\ gvv'   = IF dropped THEN gvv   ELSE [gvv EXCEPT ![r][r] = q]
+          /\ bvv'   = IF dropped THEN bvv   ELSE [bvv EXCEPT ![r][o][r] = q]
+          /\ last'  = IF ProtectLast /\ advanceLast
                       THEN [last EXCEPT ![r] = Max(@, q)]
                       ELSE last
-          /\ issued' = [issued EXCEPT ![r] = @ \cup {q}]
-          /\ commitcnt' = [commitcnt EXCEPT ![r] = @ + 1]
+          \* the id is consumed (issued, counted) only when cho.last advances to
+          \* it; a dropped-and-not-advanced batch is a no-op
+          /\ issued' = IF advanceLast THEN [issued EXCEPT ![r] = @ \cup {q}] ELSE issued
+          /\ commitcnt' = IF advanceLast THEN [commitcnt EXCEPT ![r] = @ + 1] ELSE commitcnt
     /\ UNCHANGED <<syncs, feed, drain, outq, chan, peervv, snap, ping, pingcnt, gen>>
 
 (***************************************************************************)
@@ -609,15 +666,41 @@ Drain(e) ==
          ELSE
            LET st0 == [sto |-> store[x], gv |-> gvv[x], bv |-> bvv[x],
                        syn |-> syncs[x], via |-> e, self |-> x,
-                       lst |-> last[x], err |-> FALSE, n |-> 0]
+                       lst |-> last[x], err |-> FALSE, n |-> 0, pe |-> {}]
                stF == ApplyBatch(st0, batch)
                rly == RelayOf(batch, stF, drain[e] = "hs")
                tgt == BcastTargets(x, e)
                nds == NextDrainState(drain[e], batch)
-           IN /\ store' = [store EXCEPT ![x] = stF.sto]
-              /\ gvv'   = [gvv EXCEPT ![x] = stF.gv]
-              /\ bvv'   = [bvv EXCEPT ![x] = stF.bv]
-              /\ last'  = [last EXCEPT ![x] = stF.lst]
+               \* Commit the pending batch (pe) accumulated in BatchMode.
+               \* Drop-on-error (current chotki.go drain): a mid-batch error
+               \* discards the WHOLE pending batch — no partial prefix is ever
+               \* made durable (keepPE FALSE on error, for both the fix and the
+               \* bug). Outside BatchMode pe is empty, so all of this is a no-op
+               \* and the per-packet fold result (stF) is committed unchanged.
+               keepPE == ~stF.err
+               peGv   == [s \in Replicas |->
+                            Max(stF.gv[s],
+                                SetMax({op.seq : op \in {o \in stF.pe : o.src = s}}))]
+               peBv   == [o \in Objects |-> [s \in Replicas |->
+                            Max(stF.bv[o][s],
+                                SetMax({op.seq : op \in {p \in stF.pe :
+                                                          p.obj = o /\ p.src = s}}))]]
+               ownMax == SetMax({op.seq : op \in {o \in stF.pe : o.src = x}})
+               finalSto == IF keepPE THEN stF.sto \cup stF.pe ELSE stF.sto
+               finalGv  == IF keepPE THEN peGv ELSE stF.gv
+               finalBv  == IF keepPE THEN peBv ELSE stF.bv
+               \* cho.last advance to the batch's own-source ids. The fix
+               \* (BatchBuggy FALSE) is LAZY: it advances only after the durable
+               \* write (gated on keepPE), so last stays == VV. The bug
+               \* (BatchBuggy TRUE) is EAGER: it advances even when the batch was
+               \* dropped on error (keepPE FALSE), so last runs past the VV
+               \* (violates LastNotAhead).
+               finalLst == IF ProtectLast /\ (keepPE \/ BatchBuggy)
+                           THEN Max(stF.lst, ownMax) ELSE stF.lst
+           IN /\ store' = [store EXCEPT ![x] = finalSto]
+              /\ gvv'   = [gvv EXCEPT ![x] = finalGv]
+              /\ bvv'   = [bvv EXCEPT ![x] = finalBv]
+              /\ last'  = [last EXCEPT ![x] = finalLst]
               /\ outq'  = [d \in Endpoints |->
                              IF d \in tgt /\ rly # <<>>
                              THEN SeqToApp(outq[d], rly)
@@ -678,6 +761,17 @@ VVBounded ==
 \* the next local id.  It must never lag behind the replica's own VV entry.
 LastCoversOwnVV ==
     \A r \in Replicas : last[r] >= gvv[r][r]
+
+\* ...nor run AHEAD of the persisted own VV entry.  cho.last lives only in
+\* memory: a restart rebuilds it from the persisted version vector
+\* (cho.last = vv.GetID(cho.src) in Open).  If cho.last was advanced to an id
+\* whose op the batched drain then dropped (never persisted to the VV), a
+\* restart rebuilds cho.last behind that id and the next commit reissues it,
+\* though a peer that received the drained/relayed record already holds it.
+\* Together with LastCoversOwnVV this pins last[r] = gvv[r][r]: the allocator
+\* must move in lock-step with the durable version vector.
+LastNotAhead ==
+    \A r \in Replicas : last[r] <= gvv[r][r]
 
 \* Every local own-source event must have received a fresh seq.  issued is
 \* a set, while commitcnt counts events; a repeated seq shrinks the set.

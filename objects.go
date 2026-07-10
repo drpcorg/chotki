@@ -254,6 +254,11 @@ func (cho *Chotki) MapTRField(fid rdx.ID) (themap rdx.MapTR, err error) {
 
 // Returns the TLV-encoded value of the object field, given object rdx.ID with offset.
 func (cho *Chotki) GetFieldTLV(id rdx.ID) (rdt byte, tlv []byte) {
+	// a concurrent Close nils cho.db; return cleanly to avoid a panic on any
+	// caller not already guarded by commitMutex/cho.lock.
+	if cho.db == nil {
+		return 0, nil
+	}
 	key := host.OKey(id, 'A')
 	it, err := cho.db.NewIter(&pebble.IterOptions{
 		LowerBound: []byte{'O'},

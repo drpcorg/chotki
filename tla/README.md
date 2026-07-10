@@ -45,6 +45,7 @@ session-death nondeterminism), byte-level TLV encoding, and queue overflow
 | `NoGaps` | **data safety**: a replica's global VV never claims an op that is not in its store. Because diff sync uses the peer's global VV as the resend floor, a violation is *permanent, silent data loss* — nobody will ever resend that op. |
 | `VVBounded` | a VV never runs ahead of what the source actually committed |
 | `LastCoversOwnVV` | the cached local allocator `cho.last` never lags behind the replica's own VV entry |
+| `LastNotAhead` | ...nor runs *ahead* of the persisted own VV entry. `cho.last` lives only in memory and is rebuilt from the VV on restart, so an id it holds that the VV does not is reissued after a crash. With `LastCoversOwnVV` this pins `cho.last = gvv[r][r]`. |
 | `FreshLocalIds` | each local own-source event receives a fresh seq; repeated seqs violate this |
 | `BvvExact`, `BvvCovers` | block VVs are exact and complete w.r.t. the store; the sender-side `hasChanges` check depends on this |
 | `SyncPointPerSrc` | at most one pending diff batch per origin replica (`"allow only 1 diff sync per src"`) |
@@ -70,6 +71,9 @@ java -cp tla2tools.jar tlc2.TLC -config MCFixed.cfg -workers auto -deadlock MCCh
 | `MCBuggyDisplace.cfg` | pre-fix displacement: **`SyncPointPerSrc` violated** (bug 2) |
 | `MCBuggyStaleSync.cfg` | pre-fix sync-point lifetime: **`NoGaps` violated** (bug 3) |
 | `MCBuggyLast.cfg` | pre-fix unsynchronized `cho.last`: **`FreshLocalIds` violated** (bug 4) |
+| `MCBatchFixed.cfg` | fixed batched drain (`BatchMode`), chain `a–b–c`: **no violations** (batching preserves `NoGaps`/`QuiescentConverged`) |
+| `MCBatchFixedLast.cfg` | fixed batched drain + own-source drain witness: **no violations** (`cho.last` stays in lock-step with the VV) |
+| `MCBatchBuggy.cfg` | pre-fix batched drain (`BatchBuggy`): **`LastNotAhead` violated** (bug 5 below) |
 
 (`-deadlock` disables deadlock reporting: behaviours legitimately terminate
 once the commit/reconnect budgets are exhausted.)
@@ -141,6 +145,35 @@ witness:
    (`nextLast`), the own-source advance in `drain`, `Last()` and the
    `Close()` reset; `TestCommitAllocatorSyncedWithOwnSourceDrain` races the
    two paths under `-race` and fails against the pre-fix code.
+
+5. **Batched drain could advance `cho.last` past the persisted VV** (modelled
+   by `BatchMode = TRUE` with `BatchBuggy = TRUE`). `chotki.go drain()` was
+   changed to accumulate the `Y/C/O/E` records of a batch into one pebble
+   `pb` applied once after the loop (one write per drain), instead of
+   per-packet. The first draft advanced `cho.last` to an own-source record's
+   id *inside the loop* — before that durable write — and dropped `pb`
+   entirely on a mid-batch error (a bad packet, `ErrSyncUnknown` after a sync
+   point timed out, an unsupported type). The record's version-vector bump
+   was dropped with `pb`, but `cho.last` stayed advanced: `cho.last` now
+   *leads* the persisted VV. Since `cho.last` is rebuilt from the VV on
+   restart (`cho.last = vv.GetID(cho.src)` in `Open`), a crash before a
+   resync regresses it, and the next `CommitPacket` reissues an id a peer that
+   received the drained/relayed record already holds — divergence. The
+   `MCBatchBuggy.cfg` trace is one step: a dropped own-source drain advances
+   `last` to 1 while `gvv` stays 0, violating `LastNotAhead`. Fixed by keeping
+   the **drop-on-error** semantics — a mid-batch error drops the whole `pb`, so
+   no partial prefix is ever persisted, `applied` is 0 and nothing non-durable
+   is relayed — while advancing `cho.last` (under `lastLock`) only *lazily*,
+   after the durable write, so a dropped batch consumes no id and `cho.last`
+   can never lead the VV. (The earlier draft instead *flushed* the applied
+   prefix on error; that was reverted because it made `CommitBatch` no longer
+   all-or-nothing, doubling a Z-counter's read-modify-write delta on chunk retry.)
+   `TestDrainErrorDoesNotOverrunAllocator` drives a mixed
+   `[own-source C, unknown-sync V]` batch and asserts the dropped batch persists
+   nothing; it fails against both the eager-`cho.last` bug and the old flush
+   behaviour. `MCBatchFixed`/`MCBatchFixedLast` re-check the whole property set
+   with `BatchMode = TRUE` (drop-on-error + lazy `cho.last`); `MCBatchBuggy`
+   keeps the eager-`cho.last` variant as the negative witness.
 
 Bugs found in the same code while studying it for the model (also fixed, not
 modelled at the byte/timer level):
