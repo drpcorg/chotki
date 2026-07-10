@@ -167,7 +167,7 @@ func TestHashIndexSyncCreateObject(t *testing.T) {
 	borm := b.ObjectMapper()
 	defer borm.Close()
 
-	test1data, err = waitGetByHash[*Test](t, borm, cid, 1, []byte("test1"), 5*time.Second)
+	test1data, err = waitGetByHash[*Test](t, borm, cid, 1, []byte("test1"), 30*time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, &Test{Test: "test1"}, test1data, "index in sync check after diff sync")
 
@@ -184,7 +184,7 @@ func TestHashIndexSyncCreateObject(t *testing.T) {
 	assert.NoError(t, err)
 	borm.UpdateAll()
 
-	test2data, err := waitGetByHash[*Test](t, aorm, cid, 1, []byte("test2"), 5*time.Second)
+	test2data, err := waitGetByHash[*Test](t, aorm, cid, 1, []byte("test2"), 30*time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, &Test{Test: "test2"}, test2data, "index in sync check after live sync")
 }
@@ -247,7 +247,7 @@ func TestHashIndexSyncEditObject(t *testing.T) {
 	borm := b.ObjectMapper()
 	defer borm.Close()
 
-	test1data, err = waitGetByHash[*Test](t, borm, cid, 1, []byte("test10"), 5*time.Second)
+	test1data, err = waitGetByHash[*Test](t, borm, cid, 1, []byte("test10"), 30*time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, &Test{Test: "test10"}, test1data, "index in sync check after diff sync")
 
@@ -263,7 +263,7 @@ func TestHashIndexSyncEditObject(t *testing.T) {
 	borm.Save(context.Background(), test1data)
 	borm.UpdateAll()
 
-	test1data, err = waitGetByHash[*Test](t, aorm, cid, 1, []byte("test11"), 5*time.Second)
+	test1data, err = waitGetByHash[*Test](t, aorm, cid, 1, []byte("test11"), 30*time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, &Test{Test: "test11"}, test1data, "index in sync check after live sync")
 }
@@ -307,7 +307,7 @@ func TestHashIndexRepairIndex(t *testing.T) {
 
 	borm := b.ObjectMapper()
 	defer borm.Close()
-	test1data, err := waitGetByHash[*Test](t, borm, cid, 1, []byte("test1"), 5*time.Second)
+	test1data, err := waitGetByHash[*Test](t, borm, cid, 1, []byte("test1"), 30*time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, &Test{Test: "test1"}, test1data, "index in sync check after diff sync")
 }

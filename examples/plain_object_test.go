@@ -77,4 +77,9 @@ func TestPlainObjectORM(t *testing.T) {
 	assert.Equal(t, rdx.ID0, sidorov3.Group)
 	assert.Equal(t, uint64(124), sidorov3.Score)
 
+	// close the DB before the deferred os.RemoveAll: pebble's background
+	// compactions would otherwise race the removal and fail the test
+	// after it has already passed
+	orma3.Close()
+	_ = a3.Close()
 }

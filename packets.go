@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/drpcorg/chotki/chotki_errors"
 	"github.com/drpcorg/chotki/host"
 	"github.com/drpcorg/chotki/indexes"
 	"github.com/drpcorg/chotki/protocol"
@@ -35,11 +36,19 @@ func (cho *Chotki) ApplyD(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 		var dzip, bare []byte
 		// this is id, but its stored as an offset of ref to save some bytes
 		dzip, rest = protocol.Take('F', rest)
+		// a missing or truncated 'F' record would otherwise loop forever
+		// (Take makes no progress on incomplete input)
+		if dzip == nil {
+			return rdx.ErrBadPacket
+		}
 		// It also stored as zigzagged
 		d := rdx.UnzipUint64(dzip)
 		// we now restore original id
 		at := ref.ProPlus(d)
 		rdt, bare, rest = protocol.TakeAny(rest)
+		if rdt == 0 || bare == nil {
+			return rdx.ErrBadPacket
+		}
 		// we updated some classes, so dropping cache
 		if rdt == 'C' {
 			cho.types.Clear()
@@ -63,6 +72,11 @@ func (cho *Chotki) ApplyH(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 	_, rest := protocol.Take('M', body)
 	var vbody []byte
 	vbody, _ = protocol.Take('V', rest)
+	// relayed handshakes are not pre-validated by DrainHandshake, so the
+	// version vector may be missing here
+	if vbody == nil {
+		return chotki_errors.ErrBadHPacket
+	}
 	err = batch.Merge(host.VKey0, vbody, cho.opts.PebbleWriteOptions)
 	return
 }
@@ -76,14 +90,25 @@ func (cho *Chotki) ApplyV(id, ref rdx.ID, body []byte, batch *pebble.Batch) (err
 		var rec, idb []byte
 		// take block version vector
 		rec, rest = protocol.Take('V', rest)
+		// stop on a malformed or truncated record: Take makes no progress
+		// on incomplete input, which would loop forever here
+		if rec == nil {
+			return ErrBadVPacket
+		}
 		// take block id
 		idb, rec = protocol.Take('R', rec)
+		if idb == nil {
+			return ErrBadVPacket
+		}
 		id := rdx.IDFromZipBytes(idb)
 		key := host.VKey(id)
 		if !rdx.VValid(rec) {
-			err = ErrBadVPacket
-		} else {
-			err = batch.Merge(key, rec, cho.opts.PebbleWriteOptions)
+			// return instead of continuing so the error cannot be
+			// silently overwritten by a later, well-formed record
+			return ErrBadVPacket
+		}
+		if err = batch.Merge(key, rec, cho.opts.PebbleWriteOptions); err != nil {
+			return err
 		}
 	}
 	return

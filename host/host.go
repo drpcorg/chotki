@@ -22,5 +22,11 @@ type Host interface {
 	CommitPacket(ctx context.Context, lit byte, ref rdx.ID, body protocol.Records) (id rdx.ID, err error)
 	Broadcast(ctx context.Context, records protocol.Records, except string)
 	Drain(ctx context.Context, recs protocol.Records) (err error)
+	// DrainApplied works like Drain but also reports how many records of
+	// the batch were fully applied before an error stopped processing.
+	DrainApplied(ctx context.Context, recs protocol.Records) (applied int, err error)
+	// AbortSyncsVia closes and removes the pending diff-sync points
+	// created by the given replication session.
+	AbortSyncsVia(ctx context.Context, sessionId string)
 	Snapshot() pebble.Reader
 }

@@ -150,6 +150,22 @@ The algorithm of diff sync is as follows:
 Important note that during diff sync we also broadcast all 'D' and 'H' packets to all other replicas.
 Imagine there are 3 replicas: A <-> B <-> C.
 
+The exact rebroadcast rule is: after draining a batch of records, a replica relays to all its other
+sessions exactly the prefix of the batch it has applied to its own DB, except the trailing 'B' (bye)
+record, which is scoped to this session. This rule is important for correctness: network read batching
+can coalesce data records with the peer's closing 'B' into a single batch, and a batch can also fail
+mid-way (e.g. ErrSyncUnknown on a stale sync point). If the applied records were not relayed, downstream
+replicas would never receive them at all — live records are not re-sent, and future diff syncs would skip
+them because the middle replica already has them — leaving the tree silently diverged. A formal model of
+this protocol (including a reproduction of that scenario) lives in the `tla/` directory.
+
+A related lifetime rule: a sync point (the pebble batch accumulating a diff) is bound to the replication
+session whose 'H' record created it, and is aborted when that session closes (Syncer.SessionId /
+Chotki.AbortSyncsVia). The remaining 'D'/'V' packets of a diff always travel through that same session, so
+once it is gone the batch can never be completed legitimately; without the abort, a 'V' relayed through a
+newer connection could apply the staged handshake version vector without the data records that died with
+the old connection — permanent, silent data loss (see tla/README.md, bug 3).
+
 - Let's say A, B are live syncing and C is just connected to B.
 - If we do not broadcast 'D' packets, then B and C will sync, however if there is something in C, that A haven't seen it will not be synced, until diff sync between A and B.
 - But if we broadcast 'D' and 'H' packets, we basically open syncing session between all upstream replicas and C, so
