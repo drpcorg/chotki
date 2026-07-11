@@ -76,3 +76,44 @@ func TestZSequentialWritersConvergeExactly(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, want, got)
 }
+
+// RMW flows read counters inside the bracket, taking bracket → manager mutex
+// (via Counter's load-retry path). The flush cycle takes the same two locks;
+// taking the mutex first forms an AB-BA deadlock that freezes every counter
+// read and bracket user (prod incident 2026-07-11, eu-west5 chotki-0). This
+// test interleaves the two paths; the wrong order deadlocks within iterations.
+func TestCycleVsBracketedCounterAccessNoDeadlock(t *testing.T) {
+	ctx := context.Background()
+	a := openReplica(t, 0x1b, time.Hour)
+
+	// never resolves: every Counter() retries the load and takes the manager mutex
+	missing := rdx.IDFromSrcSeqOff(0x7f, 0x1000, 0)
+
+	const rounds = 500
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() { // RMW pattern: bracket → counter access (manager mutex)
+		defer wg.Done()
+		for i := 0; i < rounds; i++ {
+			a.StartSequentialWrite()
+			_ = a.Counter(missing, 2)
+			a.EndSequentialWrite()
+		}
+	}()
+
+	go func() { // flush cycle: must be bracket → manager mutex as well
+		defer wg.Done()
+		for i := 0; i < rounds; i++ {
+			a.SyncCounters(ctx)
+		}
+	}()
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("deadlock between counter-manager cycle and bracketed counter access")
+	}
+}

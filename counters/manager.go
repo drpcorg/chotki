@@ -99,6 +99,11 @@ func (m *AtomicCounterManager) Cycle(ctx context.Context) {
 
 // cycle flushes dirty counters, then reloads all (force) or only touched/unloaded ones (background tick uses force=false).
 func (m *AtomicCounterManager) cycle(ctx context.Context, force bool) {
+	// Lock order: bracket → m.mu, matching RMW flows (bracket → Counter →
+	// m.mu). The reverse order deadlocks against them.
+	m.db.StartSequentialWrite()
+	defer m.db.EndSequentialWrite()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -106,8 +111,10 @@ func (m *AtomicCounterManager) cycle(ctx context.Context, force bool) {
 	// eviction — states grows with the number of distinct counters touched.)
 	snapshot := m.snapshotLocked()
 
-	m.flushLocked(ctx, snapshot)
-
+	// Read-modify-write under one bracket: reload FIRST so baselines
+	// (value, rev) are current, then flush deltas on top. A Z flush stamped
+	// from a stale rev collides with a concurrent reset and Zmerge silently
+	// drops one of the writes.
 	for _, c := range snapshot {
 		// accessed is read, not swapped: loadLocked clears it only on a
 		// successful load, so a transient failure keeps the reload pending.
@@ -115,6 +122,7 @@ func (m *AtomicCounterManager) cycle(ctx context.Context, force bool) {
 			m.loadLocked(c)
 		}
 	}
+	m.flushLocked(ctx, snapshot)
 }
 
 // snapshotLocked collects the current counters into a slice. Caller holds m.mu.
@@ -131,12 +139,10 @@ func (m *AtomicCounterManager) snapshotLocked() []*AtomicCounter {
 var maxFlushBatch = 1024
 
 // flushLocked commits changed counters in maxFlushBatch chunks; a failed chunk
-// is retried next cycle. Caller holds m.mu. It runs inside the sequential-write
-// bracket (spanning all chunks, since every op is read before the first commit)
-// so a concurrent RMW writer of the same slot can't collide and lose a write.
+// is retried next cycle. Caller holds the sequential-write bracket and m.mu,
+// in that order. The bracket spans all chunks (every op is read before the
+// first commit) so a concurrent RMW writer of the same slot can't lose a write.
 func (m *AtomicCounterManager) flushLocked(ctx context.Context, snapshot []*AtomicCounter) {
-	m.db.StartSequentialWrite()
-	defer m.db.EndSequentialWrite()
 	var edits []host.Edit
 	var commits []func()
 	for _, c := range snapshot {
@@ -189,6 +195,9 @@ func (m *AtomicCounterManager) Run(ctx context.Context) {
 }
 
 func (m *AtomicCounterManager) flushOnShutdown() {
+	// lock order: bracket → m.mu (see cycle)
+	m.db.StartSequentialWrite()
+	defer m.db.EndSequentialWrite()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// CommitBatch ignores cancellation internally, so Background is safe.
