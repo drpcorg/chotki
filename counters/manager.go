@@ -3,6 +3,7 @@ package counters
 import (
 	"context"
 	"errors"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -26,22 +27,47 @@ const negCacheSize = 1024
 type AtomicCounterManager struct {
 	mu     sync.Mutex
 	period time.Duration
-	states sync.Map // rdx.ID (rid.ToOff(offset)) -> *AtomicCounter
-	db     host.Host
-	log    utils.Logger
+	// staleTTL bounds how stale a cached counter may be when served via
+	// Counter(). Hot counters never trip it — the background cycle reloads
+	// them every period and re-stamps the deadline. It exists for counters
+	// loaded once and then left idle while other replicas keep writing (e.g.
+	// the nightly reset scan reading a key billed elsewhere all day): past
+	// the deadline, Counter() reads through to the DB instead of serving the
+	// frozen value. <= 0 falls back to 5m.
+	staleTTL time.Duration
+	// staleJitter randomizes each deadline so counters loaded together (a
+	// scan, a batch read) don't all read through in the same instant later.
+	staleJitter time.Duration
+	states      sync.Map // rdx.ID (rid.ToOff(offset)) -> *AtomicCounter
+	db          host.Host
+	log         utils.Logger
 	// negCache rate-limits load retries for not-a-counter fields (ErrNotCounter),
 	// which would otherwise re-hit the DB and log on every call/tick. Entries
 	// expire so a field that becomes a counter self-heals (not a permanent latch).
 	negCache *lru.LRU[rdx.ID, struct{}]
 }
 
-func NewAtomicCounterManager(db host.Host, period time.Duration, log utils.Logger) *AtomicCounterManager {
-	return &AtomicCounterManager{
-		db:       db,
-		period:   period,
-		log:      log,
-		negCache: lru.NewLRU[rdx.ID, struct{}](negCacheSize, nil, negCacheTTL),
+func NewAtomicCounterManager(db host.Host, period, staleTTL, staleJitter time.Duration, log utils.Logger) *AtomicCounterManager {
+	if staleTTL <= 0 {
+		staleTTL = 5 * time.Minute
 	}
+	return &AtomicCounterManager{
+		db:          db,
+		period:      period,
+		staleTTL:    staleTTL,
+		staleJitter: staleJitter,
+		log:         log,
+		negCache:    lru.NewLRU[rdx.ID, struct{}](negCacheSize, nil, negCacheTTL),
+	}
+}
+
+// staleDeadline returns now + staleTTL + rand(staleJitter), unixnano.
+func (m *AtomicCounterManager) staleDeadline() int64 {
+	d := m.staleTTL
+	if m.staleJitter > 0 {
+		d += rand.N(m.staleJitter)
+	}
+	return time.Now().Add(d).UnixNano()
 }
 
 // Counter returns the counter for (rid, offset), creating and loading it on first use; a load that
@@ -54,20 +80,23 @@ func (m *AtomicCounterManager) Counter(rid rdx.ID, offset uint64) *AtomicCounter
 		existing, _ = m.states.LoadOrStore(key, newAtomicCounter(m.db, rid, offset))
 	}
 	c := existing.(*AtomicCounter)
-	m.ensureLoaded(c) // first load, or retry of a previously-failed one; no-op once loaded
+	m.ensureFresh(c) // first load, retry of a failed one, or stale read-through; no-op while fresh
 	return c
 }
 
-// ensureLoaded retries the load for a cached counter whose object wasn't local at first touch;
-// no-op once loaded. Serialized with flush/reload via m.mu; the hot path never reaches the lock.
-func (m *AtomicCounterManager) ensureLoaded(c *AtomicCounter) {
-	if c.loaded.Load() {
+// ensureFresh loads a counter on first touch and reads through to the DB when
+// the cached value is past its staleness deadline. Hot counters stay off the
+// mutex: the background cycle reloads them every period and re-stamps the
+// deadline, so only idle-then-read counters pay the locked DB read.
+// Serialized with flush/reload via m.mu.
+func (m *AtomicCounterManager) ensureFresh(c *AtomicCounter) {
+	if c.loaded.Load() && time.Now().UnixNano() < c.staleAt.Load() {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if c.loaded.Load() {
-		return
+	if c.loaded.Load() && time.Now().UnixNano() < c.staleAt.Load() {
+		return // another caller refreshed while we queued on the mutex
 	}
 	m.loadLocked(c)
 }
@@ -87,9 +116,24 @@ func (m *AtomicCounterManager) loadLocked(c *AtomicCounter) {
 		if m.log != nil {
 			m.log.Warn("counter load failed", "rid", c.rid.String(), "offset", c.offset, "err", err)
 		}
+		// A loaded-but-stale counter keeps serving its old value; rate-limit
+		// read-through retries to one per period so a persistent load error
+		// doesn't turn every Counter() call into a locked DB hit + log line.
+		if c.loaded.Load() {
+			c.staleAt.Store(time.Now().Add(m.retryDelay()).UnixNano())
+		}
 		return
 	}
 	c.accessed.Store(false) // only after a successful load
+	c.staleAt.Store(m.staleDeadline())
+}
+
+// retryDelay is the failed-reload backoff; the background period when set.
+func (m *AtomicCounterManager) retryDelay() time.Duration {
+	if m.period > 0 {
+		return m.period
+	}
+	return time.Second
 }
 
 // Cycle forces a flush + full reload of all counters; used by SyncCounters and tests.

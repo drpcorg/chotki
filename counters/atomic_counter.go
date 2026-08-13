@@ -1,5 +1,6 @@
 // Package counters provides AtomicCounter, a lock-free CRDT counter (N or Z).
-// Get/Increment are lock-free; the manager periodically flushes mine and reloads theirs.
+// Get/Increment are lock-free; the manager periodically flushes mine and reloads theirs,
+// and Counter() reads through to the DB when the cached value is past its staleness deadline.
 // Increments since last flush are lost on hard crash — deliberate tradeoff for a lock-free hot path.
 package counters
 
@@ -23,7 +24,8 @@ type AtomicCounter struct {
 	offset   uint64
 	db       host.Host
 	loaded   atomic.Bool
-	accessed atomic.Bool // set by Get/Increment to request a reload on the next background tick
+	accessed atomic.Bool  // set by Get/Increment to request a reload on the next background tick
+	staleAt  atomic.Int64 // unixnano deadline; zero or past ⇒ Counter() reads through before serving
 }
 
 type nState struct {

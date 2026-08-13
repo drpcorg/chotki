@@ -114,6 +114,8 @@ type Options struct {
 	TlsConfig                  *tls.Config
 	MaxSyncDuration            time.Duration
 	CounterSyncPeriod          time.Duration // flush+reload cadence for the counter manager
+	CounterStaleTTL            time.Duration // max age of a cached counter before Counter() reads through to the DB
+	CounterStaleJitter         time.Duration // random extra per load, spreads read-through deadlines apart
 }
 
 func (o *Options) SetDefaults() {
@@ -157,6 +159,13 @@ func (o *Options) SetDefaults() {
 	// Run treats <= 0 as "no ticker", so normalize negatives too.
 	if o.CounterSyncPeriod <= 0 {
 		o.CounterSyncPeriod = time.Second
+	}
+
+	if o.CounterStaleTTL <= 0 {
+		o.CounterStaleTTL = 5 * time.Minute
+	}
+	if o.CounterStaleJitter <= 0 {
+		o.CounterStaleJitter = 30 * time.Second
 	}
 
 	o.Merger = &pebble.Merger{
@@ -410,7 +419,7 @@ func Open(dirname string, opts Options) (*Chotki, error) {
 		cho.cleanSyncs(ctx)
 	}()
 
-	cho.counters = counters.NewAtomicCounterManager(&cho, opts.CounterSyncPeriod, cho.log)
+	cho.counters = counters.NewAtomicCounterManager(&cho, opts.CounterSyncPeriod, opts.CounterStaleTTL, opts.CounterStaleJitter, cho.log)
 	wg.Add(1)
 	// counters are periodically flushed and reloaded in a separate worker
 	go func() {

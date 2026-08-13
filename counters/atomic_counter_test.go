@@ -529,7 +529,7 @@ func TestBatchFlushFailureRetried(t *testing.T) {
 	assert.NoError(t, err)
 
 	fh := &batchFaultHost{Host: a}
-	mgr := counters.NewAtomicCounterManager(fh, 0, nil)
+	mgr := counters.NewAtomicCounterManager(fh, 0, 0, 0, nil)
 	_, err = mgr.Counter(rid1, 1).Increment(ctx, 3)
 	assert.NoError(t, err)
 	_, err = mgr.Counter(rid2, 1).Increment(ctx, 7)
