@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/drpcorg/chotki/host"
 	"github.com/drpcorg/chotki/rdx"
@@ -41,7 +42,7 @@ func TestFlushChunking(t *testing.T) {
 	defer func() { maxFlushBatch = old }()
 
 	h := &mockHost{}
-	m := NewAtomicCounterManager(h, 0, nil)
+	m := NewAtomicCounterManager(h, 0, 0, 0, nil)
 	for i := 0; i < 5; i++ {
 		rid := rdx.IDFromSrcSeqOff(0x1a, uint64(i+1), 0)
 		_, err := m.Counter(rid, 1).Increment(context.Background(), 1)
@@ -83,7 +84,7 @@ func (h *typeMockHost) loadCount() int {
 // latch, so a field that later becomes a counter self-heals.
 func TestNotACounterIsNegativelyCached(t *testing.T) {
 	h := &typeMockHost{}
-	m := NewAtomicCounterManager(h, 0, nil)
+	m := NewAtomicCounterManager(h, 0, 0, 0, nil)
 	rid := rdx.IDFromSrcSeqOff(0x1a, 1, 0)
 	for i := 0; i < 5; i++ {
 		_ = m.Counter(rid, 1)
@@ -123,7 +124,7 @@ func (h *flakyHost) EndSequentialWrite()                                      {}
 // only after a successful load, so the next cycle retries.
 func TestAccessedSurvivesTransientLoadError(t *testing.T) {
 	h := &flakyHost{failCount: 2}
-	m := NewAtomicCounterManager(h, 0, nil)
+	m := NewAtomicCounterManager(h, 0, 0, 0, nil)
 	rid := rdx.IDFromSrcSeqOff(0x1a, 1, 0)
 	c := m.Counter(rid, 1)             // load #1 fails (transient)
 	_, _ = c.Get(context.Background()) // sets accessed
@@ -133,4 +134,173 @@ func TestAccessedSurvivesTransientLoadError(t *testing.T) {
 		"accessed must survive a failed reload")
 	m.Cycle(context.Background()) // reload #3 succeeds; accessed cleared
 	assert.False(t, c.accessed.Load())
+}
+
+// mutableHost serves a Natural counter whose DB value can change externally —
+// as if remote replicas' increments synced in while this one never touched it.
+type mutableHost struct {
+	host.Host
+	mu    sync.Mutex
+	val   uint64
+	loads int
+}
+
+func (h *mutableHost) Source() uint64 { return 0x1a }
+func (h *mutableHost) ObjectFieldTLV(fid rdx.ID) (byte, []byte, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.loads++
+	return rdx.Natural, rdx.Ntlv(h.val), nil
+}
+func (h *mutableHost) CommitBatch(ctx context.Context, edits []host.Edit) error { return nil }
+func (h *mutableHost) StartSequentialWrite()                                    {}
+func (h *mutableHost) EndSequentialWrite()                                      {}
+func (h *mutableHost) set(v uint64) {
+	h.mu.Lock()
+	h.val = v
+	h.mu.Unlock()
+}
+func (h *mutableHost) loadCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.loads
+}
+
+// A counter loaded once and then left idle must not serve a value frozen at
+// load time forever: past counterStaleTTL, Counter() reads through and picks
+// up externally-synced DB changes. (The nightly reset scan read day-old zeros
+// for keys billed on other replicas and silently skipped them.)
+func TestStaleCounterReadsThrough(t *testing.T) {
+	h := &mutableHost{val: 5}
+	m := NewAtomicCounterManager(h, 0, 50*time.Millisecond, 0, nil)
+	rid := rdx.IDFromSrcSeqOff(0x1a, 1, 0)
+
+	v, err := m.Counter(rid, 1).Get(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, int64(5), v)
+
+	// remote increments sync into the DB while this replica stays idle
+	h.set(42)
+
+	// within TTL: cached value served, no extra DB read
+	loadsBefore := h.loadCount()
+	v, _ = m.Counter(rid, 1).Get(context.Background())
+	assert.Equal(t, int64(5), v)
+	assert.Equal(t, loadsBefore, h.loadCount(), "fresh counter must not hit the DB")
+
+	time.Sleep(60 * time.Millisecond)
+
+	// past TTL: Counter() reads through before serving
+	v, _ = m.Counter(rid, 1).Get(context.Background())
+	assert.Equal(t, int64(42), v, "stale counter must read through to the DB")
+}
+
+// The background cycle must proactively refresh a loaded counter whose
+// staleness deadline passed, even if nothing accessed it — an idle counter's
+// cache follows externally-synced DB changes without waiting for a reader.
+func TestCycleRefreshesExpiredIdleCounter(t *testing.T) {
+	h := &mutableHost{val: 5}
+	m := NewAtomicCounterManager(h, 0, 50*time.Millisecond, 0, nil)
+	c := m.Counter(rdx.IDFromSrcSeqOff(0x1a, 1, 0), 1) // loads at 5
+	// settle: consume the initial accessed flag so only TTL expiry can
+	// trigger the next reload
+	m.cycle(context.Background(), false)
+
+	h.set(42) // remote increments sync in; counter never accessed again
+
+	m.cycle(context.Background(), false) // within TTL: idle counter skipped
+	assert.Equal(t, int64(5), c.value(), "within TTL an idle counter is not reloaded")
+
+	time.Sleep(60 * time.Millisecond)
+	m.cycle(context.Background(), false) // past TTL: reloaded despite being idle
+	assert.Equal(t, int64(42), c.value(), "the cycle must refresh an expired idle counter")
+}
+
+// A handle retained across the staleness deadline is refreshed by the
+// background cycle (not by Get itself, which stays lock-free): once a tick
+// runs past the deadline, the handle's reads are fresh without any Counter()
+// call.
+func TestRetainedHandleFreshAfterCycle(t *testing.T) {
+	h := &mutableHost{val: 5}
+	m := NewAtomicCounterManager(h, 0, 50*time.Millisecond, 0, nil)
+	c := m.Counter(rdx.IDFromSrcSeqOff(0x1a, 1, 0), 1) // handle retained, Counter() never called again
+
+	v, err := c.Get(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, int64(5), v)
+	m.cycle(context.Background(), false) // consume the accessed flag
+
+	h.set(42) // remote increments sync in while the handle idles
+	time.Sleep(60 * time.Millisecond)
+	m.cycle(context.Background(), false) // background tick past the deadline
+
+	v, _ = c.Get(context.Background())
+	assert.Equal(t, int64(42), v, "cycle must have refreshed the retained handle")
+}
+
+// Deadlines carry jitter so counters loaded together don't expire together.
+func TestStaleDeadlineJitter(t *testing.T) {
+	m := NewAtomicCounterManager(&mutableHost{}, 0, time.Minute, 30*time.Second, nil)
+	seen := map[int64]struct{}{}
+	for i := 0; i < 32; i++ {
+		lo := time.Now().Add(m.staleTTL).UnixNano()
+		d := m.staleDeadline()
+		hi := time.Now().Add(m.staleTTL + m.staleJitter).UnixNano()
+		assert.GreaterOrEqual(t, d, lo)
+		assert.LessOrEqual(t, d, hi)
+		seen[d] = struct{}{}
+	}
+	assert.Greater(t, len(seen), 1, "jitter must vary deadlines")
+}
+
+// loadOnceThenFailHost loads successfully once, then errors — a persistently
+// unreadable slot under a counter that already holds data.
+type loadOnceThenFailHost struct {
+	host.Host
+	mu    sync.Mutex
+	calls int
+}
+
+func (h *loadOnceThenFailHost) Source() uint64 { return 0x1a }
+func (h *loadOnceThenFailHost) ObjectFieldTLV(fid rdx.ID) (byte, []byte, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.calls++
+	if h.calls > 1 {
+		return 0, nil, errNotSynced
+	}
+	return rdx.Natural, rdx.Ntlv(7), nil
+}
+func (h *loadOnceThenFailHost) CommitBatch(ctx context.Context, edits []host.Edit) error { return nil }
+func (h *loadOnceThenFailHost) StartSequentialWrite()                                    {}
+func (h *loadOnceThenFailHost) EndSequentialWrite()                                      {}
+func (h *loadOnceThenFailHost) callCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.calls
+}
+
+// A failed read-through must keep serving the stale value and back off by the
+// retry delay — not turn every Counter() call into a locked DB hit.
+func TestFailedReadThroughBacksOff(t *testing.T) {
+	h := &loadOnceThenFailHost{}
+	m := NewAtomicCounterManager(h, 0, 10*time.Millisecond, 0, nil) // period 0 -> retryDelay 1s
+	rid := rdx.IDFromSrcSeqOff(0x1a, 1, 0)
+
+	v, err := m.Counter(rid, 1).Get(context.Background()) // load #1 ok
+	assert.NoError(t, err)
+	assert.Equal(t, int64(7), v)
+
+	time.Sleep(20 * time.Millisecond)
+
+	// stale: read-through attempt #2 fails; old value survives
+	v, err = m.Counter(rid, 1).Get(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, int64(7), v, "stale value must survive a failed read-through")
+	assert.Equal(t, 2, h.callCount())
+
+	// deadline pushed to now+retryDelay: immediate calls skip the DB
+	_, _ = m.Counter(rid, 1).Get(context.Background())
+	_, _ = m.Counter(rid, 1).Get(context.Background())
+	assert.Equal(t, 2, h.callCount(), "failed read-through must back off, not retry per call")
 }
