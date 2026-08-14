@@ -195,6 +195,49 @@ func TestStaleCounterReadsThrough(t *testing.T) {
 	assert.Equal(t, int64(42), v, "stale counter must read through to the DB")
 }
 
+// The background cycle must proactively refresh a loaded counter whose
+// staleness deadline passed, even if nothing accessed it — an idle counter's
+// cache follows externally-synced DB changes without waiting for a reader.
+func TestCycleRefreshesExpiredIdleCounter(t *testing.T) {
+	h := &mutableHost{val: 5}
+	m := NewAtomicCounterManager(h, 0, 50*time.Millisecond, 0, nil)
+	c := m.Counter(rdx.IDFromSrcSeqOff(0x1a, 1, 0), 1) // loads at 5
+	// settle: consume the initial accessed flag so only TTL expiry can
+	// trigger the next reload
+	m.cycle(context.Background(), false)
+
+	h.set(42) // remote increments sync in; counter never accessed again
+
+	m.cycle(context.Background(), false) // within TTL: idle counter skipped
+	assert.Equal(t, int64(5), c.value(), "within TTL an idle counter is not reloaded")
+
+	time.Sleep(60 * time.Millisecond)
+	m.cycle(context.Background(), false) // past TTL: reloaded despite being idle
+	assert.Equal(t, int64(42), c.value(), "the cycle must refresh an expired idle counter")
+}
+
+// A handle retained across the staleness deadline is refreshed by the
+// background cycle (not by Get itself, which stays lock-free): once a tick
+// runs past the deadline, the handle's reads are fresh without any Counter()
+// call.
+func TestRetainedHandleFreshAfterCycle(t *testing.T) {
+	h := &mutableHost{val: 5}
+	m := NewAtomicCounterManager(h, 0, 50*time.Millisecond, 0, nil)
+	c := m.Counter(rdx.IDFromSrcSeqOff(0x1a, 1, 0), 1) // handle retained, Counter() never called again
+
+	v, err := c.Get(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, int64(5), v)
+	m.cycle(context.Background(), false) // consume the accessed flag
+
+	h.set(42) // remote increments sync in while the handle idles
+	time.Sleep(60 * time.Millisecond)
+	m.cycle(context.Background(), false) // background tick past the deadline
+
+	v, _ = c.Get(context.Background())
+	assert.Equal(t, int64(42), v, "cycle must have refreshed the retained handle")
+}
+
 // Deadlines carry jitter so counters loaded together don't expire together.
 func TestStaleDeadlineJitter(t *testing.T) {
 	m := NewAtomicCounterManager(&mutableHost{}, 0, time.Minute, 30*time.Second, nil)

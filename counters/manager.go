@@ -27,13 +27,14 @@ const negCacheSize = 1024
 type AtomicCounterManager struct {
 	mu     sync.Mutex
 	period time.Duration
-	// staleTTL bounds how stale a cached counter may be when served via
-	// Counter(). Hot counters never trip it — the background cycle reloads
-	// them every period and re-stamps the deadline. It exists for counters
-	// loaded once and then left idle while other replicas keep writing (e.g.
-	// the nightly reset scan reading a key billed elsewhere all day): past
-	// the deadline, Counter() reads through to the DB instead of serving the
-	// frozen value. <= 0 falls back to 5m.
+	// staleTTL bounds how stale a cached counter may be. Two mechanisms
+	// enforce it: the background cycle proactively reloads any loaded counter
+	// whose deadline passed (even if idle — e.g. a key billed only on other
+	// replicas all day, read next by the nightly reset scan), and Counter()
+	// reads through on a stale access. Hot counters are fresher still:
+	// accessed ones reload every period. A handle retained across calls is
+	// covered by the cycle alone (staleness ≤ TTL + jitter + one period).
+	// <= 0 falls back to 5m.
 	staleTTL time.Duration
 	// staleJitter randomizes each deadline so counters loaded together (a
 	// scan, a batch read) don't all read through in the same instant later.
@@ -159,10 +160,16 @@ func (m *AtomicCounterManager) cycle(ctx context.Context, force bool) {
 	// (value, rev) are current, then flush deltas on top. A Z flush stamped
 	// from a stale rev collides with a concurrent reset and Zmerge silently
 	// drops one of the writes.
+	now := time.Now().UnixNano()
 	for _, c := range snapshot {
-		// accessed is read, not swapped: loadLocked clears it only on a
-		// successful load, so a transient failure keeps the reload pending.
-		if c.accessed.Load() || force || !c.loaded.Load() {
+		// Reload when: touched since last load (accessed is read, not swapped:
+		// loadLocked clears it only on a successful load, so a transient
+		// failure keeps the reload pending), forced, never loaded, or the
+		// staleness deadline passed. The last arm proactively refreshes idle
+		// counters every ~staleTTL so even a retained handle never observes a
+		// value older than the deadline; jitter (stamped per load) spreads the
+		// expirations so a mass-loaded batch doesn't reload in one tick.
+		if c.accessed.Load() || force || !c.loaded.Load() || now >= c.staleAt.Load() {
 			m.loadLocked(c)
 		}
 	}
