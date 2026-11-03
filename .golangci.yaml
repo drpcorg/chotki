@@ -1,28 +1,47 @@
-run:
-  timeout: 5m
+version: "2"
 linters:
-  disable-all: true
+  default: none
   enable:
     - asasalint
     - durationcheck
+    - exhaustive
     - gocheckcompilerdirectives
-    - gosimple
+    - gochecksumtype
     - gosmopolitan
     - govet
     - ineffassign
     - nilerr
     - reassign
     - staticcheck
-    - typecheck
     - unused
-    - exhaustive
-    - gochecksumtype
-issues:
-  exclude-rules:
-    - path: '(.+)\.ragel\.go'
-      linters:
-        - ineffassign
-        - unused
-    - linters:
-        - staticcheck
-      text: "SA1019:"
+  settings:
+    staticcheck:
+      checks: ["all", "-ST*", "-QF*"]
+    govet:
+      disable: [inline]
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - ineffassign
+          - unused
+        path: (.+)\.ragel\.go
+      - linters:
+          - staticcheck
+        text: 'SA1019:'
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
