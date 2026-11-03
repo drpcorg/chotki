@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # GitHub Actions: actions are pinned to commit SHAs (with a version comment),
+  # so Dependabot keeps both the SHA and the comment up to date.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
